@@ -24,8 +24,8 @@ describe("surface drawing preview", () => {
     expect(confirmed).toHaveLength(1);
   });
 
-  it("uses Shift as a temporary inverse of the chosen direction mode", () => {
+  it("uses Shift to temporarily enable surface-relative orthogonal drawing", () => {
+    expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free")[1].position).toEqual([2, 0, 1]);
     expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free", true)[1].position).toEqual([2, 0, 0]);
-    expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "orthogonal", true)[1].position).toEqual([2, 0, 1]);
   });
 });
