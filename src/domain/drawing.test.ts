@@ -22,6 +22,11 @@ describe("surface drawing preview", () => {
     expect(constrainToHostAxes(wall([0, 1, 0]), other, "free")).toBe(other);
   });
 
+  it("keeps the previous host's orthogonal axes while previewing a host transition", () => {
+    const adjacent = { ...wall([2, 3, .8]), attachment: { ...wall([2, 3, .8]).attachment!, hostId: "adjacent-wall" } };
+    expect(constrainToHostAxes(wall([0, 1, 0]), adjacent, "orthogonal").position).toEqual([2, 1, 0]);
+  });
+
   it("adds a cursor-only preview without mutating confirmed route points", () => {
     const confirmed = [slab([0, 0, 0])];
     const preview = previewRoutePoints(confirmed, slab([2, 0, 1]), "orthogonal");
