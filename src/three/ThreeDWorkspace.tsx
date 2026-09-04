@@ -1,5 +1,5 @@
 import { CameraControls, CameraControlsImpl } from "@react-three/drei";
-import { Canvas, type ThreeEvent } from "@react-three/fiber";
+import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BackSide } from "three";
 import { ConduitScene, type ConduitTool } from "../components/ConduitScene";
@@ -21,6 +21,16 @@ type BranchStart = { segmentId: string; point: RoutePoint };
 
 function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPreset }) {
   const controls = useRef<CameraControlsImpl>(null!);
+  const canvas = useThree((state) => state.gl.domElement);
+  useEffect(() => {
+    const suppressBrowserZoom = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    };
+    canvas.addEventListener("wheel", suppressBrowserZoom, { capture: true, passive: false });
+    return () => canvas.removeEventListener("wheel", suppressBrowserZoom, true);
+  }, [canvas]);
   useEffect(() => {
     if (!controls.current) return;
     const [x, y, z] = bounds.center, distance = bounds.span * 1.35;
