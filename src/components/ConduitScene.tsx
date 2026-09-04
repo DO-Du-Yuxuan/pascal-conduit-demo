@@ -1,45 +1,84 @@
 import { Line } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
 import { useMemo } from "react";
-import { Quaternion, Vector3 } from "three";
-import type { ConduitOverlayDocument, HostAttachment, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
+import { CatmullRomCurve3, Quaternion, Vector3 } from "three";
+import type { BendArc, ConduitOverlayDocument, HostAttachment, JunctionBox, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
+import type { PlannedRoute } from "../domain/routing";
 
 export type ConduitTool = "select" | "draw" | "branch" | "delete";
-type Props = { overlay: ConduitOverlayDocument; selectedId: string | null; constructionMode: "construction" | "finished" | "xray"; visibleSystems: Record<RoutingSystem, boolean>; activeSystem: RoutingSystem; draft: Vec3[]; draftColor: string; previewHost?: HostAttachment; tool: ConduitTool; hoverId: string | null; onSelect: (id: string) => void; onHover: (id: string | null) => void; onBranch: (segment: RouteSegment, point: Vec3) => void; onDelete: (id: string) => void };
+export type BranchPreview = { segmentId: string; point: Vec3; attachment?: HostAttachment; system: RoutingSystem; kind: "junction-box" | "tee"; sizeMm: [number, number, number]; valid: boolean };
+type Props = { overlay: ConduitOverlayDocument; selectedId: string | null; constructionMode: "construction" | "finished" | "xray"; visibleSystems: Record<RoutingSystem, boolean>; draft: Vec3[]; draftColor: string; previewPlan?: PlannedRoute | null; conflictPoints?: Vec3[]; branchPreview?: BranchPreview | null; previewHost?: HostAttachment; tool: ConduitTool; hoverId: string | null; onSelect: (id: string) => void; onHover: (id: string | null) => void; onBranchPreview: (preview: BranchPreview | null) => void; onBranch: (segment: RouteSegment, point: Vec3) => void; onDelete: (id: string) => void };
 
 const point = (value: Vec3) => new Vector3(value[0], value[1], value[2]);
+const vec = (value: Vector3): Vec3 => [value.x, value.y, value.z];
+const projectionOnSegment = (segment: RouteSegment, world: Vector3) => {
+  const start = point(segment.start.position), delta = point(segment.end.position).sub(start), lengthSquared = delta.lengthSq(), t = lengthSquared < 1e-10 ? 0 : Math.max(0, Math.min(1, world.clone().sub(start).dot(delta) / lengthSquared));
+  return { point: vec(start.addScaledVector(delta, t)), t };
+};
 
-function SegmentMesh({ segment, color, selected, hovered, visible, tool, branchable, onSelect, onHover, onBranch, onDelete }: { segment: RouteSegment; color: string; selected: boolean; hovered: boolean; visible: boolean; tool: ConduitTool; branchable: boolean; onSelect: () => void; onHover: (active: boolean) => void; onBranch: (point: Vec3) => void; onDelete: () => void }) {
-  const { midpoint, length, rotation } = useMemo(() => {
-    const start = point(segment.start.position), end = point(segment.end.position), direction = end.clone().sub(start);
-    return { midpoint: start.clone().add(end).multiplyScalar(0.5), length: direction.length(), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction.normalize()) };
-  }, [segment]);
-  if (length < 0.001 || !visible) return null;
+function segmentTransform(segment: RouteSegment) {
+  const start = point(segment.start.position), end = point(segment.end.position), direction = end.clone().sub(start);
+  return { midpoint: start.clone().add(end).multiplyScalar(.5), length: direction.length(), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction.normalize()) };
+}
+
+function PipeMesh({ segment, color, opacity = 1 }: { segment: RouteSegment; color: string; opacity?: number }) {
+  const transform = useMemo(() => segmentTransform(segment), [segment]);
+  if (transform.length < .001) return null;
   const radius = segment.diameterMm / 2000, signal = segment.system === "signal";
-  const display = tool === "delete" && hovered ? "#ef4444" : tool === "branch" && hovered && branchable ? "#facc15" : selected ? "#f59e0b" : color;
-  return <group position={midpoint} quaternion={rotation} onPointerMove={(event) => { event.stopPropagation(); onHover(true); }} onPointerOut={() => onHover(false)} onClick={(event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (tool === "delete") onDelete(); else { onSelect(); if (tool === "branch" && branchable) onBranch([event.point.x, event.point.y, event.point.z]); } }}>
-    {signal && !selected && <mesh><cylinderGeometry args={[radius + .002, radius + .002, length, 12]} /><meshStandardMaterial color="#94a3b8" roughness={0.42} /></mesh>}
-    <mesh><cylinderGeometry args={[radius, radius, length + .002, 12]} /><meshStandardMaterial color={display} emissive={hovered && tool === "branch" ? "#5b4100" : "#000000"} roughness={0.42} /></mesh>
-    {tool === "branch" && branchable && hovered && <mesh><sphereGeometry args={[Math.max(radius * 1.9, .04), 12, 10]} /><meshBasicMaterial color="#facc15" /></mesh>}
+  return <group position={transform.midpoint} quaternion={transform.rotation}>
+    {signal && <mesh><cylinderGeometry args={[radius + .002, radius + .002, transform.length, 12]} /><meshStandardMaterial color="#94a3b8" transparent={opacity < 1} opacity={opacity} roughness={.42} /></mesh>}
+    <mesh><cylinderGeometry args={[radius, radius, transform.length + .002, 12]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.42} /></mesh>
   </group>;
+}
+
+function SegmentMesh({ segment, color, selected, hovered, visible, tool, branchable, boxSize, onSelect, onHover, onBranchPreview, onBranch, onDelete }: { segment: RouteSegment; color: string; selected: boolean; hovered: boolean; visible: boolean; tool: ConduitTool; branchable: boolean; boxSize: [number, number, number]; onSelect: () => void; onHover: (active: boolean) => void; onBranchPreview: (preview: BranchPreview | null) => void; onBranch: (point: Vec3) => void; onDelete: () => void }) {
+  const transform = useMemo(() => segmentTransform(segment), [segment]);
+  if (transform.length < .001 || !visible) return null;
+  const display = tool === "delete" && hovered ? "#ef4444" : tool === "branch" && hovered && branchable ? "#facc15" : selected ? "#f59e0b" : color;
+  return <group position={transform.midpoint} quaternion={transform.rotation} onPointerMove={(event) => { event.stopPropagation(); onHover(true); if (tool === "branch" && branchable) { const projected = projectionOnSegment(segment, event.point), clearance = segment.system === "sprinkler" ? segment.diameterMm / 1000 : boxSize[0] / 2000, valid = projected.t * transform.length > clearance && (1 - projected.t) * transform.length > clearance, attachment = segment.start.attachment?.hostId === segment.end.attachment?.hostId ? segment.start.attachment : undefined; onBranchPreview({ segmentId: segment.id, point: projected.point, attachment, system: segment.system, kind: segment.system === "sprinkler" ? "tee" : "junction-box", sizeMm: boxSize, valid }); } }} onPointerOut={() => { onHover(false); onBranchPreview(null); }} onClick={(event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (tool === "delete") onDelete(); else { onSelect(); if (tool === "branch" && branchable) onBranch(projectionOnSegment(segment, event.point).point); } }}>
+    <PipeMesh segment={{ ...segment, start: { position: [0, -transform.length / 2, 0] }, end: { position: [0, transform.length / 2, 0] } }} color={display} />
+  </group>;
+}
+
+function arcCurve(arc: BendArc) {
+  const center = point(arc.center), start = point(arc.start).sub(center), radius = start.length(), normal = point(arc.normal).normalize(), tangent = new Vector3().crossVectors(normal, start).normalize();
+  const samples = Array.from({ length: 17 }, (_, index) => center.clone().addScaledVector(start, Math.cos(arc.sweepRadians * index / 16)).addScaledVector(tangent, radius * Math.sin(arc.sweepRadians * index / 16)));
+  return new CatmullRomCurve3(samples, false, "centripetal");
+}
+
+function FittingGeometry({ fitting, color, opacity = 1 }: { fitting: RouteFitting; color: string; opacity?: number }) {
+  const radius = fitting.diameterMm / 1800;
+  if (fitting.arc) return <mesh><tubeGeometry args={[arcCurve(fitting.arc), 24, fitting.diameterMm / 2000, 10, false]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
+  if (fitting.fitting === "coupling") {
+    const direction = fitting.ports[1]?.direction ?? [1, 0, 0], length = Math.max(.035, fitting.diameterMm / 500), rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), point(direction).normalize());
+    return <mesh position={fitting.position.position} quaternion={rotation}><cylinderGeometry args={[radius * 1.15, radius * 1.15, length, 12]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
+  }
+  return <mesh position={fitting.position.position}><sphereGeometry args={[radius * (fitting.fitting === "tee" ? 1.5 : 1), 12, 10]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
 }
 
 function FittingMesh({ fitting, color, selected, hovered, visible, tool, onSelect, onHover, onDelete }: { fitting: RouteFitting; color: string; selected: boolean; hovered: boolean; visible: boolean; tool: ConduitTool; onSelect: () => void; onHover: (active: boolean) => void; onDelete: () => void }) {
   if (!visible) return null;
-  const p = fitting.position.position;
-  const radius = fitting.diameterMm / 1800, signal = fitting.system === "signal";
-  return <group position={p} onPointerMove={(event) => { event.stopPropagation(); onHover(true); }} onPointerOut={() => onHover(false)} onClick={(event) => { event.stopPropagation(); if (tool === "delete") onDelete(); else onSelect(); }}>{signal && !selected && <mesh><sphereGeometry args={[radius + .002, 12, 10]} /><meshStandardMaterial color="#94a3b8" roughness={0.4} /></mesh>}<mesh><sphereGeometry args={[radius, 12, 10]} /><meshStandardMaterial color={tool === "delete" && hovered ? "#ef4444" : selected ? "#f59e0b" : color} roughness={0.4} /></mesh></group>;
+  const display = tool === "delete" && hovered ? "#ef4444" : selected ? "#f59e0b" : color;
+  return <group onPointerMove={(event) => { event.stopPropagation(); onHover(true); }} onPointerOut={() => onHover(false)} onClick={(event) => { event.stopPropagation(); if (tool === "delete") onDelete(); else onSelect(); }}><FittingGeometry fitting={fitting} color={display} /></group>;
 }
 
-export function ConduitScene({ overlay, selectedId, constructionMode, visibleSystems, activeSystem, draft, draftColor, previewHost, tool, hoverId, onSelect, onHover, onBranch, onDelete }: Props) {
-  const visible = (system: RoutingSystem) => visibleSystems[system] && (constructionMode !== "finished" || system === "sprinkler");
+function JunctionBoxMesh({ box, color, selected, preview = false, valid = true }: { box: JunctionBox; color: string; selected?: boolean; preview?: boolean; valid?: boolean }) {
+  const normal = box.position.attachment?.normal ?? [0, 1, 0], rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 0, 1), point(normal).normalize()), [width, height, depth] = box.sizeMm.map((value) => value / 1000);
+  return <mesh position={box.position.position} quaternion={rotation}><boxGeometry args={[width, height, depth]} /><meshStandardMaterial color={!valid ? "#ef4444" : selected ? "#f59e0b" : color} transparent={preview} opacity={preview ? .62 : 1} roughness={.5} /></mesh>;
+}
+
+export function ConduitScene({ overlay, selectedId, constructionMode, visibleSystems, draft, draftColor, previewPlan, conflictPoints = [], branchPreview, previewHost, tool, hoverId, onSelect, onHover, onBranchPreview, onBranch, onDelete }: Props) {
+  const visible = (system: RoutingSystem) => visibleSystems[system] && (constructionMode !== "finished" || system === "sprinkler"), previewColor = previewPlan?.canCommit === false ? "#ef4444" : draftColor;
   return <group name="routing">
-    {overlay.segments.map((segment) => <SegmentMesh key={segment.id} segment={segment} color={overlay.settings.colors[segment.system]} selected={selectedId === segment.id} hovered={hoverId === segment.id} visible={visible(segment.system)} tool={tool} branchable={segment.system === activeSystem} onSelect={() => onSelect(segment.id)} onHover={(active) => onHover(active ? segment.id : null)} onBranch={(branchPoint) => onBranch(segment, branchPoint)} onDelete={() => onDelete(segment.id)} />)}
+    {overlay.segments.map((segment) => <SegmentMesh key={segment.id} segment={segment} color={overlay.settings.colors[segment.system]} selected={selectedId === segment.id} hovered={hoverId === segment.id} visible={visible(segment.system)} tool={tool} branchable={visible(segment.system)} boxSize={overlay.settings.junctionBoxSizeMm} onSelect={() => onSelect(segment.id)} onHover={(active) => onHover(active ? segment.id : null)} onBranchPreview={onBranchPreview} onBranch={(branchPoint) => onBranch(segment, branchPoint)} onDelete={() => onDelete(segment.id)} />)}
     {overlay.fittings.map((fitting) => <FittingMesh key={fitting.id} fitting={fitting} color={overlay.settings.colors[fitting.system]} selected={selectedId === fitting.id} hovered={hoverId === fitting.id} visible={visible(fitting.system)} tool={tool} onSelect={() => onSelect(fitting.id)} onHover={(active) => onHover(active ? fitting.id : null)} onDelete={() => onDelete(fitting.id)} />)}
-    {constructionMode !== "finished" && overlay.wallChases.map((chase) => <Line key={chase.id} points={[chase.start.position, chase.end.position]} color="#50351f" lineWidth={Math.max(2, chase.widthMm / 5)} transparent opacity={0.75} />)}
-    {constructionMode !== "finished" && overlay.penetrations.map((penetration) => <mesh key={penetration.id} position={penetration.point.position}><sphereGeometry args={[penetration.diameterMm / 2000, 10, 8]} /><meshStandardMaterial color="#fbbf24" transparent opacity={0.68} /></mesh>)}
-    {draft.length >= 2 && <Line points={draft} color={draftColor} lineWidth={3} dashed dashSize={0.14} gapSize={0.08} />}
-    {draft.length >= 1 && <mesh position={draft[draft.length - 1]}><sphereGeometry args={[.055, 12, 10]} /><meshBasicMaterial color={draftColor} /></mesh>}
-    {previewHost && draft.length >= 1 && <mesh position={draft[draft.length - 1]}><ringGeometry args={[.07, .095, 16]} /><meshBasicMaterial color="#facc15" side={2} /></mesh>}
+    {overlay.junctionBoxes.map((box) => visible(box.system) && <group key={box.id} onPointerMove={(event) => { event.stopPropagation(); onHover(box.id); }} onPointerOut={() => onHover(null)} onClick={(event) => { event.stopPropagation(); tool === "delete" ? onDelete(box.id) : onSelect(box.id); }}><JunctionBoxMesh box={box} color={tool === "delete" && hoverId === box.id ? "#ef4444" : overlay.settings.colors[box.system]} selected={selectedId === box.id} /></group>)}
+    {constructionMode !== "finished" && overlay.wallChases.map((chase) => <Line key={chase.id} points={[chase.start.position, chase.end.position]} color="#50351f" lineWidth={Math.max(2, chase.widthMm / 5)} transparent opacity={.75} />)}
+    {constructionMode !== "finished" && overlay.penetrations.map((penetration) => <mesh key={penetration.id} position={penetration.point.position}><sphereGeometry args={[penetration.diameterMm / 2000, 10, 8]} /><meshStandardMaterial color="#fbbf24" transparent opacity={.68} /></mesh>)}
+    {previewPlan ? <group>{previewPlan.segments.map((segment) => <PipeMesh key={segment.id} segment={segment} color={previewColor} opacity={.68} />)}{previewPlan.fittings.filter((fitting) => fitting.fitting === "elbow").map((fitting) => <FittingGeometry key={fitting.id} fitting={fitting} color={previewColor} opacity={.68} />)}</group> : draft.length >= 2 && <Line points={draft} color={previewColor} lineWidth={3} dashed dashSize={.14} gapSize={.08} />}
+    {draft.length >= 1 && <mesh position={draft[draft.length - 1]}><sphereGeometry args={[.055, 12, 10]} /><meshBasicMaterial color={previewColor} /></mesh>}
+    {previewHost && draft.length >= 1 && <mesh position={draft[draft.length - 1]}><ringGeometry args={[.07, .095, 16]} /><meshBasicMaterial color={previewColor} side={2} /></mesh>}
+    {conflictPoints.map((position, index) => <mesh key={index} position={position}><sphereGeometry args={[.08, 12, 10]} /><meshBasicMaterial color="#ef4444" /></mesh>)}
+    {branchPreview && (branchPreview.kind === "junction-box" ? <JunctionBoxMesh box={{ id: "preview", type: "junction-box", system: branchPreview.system as Exclude<RoutingSystem, "sprinkler">, position: { position: branchPreview.point, attachment: branchPreview.attachment }, sizeMm: branchPreview.sizeMm, segmentIds: [], ports: [] }} color={overlay.settings.colors[branchPreview.system]} preview valid={branchPreview.valid} /> : <mesh position={branchPreview.point}><sphereGeometry args={[.075, 12, 10]} /><meshStandardMaterial color={branchPreview.valid ? overlay.settings.colors[branchPreview.system] : "#ef4444"} transparent opacity={.7} /></mesh>)}
   </group>;
 }

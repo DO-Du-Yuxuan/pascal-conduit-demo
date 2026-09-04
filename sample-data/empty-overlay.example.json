@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "1.0",
+  "schemaVersion": "1.1",
   "source": {
     "fileName": "default-layout.json",
     "sha256": "32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167"
@@ -10,10 +10,20 @@
       "low-voltage": "#3b82f6",
       "signal": "#ffffff",
       "sprinkler": "#22c55e"
-    }
+    },
+    "visibleSystems": {
+      "power": true,
+      "low-voltage": true,
+      "signal": true,
+      "sprinkler": true
+    },
+    "bendRadiusMm": 200,
+    "stockLengthMm": 4000,
+    "junctionBoxSizeMm": [86, 86, 50]
   },
   "segments": [],
   "fittings": [],
+  "junctionBoxes": [],
   "wallChases": [],
   "penetrations": []
 }

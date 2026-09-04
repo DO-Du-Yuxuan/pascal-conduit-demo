@@ -58,7 +58,7 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
-import { createEmptyOverlay, type ConduitOverlayDocument } from "./domain/overlay";
+import { createEmptyOverlay, type BendArc, type ConduitOverlayDocument, type Vec3 } from "./domain/overlay";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
 import { scoreS1FunctionalRelationships } from "./evaluation/s1-functional-relation-scoring";
 import { measureS1EntrySequence, scoreS1SpaceOrganization, type S1SpaceOrganizationReport } from "./evaluation/s1-space-organization";
@@ -1029,12 +1029,18 @@ function CanvasPanel({
     </article>
   );
 }
+function planArcPoints(arc: BendArc): Vec3[] {
+  const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], center = arc.center, start = subtract(arc.start, center), radius = Math.hypot(...start), normalLength = Math.max(1e-9, Math.hypot(...arc.normal)), normal = arc.normal.map((value) => value / normalLength) as Vec3;
+  const tangent: Vec3 = [(normal[1] * start[2] - normal[2] * start[1]) / Math.max(1e-9, radius), (normal[2] * start[0] - normal[0] * start[2]) / Math.max(1e-9, radius), (normal[0] * start[1] - normal[1] * start[0]) / Math.max(1e-9, radius)];
+  return Array.from({ length: 17 }, (_, index) => { const angle = arc.sweepRadians * index / 16; return [center[0] + start[0] * Math.cos(angle) + tangent[0] * radius * Math.sin(angle), center[1] + start[1] * Math.cos(angle) + tangent[1] * radius * Math.sin(angle), center[2] + start[2] * Math.cos(angle) + tangent[2] * radius * Math.sin(angle)]; });
+}
 function ConduitPlanOverlay({ overlay, levelId, selectedId, onSelect }: { overlay: ConduitOverlayDocument | null; levelId: string; selectedId: string | null; onSelect: (id: string | null) => void }) {
   if (!overlay) return null;
   const belongsToLevel = (attachment: { levelId: string | null } | undefined) => !attachment?.levelId || attachment.levelId === levelId;
   return <g className="conduit-plan-overlay" aria-label="只读管线平面图">
     {overlay.segments.filter((segment) => overlay.settings.visibleSystems[segment.system] && (belongsToLevel(segment.start.attachment) || belongsToLevel(segment.end.attachment))).map((segment) => <g key={segment.id} onClick={(event) => { event.stopPropagation(); onSelect(segment.id); }}><line x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={selectedId === segment.id ? "#f59e0b" : overlay.settings.colors[segment.system]} strokeWidth={Math.max(.025, segment.diameterMm / 1000)} strokeLinecap="round" />{Math.abs(segment.start.position[0] - segment.end.position[0]) < .001 && Math.abs(segment.start.position[2] - segment.end.position[2]) < .001 && <text x={segment.start.position[0] + .08} y={segment.start.position[2] - .08} fontSize=".22" fill="#334155">{segment.end.position[1] >= segment.start.position[1] ? "↑" : "↓"}</text>}</g>)}
-    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => <circle key={fitting.id} cx={fitting.position.position[0]} cy={fitting.position.position[2]} r={Math.max(.045, fitting.diameterMm / 1500)} fill={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} stroke="#64748b" strokeWidth=".015" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />)}
+    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => fitting.arc ? <polyline key={fitting.id} points={planArcPoints(fitting.arc).map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} strokeWidth={Math.max(.025, fitting.diameterMm / 1000)} strokeLinecap="round" strokeLinejoin="round" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} /> : <circle key={fitting.id} cx={fitting.position.position[0]} cy={fitting.position.position[2]} r={Math.max(.045, fitting.diameterMm / 1500)} fill={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} stroke={fitting.fitting === "coupling" ? "#ffffff" : "#64748b"} strokeWidth={fitting.fitting === "coupling" ? ".03" : ".015"} onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />)}
+    {overlay.junctionBoxes.filter((box) => overlay.settings.visibleSystems[box.system] && belongsToLevel(box.position.attachment)).map((box) => { const size = box.sizeMm[0] / 1000; return <rect key={box.id} x={box.position.position[0] - size / 2} y={box.position.position[2] - size / 2} width={size} height={size} fill={selectedId === box.id ? "#f59e0b" : overlay.settings.colors[box.system]} stroke="#ffffff" strokeWidth=".018" onClick={(event) => { event.stopPropagation(); onSelect(box.id); }} />; })}
     {overlay.penetrations.filter((feature) => belongsToLevel(feature.point.attachment)).map((feature) => <path key={feature.id} d={`M ${feature.point.position[0] - .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] + .08} ${feature.point.position[2] + .08} M ${feature.point.position[0] + .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] - .08} ${feature.point.position[2] + .08}`} stroke="#d97706" strokeWidth=".025" />)}
   </g>;
 }
