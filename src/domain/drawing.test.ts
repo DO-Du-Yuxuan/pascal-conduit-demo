@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrainToHostAxes, previewRoutePoints } from "./drawing";
+import { constrainToHostAxes, pointOnWorldAxis, previewRoutePoints } from "./drawing";
 import type { RoutePoint } from "./overlay";
 
 const wall = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] }, localPosition: position } });
@@ -27,5 +27,11 @@ describe("surface drawing preview", () => {
   it("uses Shift to temporarily enable surface-relative orthogonal drawing", () => {
     expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free")[1].position).toEqual([2, 0, 1]);
     expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free", true)[1].position).toEqual([2, 0, 0]);
+  });
+
+  it("projects a suspended preview onto the requested world axis", () => {
+    const start = slab([1, 2, 3]);
+    expect(pointOnWorldAxis(start, "x", [0, 4, 3], [0, -1, 0]).position).toEqual([0, 2, 3]);
+    expect(pointOnWorldAxis(start, "y", [4, 0, 3], [-1, 0, 0]).position).toEqual([1, 0, 3]);
   });
 });

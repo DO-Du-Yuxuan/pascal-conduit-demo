@@ -9,7 +9,7 @@ import type { ThreeDSceneInput } from "./scene-input";
 import type { ConduitOverlayDocument, HostAttachment, Penetration, Vec3, WallChase } from "../domain/overlay";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void };
 type Point = [number, number, number];
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -147,7 +147,7 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
   </mesh>;
 }
 
-export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish }: Props) {
+export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish }: Props) {
   const levelById = useMemo(() => Object.fromEntries(Object.values(scene.nodes).filter((node) => node.type === "level").map((node) => [node.id, numeric(node.level)])), [scene.nodes]);
   const levelFor = (node: NodeData) => {
     let cursor: NodeData | undefined = node, visited = new Set<string>();
@@ -167,7 +167,7 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
     <directionalLight position={[14, 22, 10]} intensity={2.3} castShadow />
     {Object.values(scene.nodes).map((node) => {
       if (!visible(node)) return null;
-      const selected = node.id === selectedId, select = () => onSelect(node.id), y = elevation(node);
+      const selected = node.id === selectedId || node.id === highlightHostId, select = () => onSelect(node.id), y = elevation(node);
       if (node.type === "wall") return <Wall key={node.id} node={node} hostId={node.id} levelId={levelIdFor(node)} openings={Object.values(scene.nodes).filter((candidate) => (candidate.type === "door" || candidate.type === "window") && (candidate.wallId === node.id || candidate.parentId === node.id))} chases={constructionMode === "finished" ? [] : overlay?.wallChases.filter((feature) => feature.wallId === node.id) ?? []} penetrations={constructionMode === "finished" ? [] : overlay?.penetrations.filter((feature) => feature.hostId === node.id) ?? []} y={y} selected={selected} wallMode={wallMode} onSelect={select} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;
       if (node.type === "slab") return <Surface key={node.id} node={node} y={y} thickness={Math.max(.01, Math.abs(numeric(node.elevation, .05)))} color="#c4a484" opacity={1} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? [] : overlay?.penetrations.filter((feature) => feature.hostId === node.id) ?? []} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;
       if (node.type === "ceiling") return <Surface key={node.id} node={node} y={y + numeric(node.height, 2.7)} thickness={.04} color="#f7f2e8" opacity={.94} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "ceiling", surface: "ceiling-face", normal: [0, -1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? [] : overlay?.penetrations.filter((feature) => feature.hostId === node.id) ?? []} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;

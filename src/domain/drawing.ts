@@ -1,6 +1,7 @@
 import type { RoutePoint, Vec3 } from "./overlay";
 
 export type DirectionMode = "free" | "orthogonal";
+export type WorldAxis = "x" | "y" | "z";
 
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -28,4 +29,15 @@ export function previewRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint |
   const previous = confirmed[confirmed.length - 1];
   const effective = shiftKey ? (mode === "free" ? "orthogonal" : "free") : mode;
   return [...confirmed, constrainToHostAxes(previous, cursor, effective)];
+}
+
+const axisVector = (axis: WorldAxis): Vec3 => axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
+
+/** Closest point on a world axis through `start` to a pointer ray. */
+export function pointOnWorldAxis(start: RoutePoint, axis: WorldAxis, rayOrigin: Vec3, rayDirection: Vec3): RoutePoint {
+  const u = axisVector(axis), w = subtract(start.position, rayOrigin);
+  const a = dot(u, u), b = dot(u, rayDirection), c = dot(rayDirection, rayDirection), d = dot(u, w), e = dot(rayDirection, w);
+  const denominator = a * c - b * b;
+  const distance = Math.abs(denominator) < 1e-7 ? -d / a : (b * e - c * d) / denominator;
+  return { position: add(start.position, scale(u, distance)) };
 }

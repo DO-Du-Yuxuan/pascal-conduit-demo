@@ -51,6 +51,13 @@ describe("Conduit overlay", () => {
     expect(through.penetrations.every((feature) => feature.diameterMm === 52)).toBe(true);
   });
 
+  it("can add a one-shot penetration to an otherwise surface route", () => {
+    const a = point(0, 1, 0), b = point(1, 1, 0), c = point(2, 1, 0);
+    const plan = planRoute("power", 20, "surface", [a, b, c], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 34 }, [b]);
+    expect(plan.penetrations).toHaveLength(1);
+    expect(plan.penetrations[0]).toMatchObject({ hostId: "wall-a", diameterMm: 34 });
+  });
+
   it("splits a compatible segment and inserts one tee", () => {
     resetRoutingIdsForTests();
     const base = createEmptyOverlay("default-layout.json", "abc");
