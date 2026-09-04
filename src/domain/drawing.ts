@@ -34,6 +34,20 @@ export function previewRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint |
   return [...confirmed, constrainToHostAxes(previous, cursor, effective)];
 }
 
+/**
+ * The rendered cursor is authoritative. A click hit is only a fallback for the
+ * first frame before pointer-move has produced a preview.
+ */
+export function resolveConfirmedRoutePoint(preview: RoutePoint | null, clickHit: RoutePoint | null): RoutePoint | null {
+  return preview ?? clickHit;
+}
+
+export function displayedRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint | null, mode: DirectionMode, options: { worldAxis?: WorldAxis | null; penetrationEntry?: RoutePoint | null } = {}): RoutePoint[] {
+  if (options.penetrationEntry) return [...confirmed, options.penetrationEntry, ...(cursor && cursor !== options.penetrationEntry ? [cursor] : [])];
+  if (options.worldAxis && cursor) return [...confirmed, cursor];
+  return previewRoutePoints(confirmed, cursor, mode);
+}
+
 const axisVector = (axis: WorldAxis): Vec3 => axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
 
 /** Closest point on a world axis through `start` to a pointer ray. */

@@ -121,6 +121,20 @@ describe("Conduit overlay", () => {
     expect(sprinkler.fittings[0]).toMatchObject({ bendStyle: "standard" });
   });
 
+  it("keeps an old-host sweep until the actual host-transition corner", () => {
+    const floor = (x: number, z: number) => ({ position: [x, 0, z] as [number, number, number], attachment: { hostId: "floor", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
+    const wall = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number], attachment: { hostId: "wall", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } });
+    const plan = planRoute("power", 20, "surface", [floor(0, 0), floor(1, 0), wall(1, 0, 1), wall(1, 1, 1)]);
+    expect(plan.fittings.map((fitting) => fitting.bendStyle)).toEqual(["sweep", "right-angle"]);
+  });
+
+  it("restores the first sweep after entering a new host plane", () => {
+    const oldHost = { position: [0, 0, 0] as [number, number, number], attachment: { hostId: "floor", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } };
+    const wallCorner = { position: [0, 1, 0] as [number, number, number], attachment: { hostId: "wall", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } };
+    const wallNext = { ...wallCorner, position: [1, 1, 0] as [number, number, number] };
+    expect(planRoute("power", 20, "surface", [oldHost, wallCorner, wallNext]).fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 200 });
+  });
+
   it("splits all systems at four metres and inserts physical couplings", () => {
     for (const system of ["power", "low-voltage", "signal", "sprinkler"] as const) {
       const plan = planRoute(system, system === "sprinkler" ? 50 : 20, "suspended", [point(0, 1, 0), point(9, 1, 0)]);

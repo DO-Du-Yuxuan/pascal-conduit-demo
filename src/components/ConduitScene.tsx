@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { CatmullRomCurve3, Quaternion, Vector3 } from "three";
 import type { BendArc, ConduitOverlayDocument, HostAttachment, JunctionBox, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
 import type { PlannedRoute } from "../domain/routing";
+import { teeSocketSegments } from "../domain/network-geometry";
 
 export type ConduitTool = "select" | "draw" | "branch" | "delete";
 export type BranchPreview = { segmentId: string; point: Vec3; attachment?: HostAttachment; system: RoutingSystem; kind: "junction-box" | "tee"; sizeMm: [number, number, number]; valid: boolean };
@@ -49,11 +50,12 @@ function arcCurve(arc: BendArc) {
 function FittingGeometry({ fitting, color, opacity = 1 }: { fitting: RouteFitting; color: string; opacity?: number }) {
   const radius = fitting.diameterMm / 1800;
   if (fitting.arc) return <mesh><tubeGeometry args={[arcCurve(fitting.arc), 24, fitting.diameterMm / 2000, 10, false]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
+  if (fitting.fitting === "tee") return <group>{teeSocketSegments(fitting).map((segment) => <PipeMesh key={segment.id} segment={segment} color={color} opacity={opacity} />)}</group>;
   if (fitting.fitting === "coupling") {
     const direction = fitting.ports[1]?.direction ?? [1, 0, 0], length = Math.max(.035, fitting.diameterMm / 500), rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), point(direction).normalize());
     return <mesh position={fitting.position.position} quaternion={rotation}><cylinderGeometry args={[radius * 1.15, radius * 1.15, length, 12]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
   }
-  return <mesh position={fitting.position.position}><sphereGeometry args={[radius * (fitting.fitting === "tee" ? 1.5 : 1), 12, 10]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
+  return <mesh position={fitting.position.position}><sphereGeometry args={[radius, 12, 10]} /><meshStandardMaterial color={color} transparent={opacity < 1} opacity={opacity} roughness={.4} /></mesh>;
 }
 
 function FittingMesh({ fitting, color, selected, hovered, visible, tool, onSelect, onHover, onDelete }: { fitting: RouteFitting; color: string; selected: boolean; hovered: boolean; visible: boolean; tool: ConduitTool; onSelect: () => void; onHover: (active: boolean) => void; onDelete: () => void }) {

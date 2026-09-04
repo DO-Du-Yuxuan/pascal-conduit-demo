@@ -59,6 +59,8 @@ import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
 import { createEmptyOverlay, type BendArc, type ConduitOverlayDocument, type Vec3 } from "./domain/overlay";
+import { planFittingDisplay } from "./domain/network-plan";
+import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
 import { scoreS1FunctionalRelationships } from "./evaluation/s1-functional-relation-scoring";
 import { measureS1EntrySequence, scoreS1SpaceOrganization, type S1SpaceOrganizationReport } from "./evaluation/s1-space-organization";
@@ -95,7 +97,6 @@ type CanvasState = {
 };
 type S1PathDebugLayers = { rawGrid: boolean; smoothed: boolean; anchors: boolean; portals: boolean; finalPolyline: boolean };
 type S1PathPocProvider = "current" | "yuka" | "visibilityGraph";
-type WorkspaceViewMode = "2d" | "3d";
 const defaultS1PathDebugLayers: S1PathDebugLayers = { rawGrid: false, smoothed: false, anchors: false, portals: false, finalPolyline: true };
 const visibilityDefault: Visibility = {
   images: true,
@@ -172,11 +173,12 @@ function App() {
     [evaluationHighlights, setEvaluationHighlights] = useState<EvaluationHighlight[]>([]),
     [activeEvaluationHighlight, setActiveEvaluationHighlight] = useState<EvaluationHighlight | null>(null),
     [evaluationFocusMessage, setEvaluationFocusMessage] = useState<string | null>(null),
-    [sidebarWidth, setSidebarWidth] = useState(392),
     [visibility, setVisibility] = useState(visibilityDefault),
     [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>("2d"),
-    [threeDActivated, setThreeDActivated] = useState(false);
-  const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), sidebarResize = useRef<{ startX: number; startWidth: number } | null>(null);
+    [threeDActivated, setThreeDActivated] = useState(false),
+    [splitRatio, setSplitRatio] = useState(45),
+    [twoDPanelCollapsed, setTwoDPanelCollapsed] = useState(false);
+  const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), splitResize = useRef<{ startX: number; startRatio: number; width: number } | null>(null);
   const nodes = data?.nodes || {};
   const conduitOverlay = useOverlayStore((state) => state.overlay);
   const conduitOverlayDirty = useOverlayStore((state) => state.dirty);
@@ -697,6 +699,26 @@ function App() {
       focusEvaluationTarget(measurement.measurementId, { primaryId: space.roomRegionId, relatedIds: [...new Set(relatedIds.filter((id) => id !== space.roomRegionId))], label: "动静分区", levelId: space.levelId, levelName: nodes[space.levelId]?.name ?? "未命名楼层", status: "measured" }, 0);
     }} onFocusUtilization={(measurement) => focusEvaluationTarget(`S1-LY-${measurement.zoneId}`, { primaryId: measurement.zoneId, relatedIds: [], label: "空间利用", levelId: measurement.levelId, levelName: nodes[measurement.levelId]?.name ?? "未命名楼层", status: "measured" }, 0)} onFocusObjectEvidence={focusS1ObjectEvidence} />
   </>;
+  const twoDPanel = <aside className={`two-d-floating-panel ${twoDPanelCollapsed ? "collapsed" : ""}`}>
+    <div className="two-d-panel-head"><b>2D 工具</b><button aria-label={twoDPanelCollapsed ? "展开 2D 工具" : "折叠 2D 工具"} onClick={() => setTwoDPanelCollapsed((value) => !value)}>{twoDPanelCollapsed ? "展开" : "收起"}</button></div>
+    {!twoDPanelCollapsed && <>
+      <Inspector node={selectedId ? nodes[selectedId] : null} nodes={nodes} coverage={coverage} dimension={selectedDimension} manualMeasurement={manualMeasurements.find((item) => item.id === selectedManualId) ?? null} measurementUnit={measurementUnit} />
+      <section className="two-d-tool-section">
+        {layerControls}
+        <label>全局单位 <select value={measurementUnit} onChange={(event) => setMeasurementUnit(event.target.value as MeasurementUnit)}><option value="millimeters">公制（mm / m²）</option><option value="feet-inches">英制（ft-in / ft²）</option></select></label>
+        <button className={`measure-toggle ${measurementMode !== "off" ? "active" : ""}`} title="开启后点击两点测量；按一次 Shift 切换正交；Esc 退出" onClick={() => setMeasurementMode((current) => current === "off" ? "aligned" : "off")}>{measurementMode === "off" ? "测量" : "退出测量"}</button>
+      </section>
+      <section className="two-d-tool-section" aria-label="对象隐藏">
+        <button disabled={!isHideableSceneNode(selectedSceneNode)} onClick={hideSelectedSceneNode}>隐藏所选</button>
+        <button disabled={!sceneVisibility.hiddenNodeIds.length} onClick={() => setSceneVisibility(restoreAllSceneNodes)}>恢复全部{sceneVisibility.hiddenNodeIds.length ? ` (${sceneVisibility.hiddenNodeIds.length})` : ""}</button>
+        <div className="two-d-history-buttons"><button disabled={!sceneVisibility.undoStack.length} aria-label="撤销隐藏" onClick={() => setSceneVisibility(undoSceneVisibility)}>↶</button><button disabled={!sceneVisibility.redoStack.length} aria-label="重做隐藏" onClick={() => setSceneVisibility(redoSceneVisibility)}>↷</button></div>
+      </section>
+      {workspaceViewMode === "2d" && <button className="primary" onClick={addCanvas}>+ 添加画布</button>}
+      {import.meta.env.DEV && <details className="developer-tools"><summary>开发信息</summary><Stats nodes={nodes} /><Diagnostics diagnostics={diagnostics} /></details>}
+    </>}
+  </aside>;
+  const visibleTwoDIds = new Set(visibleTwoDCanvasIds(canvases.map((canvas) => canvas.id), workspaceViewMode));
+  const displayedCanvases = canvases.filter((canvas) => visibleTwoDIds.has(canvas.id));
   return (
     <div className="app">
       <header className="topbar">
@@ -706,6 +728,7 @@ function App() {
         <div className="actions">
           <div className="workspace-view-toggle" role="group" aria-label="工作区视图">
             <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D 平面</button>
+            <button className={workspaceViewMode === "split" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("split"); setMeasurementMode("off"); }}>2D + 3D</button>
             <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D 查看</button>
           </div>
           <button className="primary" onClick={() => input.current?.click()}>
@@ -725,68 +748,13 @@ function App() {
           <span className="file">{file}</span>
         </div>
       </header>
-      <main className={`workspace ${workspaceViewMode === "3d" ? "workspace-3d" : ""}`} style={{ "--sidebar-width": `${sidebarWidth}px` } as React.CSSProperties}>
-        {workspaceViewMode === "2d" && <><aside className="sidebar">
-          <Inspector
-            node={selectedId ? nodes[selectedId] : null}
-            nodes={nodes}
-            coverage={coverage}
-            dimension={selectedDimension}
-            manualMeasurement={manualMeasurements.find((item) => item.id === selectedManualId) ?? null}
-            measurementUnit={measurementUnit}
-          />
-          {import.meta.env.DEV && <details className="developer-tools"><summary>开发信息</summary><Stats nodes={nodes} /><Diagnostics diagnostics={diagnostics} /></details>}
-        </aside>
-        <div
-          className="sidebar-resizer"
-          role="separator"
-          aria-label="调整左侧栏宽度"
-          aria-orientation="vertical"
-          tabIndex={0}
-          onPointerDown={(event) => {
-            sidebarResize.current = { startX: event.clientX, startWidth: sidebarWidth };
-            event.currentTarget.setPointerCapture(event.pointerId);
-          }}
-          onPointerMove={(event) => {
-            const resize = sidebarResize.current;
-            if (resize) setSidebarWidth(Math.max(320, Math.min(560, resize.startWidth + event.clientX - resize.startX)));
-          }}
-          onPointerUp={(event) => {
-            sidebarResize.current = null;
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }}
-          onPointerCancel={() => { sidebarResize.current = null; }}
-          onKeyDown={(event) => {
-            if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-              event.preventDefault();
-              setSidebarWidth((width) => Math.max(320, Math.min(560, width + (event.key === "ArrowLeft" ? -16 : 16))));
-            }
-          }}
-        /></>}
+      <main className="workspace conduit-workspace">
         <section className="canvas-workspace">
-          <div className="canvas-workspace-head">
-            <div className="measurement-toolbar">
-              {workspaceViewMode === "2d" && <>
-                {layerControls}
-                <label>全局单位 <select value={measurementUnit} onChange={(event) => setMeasurementUnit(event.target.value as MeasurementUnit)}><option value="millimeters">公制（mm / m²）</option><option value="feet-inches">英制（ft-in / ft²）</option></select></label>
-                <button className={`measure-toggle ${measurementMode !== "off" ? "active" : ""}`} title="开启后点击两点测量；按一次 Shift 切换正交；Esc 退出" onClick={() => setMeasurementMode((current) => current === "off" ? "aligned" : "off")}>{measurementMode === "off" ? "测量" : "退出测量"}</button>
-              </>}
-              {workspaceViewMode === "2d" && <div className="object-visibility-controls" aria-label="对象隐藏">
-                <button disabled={!isHideableSceneNode(selectedSceneNode)} title="仅隐藏当前画布对象；撤销：⌘/Ctrl+Z，重做：⌘/Ctrl+Y 或 ⌘/Ctrl+Shift+Z" onClick={hideSelectedSceneNode}>隐藏所选</button>
-                <button disabled={!sceneVisibility.hiddenNodeIds.length} title="恢复当前会话中全部手动隐藏的对象；可用 ⌘/Ctrl+Z 撤销" onClick={() => setSceneVisibility(restoreAllSceneNodes)}>恢复全部{sceneVisibility.hiddenNodeIds.length ? ` (${sceneVisibility.hiddenNodeIds.length})` : ""}</button>
-                <button disabled={!sceneVisibility.undoStack.length} title="撤销隐藏（⌘/Ctrl+Z）" aria-label="撤销隐藏" onClick={() => setSceneVisibility(undoSceneVisibility)}>↶</button>
-                <button disabled={!sceneVisibility.redoStack.length} title="重做隐藏（⌘/Ctrl+Y 或 ⌘/Ctrl+Shift+Z）" aria-label="重做隐藏" onClick={() => setSceneVisibility(redoSceneVisibility)}>↷</button>
-              </div>}
-              {workspaceViewMode === "2d" && <button className="primary" onClick={addCanvas}>
-                + 添加画布
-              </button>}
-            </div>
-          </div>
-          {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "3d" ? "" : "workspace-view-pane-hidden"}`}>
-            <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
-          </div>}
-          <div className={`canvas-grid count-${Math.min(canvases.length, 4)} ${workspaceViewMode === "2d" ? "" : "workspace-view-pane-hidden"}`}>
-            {canvases.map((canvas) => (
+          <div className={`workspace-views mode-${workspaceViewMode}`} style={{ "--split-ratio": `${splitRatio}%` } as React.CSSProperties}>
+          <div className={`workspace-view-pane workspace-view-pane-2d ${workspaceViewMode === "3d" ? "workspace-view-pane-hidden" : ""}`}>
+            {twoDPanel}
+          <div className={`canvas-grid count-${Math.min(displayedCanvases.length, 4)}`}>
+            {displayedCanvases.map((canvas) => (
               <CanvasPanel
                 key={canvas.id}
                 canvas={canvas}
@@ -833,6 +801,42 @@ function App() {
                 canRemove={canvases.length > 1}
               />
             ))}
+          </div>
+          </div>
+          {workspaceViewMode === "split" && <div
+            className="workspace-split-divider"
+            role="separator"
+            aria-label="调整 2D 与 3D 视图宽度"
+            aria-orientation="vertical"
+            aria-valuemin={25}
+            aria-valuemax={75}
+            aria-valuenow={Math.round(splitRatio)}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              const width = event.currentTarget.parentElement?.getBoundingClientRect().width ?? 0;
+              if (!width) return;
+              splitResize.current = { startX: event.clientX, startRatio: splitRatio, width };
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerMove={(event) => {
+              const resize = splitResize.current;
+              if (resize) setSplitRatio(clampSplitRatio(resize.startRatio + (event.clientX - resize.startX) / resize.width * 100));
+            }}
+            onPointerUp={(event) => {
+              splitResize.current = null;
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+            }}
+            onPointerCancel={() => { splitResize.current = null; }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+                event.preventDefault();
+                setSplitRatio((ratio) => clampSplitRatio(ratio + (event.key === "ArrowLeft" ? -2 : 2)));
+              }
+            }}
+          />}
+          {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
+            <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
+          </div>}
           </div>
         </section>
       </main>
@@ -1039,8 +1043,8 @@ function ConduitPlanOverlay({ overlay, levelId, selectedId, onSelect }: { overla
   const belongsToLevel = (attachment: { levelId: string | null } | undefined) => !attachment?.levelId || attachment.levelId === levelId;
   return <g className="conduit-plan-overlay" aria-label="只读管线平面图">
     {overlay.segments.filter((segment) => overlay.settings.visibleSystems[segment.system] && (belongsToLevel(segment.start.attachment) || belongsToLevel(segment.end.attachment))).map((segment) => <g key={segment.id} onClick={(event) => { event.stopPropagation(); onSelect(segment.id); }}><line x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={selectedId === segment.id ? "#f59e0b" : overlay.settings.colors[segment.system]} strokeWidth={Math.max(.025, segment.diameterMm / 1000)} strokeLinecap="round" />{Math.abs(segment.start.position[0] - segment.end.position[0]) < .001 && Math.abs(segment.start.position[2] - segment.end.position[2]) < .001 && <text x={segment.start.position[0] + .08} y={segment.start.position[2] - .08} fontSize=".22" fill="#334155">{segment.end.position[1] >= segment.start.position[1] ? "↑" : "↓"}</text>}</g>)}
-    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => fitting.arc ? <polyline key={fitting.id} points={planArcPoints(fitting.arc).map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} strokeWidth={Math.max(.025, fitting.diameterMm / 1000)} strokeLinecap="round" strokeLinejoin="round" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} /> : <circle key={fitting.id} cx={fitting.position.position[0]} cy={fitting.position.position[2]} r={Math.max(.045, fitting.diameterMm / 1500)} fill={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} stroke={fitting.fitting === "coupling" ? "#ffffff" : "#64748b"} strokeWidth={fitting.fitting === "coupling" ? ".03" : ".015"} onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />)}
-    {overlay.junctionBoxes.filter((box) => overlay.settings.visibleSystems[box.system] && belongsToLevel(box.position.attachment)).map((box) => { const size = box.sizeMm[0] / 1000; return <rect key={box.id} x={box.position.position[0] - size / 2} y={box.position.position[2] - size / 2} width={size} height={size} fill={selectedId === box.id ? "#f59e0b" : overlay.settings.colors[box.system]} stroke="#ffffff" strokeWidth=".018" onClick={(event) => { event.stopPropagation(); onSelect(box.id); }} />; })}
+    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => { const display = planFittingDisplay(fitting), color = selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system], width = Math.max(.025, fitting.diameterMm / 1000); if (display.kind === "arc") return <polyline key={fitting.id} points={planArcPoints(fitting.arc!).map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />; if (display.kind === "connectors") return <g key={fitting.id} onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }}>{display.lines.map((line, index) => <line key={index} x1={line.start[0]} y1={line.start[2]} x2={line.end[0]} y2={line.end[2]} stroke={color} strokeWidth={width} strokeLinecap="round" />)}</g>; return null; })}
+    {overlay.junctionBoxes.filter((box) => overlay.settings.visibleSystems[box.system] && belongsToLevel(box.position.attachment)).map((box) => { const size = box.sizeMm[0] / 1000, signal = box.system === "signal"; return <rect key={box.id} x={box.position.position[0] - size / 2} y={box.position.position[2] - size / 2} width={size} height={size} fill={selectedId === box.id ? "#f59e0b" : overlay.settings.colors[box.system]} stroke={signal ? "#94a3b8" : "none"} strokeWidth={signal ? ".012" : undefined} onClick={(event) => { event.stopPropagation(); onSelect(box.id); }} />; })}
     {overlay.penetrations.filter((feature) => belongsToLevel(feature.point.attachment)).map((feature) => <path key={feature.id} d={`M ${feature.point.position[0] - .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] + .08} ${feature.point.position[2] + .08} M ${feature.point.position[0] + .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] - .08} ${feature.point.position[2] + .08}`} stroke="#d97706" strokeWidth=".025" />)}
   </g>;
 }

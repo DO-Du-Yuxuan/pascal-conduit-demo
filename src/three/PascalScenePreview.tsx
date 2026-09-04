@@ -8,9 +8,10 @@ import type { ThreeDLevelMode, ThreeDWallMode } from "./view-state";
 import type { ThreeDSceneInput } from "./scene-input";
 import type { ConduitOverlayDocument, HostAttachment, Penetration, RoutePoint, Vec3, WallChase } from "../domain/overlay";
 import { transitionToAdjacentWall, type WallHostCandidate } from "./host-transition";
+import { isFrontmostSurfaceEvent } from "./surface-picking";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void };
 type Point = [number, number, number];
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -40,7 +41,7 @@ const typeLayer = (type: string): keyof ThreeDLayerVisibility | null => {
   return null;
 };
 
-function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, penetrations = [], onSurfaceHit, onSurfaceMove, onSurfaceFinish }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void }) {
+function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, penetrations = [], onSurfaceHit, onSurfaceMove, onSurfaceFinish }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void }) {
   const geometry = useMemo(() => {
     const polygon = Array.isArray(node.polygon) ? node.polygon : [];
     if (polygon.length < 3) return null;
@@ -61,7 +62,7 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
   }, [node.polygon, node.holes, penetrations]);
   if (!geometry) return null;
   const hit = (event: any): ThreeDSurfaceHit | null => attachment ? { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey } : null;
-  return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { event.stopPropagation(); onSurfaceFinish?.(); }}>
+  return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
     {thickness > 0 ? <extrudeGeometry args={[geometry, { depth: thickness, bevelEnabled: false }]} /> : <shapeGeometry args={[geometry]} />}
     <meshStandardMaterial color={selected ? "#fb923c" : color} transparent opacity={opacity} side={2} roughness={.88} />
   </mesh>;
@@ -77,7 +78,7 @@ function ItemProxy({ node, position, selected, onSelect }: { node: NodeData; pos
   </group>;
 }
 
-function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, curveT }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: WallChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void; curveT?: number }) {
+function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, curveT }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: WallChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; curveT?: number }) {
   const start = vector([node.start?.[0], 0, node.start?.[1]]), end = vector([node.end?.[0], 0, node.end?.[1]]);
   const length = Math.hypot(end[0] - start[0], end[2] - start[2]);
   if (length < .001) return null;
@@ -116,14 +117,15 @@ function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [],
     return { point: p, attachment: { hostId, hostKind: "wall", surface: wallSide, normal, levelId, localPosition: [(p[0] - start[0]) * tangent[0] + (p[2] - start[2]) * tangent[2], p[1] - y, (p[0] - start[0]) * normal[0] + (p[2] - start[2]) * normal[2]], basis: { u: tangent, v: [0, 1, 0] }, curveT, wallSide }, shiftKey: event.nativeEvent.shiftKey };
   };
   return <group position={[(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2]} rotation={[0, -Math.atan2(end[2] - start[2], end[0] - start[0]), 0]}>
-    {parts.map((part, index) => <mesh key={index} position={[part.x, part.y, 0]} onPointerMove={(event) => onSurfaceMove?.(hit(event))} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onSurfaceFinish?.(); }}><boxGeometry args={[part.width, part.height, thickness]} /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={wallMode === "translucent"} opacity={wallMode === "translucent" ? .3 : 1} roughness={.92} /></mesh>)}
+    {parts.map((part, index) => <mesh key={index} position={[part.x, part.y, 0]} onPointerMove={(event) => { if (isFrontmostSurfaceEvent(event)) onSurfaceMove?.(hit(event)); }} onClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}><boxGeometry args={[part.width, part.height, thickness]} /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={wallMode === "translucent"} opacity={wallMode === "translucent" ? .3 : 1} roughness={.92} /></mesh>)}
+    {validHoles.map((hole, index) => <mesh key={`hole-blocker:${index}`} position={[(hole.left + hole.right) / 2 - length / 2, (hole.bottom + hole.top) / 2, 0]} onPointerMove={(event) => { if (isFrontmostSurfaceEvent(event)) onSurfaceMove?.(null); }} onClick={(event) => { if (isFrontmostSurfaceEvent(event)) event.stopPropagation(); }} onDoubleClick={(event) => { if (isFrontmostSurfaceEvent(event)) event.stopPropagation(); }}><boxGeometry args={[hole.right - hole.left, hole.top - hole.bottom, thickness + .004]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} /></mesh>)}
   </group>;
 }
 
 /** Pascal stores a curve as a chord plus sagitta. Render it as short tangent
  * wall pieces, preserving the same source curveOffset rather than mirroring it
  * into an arbitrary spline. Openings are split across every overlapping piece. */
-function CurvedWall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: WallChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void }) {
+function CurvedWall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: WallChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void }) {
   const start = vector([node.start?.[0], 0, node.start?.[1]]), end = vector([node.end?.[0], 0, node.end?.[1]]), chordLength = Math.hypot(end[0] - start[0], end[2] - start[2]);
   const segments = Math.max(12, Math.min(32, Math.ceil(chordLength * 3)));
   return <group>{Array.from({ length: segments }, (_, index) => {
@@ -167,7 +169,7 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
     levelId: levelIdFor(node),
     openings: Object.values(scene.nodes).filter((child) => (child.type === "door" || child.type === "window") && (child.wallId === node.id || child.parentId === node.id)).flatMap((child) => Array.isArray(child.position) && Number.isFinite(child.position[0]) && Number.isFinite(child.width) ? [{ center: child.position[0], width: child.width }] : []),
   })), [scene.nodes, levelById]);
-  const handleSurfaceMove = (hit: ThreeDSurfaceHit) => onSurfaceMove?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId));
+  const handleSurfaceMove = (hit: ThreeDSurfaceHit | null) => onSurfaceMove?.(hit ? transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId) : null);
   const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId));
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
   const floorTopAt = (level: number, x: number, z: number) => Math.max(0, ...Object.values(scene.nodes).filter((node) => node.type === "slab" && levelFor(node) === level && Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));

@@ -15,6 +15,12 @@ const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0
 const length = (value: Vec3) => Math.hypot(...value);
 const normalize = (value: Vec3): Vec3 => { const size = length(value); return size < EPSILON ? [1, 0, 0] : scale(value, 1 / size); };
 const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): RoutePoint => ({ ...copyPoint(start), position: add(start.position, scale(normalize(subtract(end.position, start.position)), distance)) });
+const followsHostPlane = (corner: RoutePoint, other: RoutePoint) => {
+  const attachment = corner.attachment;
+  if (!attachment || !other.attachment) return false;
+  const direction = normalize(subtract(other.position, corner.position));
+  return Math.abs(dot(direction, normalize(attachment.normal))) <= .025;
+};
 const segmentType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-segment" as const : "conduit-segment" as const;
 const fittingType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-fitting" as const : "conduit-fitting" as const;
 const isElectrical = (system: RoutingSystem) => system !== "sprinkler";
@@ -40,7 +46,13 @@ export function planRoute(system: RoutingSystem, diameterMm: number, mode: Surfa
     const previous = points[index - 1], corner = points[index], next = points[index + 1], incoming = normalize(subtract(corner.position, previous.position)), outgoing = normalize(subtract(next.position, corner.position));
     const deflection = Math.acos(Math.max(-1, Math.min(1, dot(incoming, outgoing))));
     if (deflection < .01) { corners.push({ point: copyPoint(corner), style: "none" }); continue; }
-    const sameHost = Boolean(previous.attachment && corner.attachment && next.attachment && previous.attachment.hostId === corner.attachment.hostId && corner.attachment.hostId === next.attachment.hostId);
+    // Host metadata can switch at either end of a boundary leg. Preserve a
+    // sweep when that leg is tangent to the old or the new host plane; only a
+    // genuinely normal cross-host turn remains a right-angle fitting.
+    const sameHost = Boolean(previous.attachment && corner.attachment && next.attachment && (
+      previous.attachment.hostId === corner.attachment.hostId && (corner.attachment.hostId === next.attachment.hostId || followsHostPlane(corner, next))
+      || corner.attachment.hostId === next.attachment.hostId && followsHostPlane(corner, previous)
+    ));
     if (isElectrical(system) && sameHost) {
       const radius = bendRadiusMm / 1000, tangentDistance = radius * Math.tan(deflection / 2), incomingLength = length(subtract(corner.position, previous.position)), outgoingLength = length(subtract(next.position, corner.position));
       if (tangentDistance >= incomingLength - EPSILON || tangentDistance >= outgoingLength - EPSILON) {
