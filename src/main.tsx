@@ -125,6 +125,7 @@ const BELLEVUE_DEMO_REQUIREMENTS = builtInRequirementLoad.handoff;
 function App() {
   const [data, setData] = useState<Parsed | null>(null),
     [file, setFile] = useState("未导入文件"),
+    [sourceSha, setSourceSha] = useState(""),
     [canvases, setCanvases] = useState<CanvasState[]>([
       { id: 1, levelId: "", viewBox: emptyView, rotation: DEFAULT_CANVAS_ROTATION },
     ]),
@@ -220,8 +221,10 @@ function App() {
     }
     clearEvaluationResults();
   };
-  const load = (text: string, name: string, useDemoRequirements = false) => {
+  const load = async (text: string, name: string, useDemoRequirements = false) => {
     try {
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+      const sha256 = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
       const parsed = parseProject(JSON.parse(text));
       parsed.diagnostics = [
         ...parsed.diagnostics,
@@ -265,7 +268,8 @@ function App() {
       }
       setRequirementError(null);
       setFile(name);
-      resetConduitOverlay(createEmptyOverlay(name, name === "default-layout.json" ? DEFAULT_CONDUIT_SOURCE_SHA : ""));
+      setSourceSha(sha256);
+      resetConduitOverlay(createEmptyOverlay(name, sha256));
       setWorkspaceViewMode("2d");
       setSelectedId(null);
       setSelectedDimension(null);
@@ -327,7 +331,7 @@ function App() {
       });
     }
   };
-  useEffect(() => { load(defaultLayoutText, "default-layout.json"); }, []);
+  useEffect(() => { void load(defaultLayoutText, "default-layout.json"); }, []);
   const updateCanvas = (id: number, update: Partial<CanvasState>) =>
     setCanvases((current) =>
       current.map((canvas) =>
@@ -770,7 +774,7 @@ function App() {
               </button>}
             </div>
           </div>
-          {workspaceViewMode === "3d" ? <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={file === "default-layout.json" ? DEFAULT_CONDUIT_SOURCE_SHA : ""} /> : <div className={`canvas-grid count-${Math.min(canvases.length, 4)}`}>
+          {workspaceViewMode === "3d" ? <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} /> : <div className={`canvas-grid count-${Math.min(canvases.length, 4)}`}>
             {canvases.map((canvas) => (
               <CanvasPanel
                 key={canvas.id}
@@ -1018,8 +1022,8 @@ function ConduitPlanOverlay({ overlay, levelId, selectedId, onSelect }: { overla
   if (!overlay) return null;
   const belongsToLevel = (attachment: { levelId: string | null } | undefined) => !attachment?.levelId || attachment.levelId === levelId;
   return <g className="conduit-plan-overlay" aria-label="只读管线平面图">
-    {overlay.segments.filter((segment) => belongsToLevel(segment.start.attachment) || belongsToLevel(segment.end.attachment)).map((segment) => <g key={segment.id} onClick={(event) => { event.stopPropagation(); onSelect(segment.id); }}><line x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={selectedId === segment.id ? "#f59e0b" : overlay.settings.colors[segment.system]} strokeWidth={Math.max(.025, segment.diameterMm / 1000)} strokeLinecap="round" />{Math.abs(segment.start.position[0] - segment.end.position[0]) < .001 && Math.abs(segment.start.position[2] - segment.end.position[2]) < .001 && <text x={segment.start.position[0] + .08} y={segment.start.position[2] - .08} fontSize=".22" fill="#334155">{segment.end.position[1] >= segment.start.position[1] ? "↑" : "↓"}</text>}</g>)}
-    {overlay.fittings.filter((fitting) => belongsToLevel(fitting.position.attachment)).map((fitting) => <circle key={fitting.id} cx={fitting.position.position[0]} cy={fitting.position.position[2]} r={Math.max(.045, fitting.diameterMm / 1500)} fill={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} stroke="#64748b" strokeWidth=".015" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />)}
+    {overlay.segments.filter((segment) => overlay.settings.visibleSystems[segment.system] && (belongsToLevel(segment.start.attachment) || belongsToLevel(segment.end.attachment))).map((segment) => <g key={segment.id} onClick={(event) => { event.stopPropagation(); onSelect(segment.id); }}><line x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={selectedId === segment.id ? "#f59e0b" : overlay.settings.colors[segment.system]} strokeWidth={Math.max(.025, segment.diameterMm / 1000)} strokeLinecap="round" />{Math.abs(segment.start.position[0] - segment.end.position[0]) < .001 && Math.abs(segment.start.position[2] - segment.end.position[2]) < .001 && <text x={segment.start.position[0] + .08} y={segment.start.position[2] - .08} fontSize=".22" fill="#334155">{segment.end.position[1] >= segment.start.position[1] ? "↑" : "↓"}</text>}</g>)}
+    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => <circle key={fitting.id} cx={fitting.position.position[0]} cy={fitting.position.position[2]} r={Math.max(.045, fitting.diameterMm / 1500)} fill={selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system]} stroke="#64748b" strokeWidth=".015" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />)}
     {overlay.penetrations.filter((feature) => belongsToLevel(feature.point.attachment)).map((feature) => <path key={feature.id} d={`M ${feature.point.position[0] - .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] + .08} ${feature.point.position[2] + .08} M ${feature.point.position[0] + .08} ${feature.point.position[2] - .08} L ${feature.point.position[0] - .08} ${feature.point.position[2] + .08}`} stroke="#d97706" strokeWidth=".025" />)}
   </g>;
 }

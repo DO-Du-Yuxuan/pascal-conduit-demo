@@ -2,9 +2,9 @@ import { Line } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
 import { useMemo } from "react";
 import { Quaternion, Vector3 } from "three";
-import type { ConduitOverlayDocument, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
+import type { ConduitOverlayDocument, HostAttachment, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
 
-type Props = { overlay: ConduitOverlayDocument; selectedId: string | null; constructionMode: "construction" | "finished" | "xray"; visibleSystems: Record<RoutingSystem, boolean>; draft: Vec3[]; draftColor: string; onSelect: (id: string) => void; onBranch: (segment: RouteSegment, point: Vec3) => void };
+type Props = { overlay: ConduitOverlayDocument; selectedId: string | null; constructionMode: "construction" | "finished" | "xray"; visibleSystems: Record<RoutingSystem, boolean>; draft: Vec3[]; draftColor: string; previewHost?: HostAttachment; onSelect: (id: string) => void; onBranch: (segment: RouteSegment, point: Vec3) => void };
 
 const point = (value: Vec3) => new Vector3(value[0], value[1], value[2]);
 
@@ -28,7 +28,7 @@ function FittingMesh({ fitting, color, selected, visible, onSelect }: { fitting:
   return <group position={p} onClick={(event) => { event.stopPropagation(); onSelect(); }}>{signal && !selected && <mesh><sphereGeometry args={[radius + .002, 12, 10]} /><meshStandardMaterial color="#94a3b8" roughness={0.4} /></mesh>}<mesh><sphereGeometry args={[radius, 12, 10]} /><meshStandardMaterial color={selected ? "#f59e0b" : color} roughness={0.4} /></mesh></group>;
 }
 
-export function ConduitScene({ overlay, selectedId, constructionMode, visibleSystems, draft, draftColor, onSelect, onBranch }: Props) {
+export function ConduitScene({ overlay, selectedId, constructionMode, visibleSystems, draft, draftColor, previewHost, onSelect, onBranch }: Props) {
   const visible = (system: RoutingSystem) => visibleSystems[system] && (constructionMode !== "finished" || system === "sprinkler");
   return <group name="routing">
     {overlay.segments.map((segment) => <SegmentMesh key={segment.id} segment={segment} color={overlay.settings.colors[segment.system]} selected={selectedId === segment.id} visible={visible(segment.system)} onSelect={() => onSelect(segment.id)} onBranch={(branchPoint) => onBranch(segment, branchPoint)} />)}
@@ -36,5 +36,7 @@ export function ConduitScene({ overlay, selectedId, constructionMode, visibleSys
     {constructionMode !== "finished" && overlay.wallChases.map((chase) => <Line key={chase.id} points={[chase.start.position, chase.end.position]} color="#50351f" lineWidth={Math.max(2, chase.widthMm / 5)} transparent opacity={0.75} />)}
     {constructionMode !== "finished" && overlay.penetrations.map((penetration) => <mesh key={penetration.id} position={penetration.point.position}><sphereGeometry args={[penetration.diameterMm / 2000, 10, 8]} /><meshStandardMaterial color="#fbbf24" transparent opacity={0.68} /></mesh>)}
     {draft.length >= 2 && <Line points={draft} color={draftColor} lineWidth={3} dashed dashSize={0.14} gapSize={0.08} />}
+    {draft.length >= 1 && <mesh position={draft[draft.length - 1]}><sphereGeometry args={[.055, 12, 10]} /><meshBasicMaterial color={draftColor} /></mesh>}
+    {previewHost && draft.length >= 1 && <mesh position={draft[draft.length - 1]}><ringGeometry args={[.07, .095, 16]} /><meshBasicMaterial color="#facc15" side={2} /></mesh>}
   </group>;
 }
