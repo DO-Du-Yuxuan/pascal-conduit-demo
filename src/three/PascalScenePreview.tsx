@@ -112,8 +112,8 @@ function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [],
     const p: Vec3 = [event.point.x, event.point.y, event.point.z];
     return { point: p, attachment: { hostId, hostKind: "wall", surface: normal[2] >= 0 ? "exterior" : "interior", normal, levelId, localPosition: [(p[0] - start[0]) * tangent[0] + (p[2] - start[2]) * tangent[2], p[1] - y, (p[0] - start[0]) * normal[0] + (p[2] - start[2]) * normal[2]], basis: { u: tangent, v: [0, 1, 0] }, curveT, wallSide: normal[2] >= 0 ? "exterior" : "interior" }, shiftKey: event.nativeEvent.shiftKey };
   };
-  return <group position={[(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2]} rotation={[0, -Math.atan2(end[2] - start[2], end[0] - start[0]), 0]} onPointerMove={(event) => onSurfaceMove?.(hit(event))} onClick={(event) => { event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { event.stopPropagation(); onSurfaceFinish?.(); }}>
-    {parts.map((part, index) => <mesh key={index} position={[part.x, part.y, 0]}><boxGeometry args={[part.width, part.height, thickness]} /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={wallMode === "translucent"} opacity={wallMode === "translucent" ? .3 : 1} roughness={.92} /></mesh>)}
+  return <group position={[(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2]} rotation={[0, -Math.atan2(end[2] - start[2], end[0] - start[0]), 0]}>
+    {parts.map((part, index) => <mesh key={index} position={[part.x, part.y, 0]} onPointerMove={(event) => onSurfaceMove?.(hit(event))} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onSurfaceFinish?.(); }}><boxGeometry args={[part.width, part.height, thickness]} /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={wallMode === "translucent"} opacity={wallMode === "translucent" ? .3 : 1} roughness={.92} /></mesh>)}
   </group>;
 }
 
