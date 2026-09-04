@@ -704,6 +704,10 @@ function App() {
           <b>Pascal 施工管线路由</b>
         </div>
         <div className="actions">
+          <div className="workspace-view-toggle" role="group" aria-label="工作区视图">
+            <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D 平面</button>
+            <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D 查看</button>
+          </div>
           <button className="primary" onClick={() => input.current?.click()}>
             导入 JSON
           </button>
@@ -762,10 +766,6 @@ function App() {
         <section className="canvas-workspace">
           <div className="canvas-workspace-head">
             <div className="measurement-toolbar">
-              <div className="workspace-view-toggle" role="group" aria-label="工作区视图">
-                <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D 平面</button>
-                <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D 查看</button>
-              </div>
               {workspaceViewMode === "2d" && <>
                 {layerControls}
                 <label>全局单位 <select value={measurementUnit} onChange={(event) => setMeasurementUnit(event.target.value as MeasurementUnit)}><option value="millimeters">公制（mm / m²）</option><option value="feet-inches">英制（ft-in / ft²）</option></select></label>
