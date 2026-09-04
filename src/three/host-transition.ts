@@ -32,13 +32,14 @@ function segmentIntersection(start: [number, number], end: [number, number], wal
  * a shared boundary. This is geometric adjacency, not a screen-ray accident,
  * so it works for horizontal, vertical and curved walls equally.
  */
-export function transitionToAdjacentWall(hit: ThreeDSurfaceHit, walls: WallHostCandidate[], toleranceMeters = .14, previousPoint?: RoutePoint): ThreeDSurfaceHit {
+export function transitionToAdjacentWall(hit: ThreeDSurfaceHit, walls: WallHostCandidate[], toleranceMeters = .14, previousPoint?: RoutePoint, bypassWallHostId?: string | null): ThreeDSurfaceHit {
   if (hit.attachment.hostKind !== "slab" && hit.attachment.hostKind !== "ceiling") return hit;
   const point: [number, number] = [hit.point[0], hit.point[2]];
   type Match = { candidate: WallHostCandidate; t: number; x: number; y: number; z: number; distance: number; tangent: [number, number] };
   let nearest: Match | null = null, crossed: (Match & { routeT: number }) | null = null;
   const previousPlan: [number, number] | null = previousPoint && (previousPoint.attachment?.hostKind === "slab" || previousPoint.attachment?.hostKind === "ceiling") ? [previousPoint.position[0], previousPoint.position[2]] : null;
   for (const candidate of walls) {
+    if (candidate.node.id === bypassWallHostId) continue;
     if (candidate.levelId !== hit.attachment.levelId) continue;
     const start = planPoint(candidate.node.start), end = planPoint(candidate.node.end);
     if (!start || !end) continue;
@@ -66,16 +67,20 @@ export function transitionToAdjacentWall(hit: ThreeDSurfaceHit, walls: WallHostC
   const sideReference = crossed && previousPoint ? previousPoint.position : hit.point;
   const fromWall: Vec3 = [sideReference[0] - match.x, 0, sideReference[2] - match.z];
   if (normal[0] * fromWall[0] + normal[2] * fromWall[2] < 0) normal = [-normal[0], 0, -normal[2]];
+  const frameNormal: Vec3 = [-match.tangent[1], 0, match.tangent[0]];
+  const front = normal[0] * frameNormal[0] + normal[2] * frameNormal[2] >= 0;
+  const declaredSide = front ? match.candidate.node.frontSide : match.candidate.node.backSide;
+  const wallSide = declaredSide === "exterior" ? "exterior" : "interior";
   const attachment: HostAttachment = {
     hostId: match.candidate.node.id,
     hostKind: "wall",
-    surface: "interior",
+    surface: wallSide,
     normal,
     levelId: match.candidate.levelId,
     localPosition: [match.t * Math.hypot((match.candidate.node.end?.[0] ?? 0) - (match.candidate.node.start?.[0] ?? 0), (match.candidate.node.end?.[1] ?? 0) - (match.candidate.node.start?.[1] ?? 0)), match.y, 0],
     basis: { u: [match.tangent[0], 0, match.tangent[1]], v: [0, 1, 0] },
     curveT: isCurvedWall(match.candidate.node as any) ? match.t : undefined,
-    wallSide: "interior",
+    wallSide,
   };
   return { ...hit, point: [match.x, match.y, match.z], attachment };
 }

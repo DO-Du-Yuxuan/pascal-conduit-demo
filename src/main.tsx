@@ -174,7 +174,8 @@ function App() {
     [evaluationFocusMessage, setEvaluationFocusMessage] = useState<string | null>(null),
     [sidebarWidth, setSidebarWidth] = useState(392),
     [visibility, setVisibility] = useState(visibilityDefault),
-    [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>("2d");
+    [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>("2d"),
+    [threeDActivated, setThreeDActivated] = useState(false);
   const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), sidebarResize = useRef<{ startX: number; startWidth: number } | null>(null);
   const nodes = data?.nodes || {};
   const conduitOverlay = useOverlayStore((state) => state.overlay);
@@ -763,7 +764,7 @@ function App() {
             <div className="measurement-toolbar">
               <div className="workspace-view-toggle" role="group" aria-label="工作区视图">
                 <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D 平面</button>
-                <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D 查看</button>
+                <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D 查看</button>
               </div>
               {workspaceViewMode === "2d" && <>
                 {layerControls}
@@ -781,7 +782,10 @@ function App() {
               </button>}
             </div>
           </div>
-          {workspaceViewMode === "3d" ? <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} /> : <div className={`canvas-grid count-${Math.min(canvases.length, 4)}`}>
+          {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "3d" ? "" : "workspace-view-pane-hidden"}`}>
+            <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
+          </div>}
+          <div className={`canvas-grid count-${Math.min(canvases.length, 4)} ${workspaceViewMode === "2d" ? "" : "workspace-view-pane-hidden"}`}>
             {canvases.map((canvas) => (
               <CanvasPanel
                 key={canvas.id}
@@ -829,7 +833,7 @@ function App() {
                 canRemove={canvases.length > 1}
               />
             ))}
-          </div>}
+          </div>
         </section>
       </main>
     </div>

@@ -24,4 +24,10 @@ describe("floor to wall host transitions", () => {
     expect(transitioned.attachment.hostId).toBe("wall_54wj6s46m9q0m5qg");
     expect(transitioned.point[2]).toBeCloseTo(-.0566, 2);
   });
+
+  it("lets a one-shot Tab penetration bypass only its entrance wall", () => {
+    const previous = { position: [14, .05, -.8] as [number, number, number], attachment: slabHit(14, -.8).attachment };
+    const transitioned = transitionToAdjacentWall(otherSlabHit(14, .5), walls, .14, previous, "wall_54wj6s46m9q0m5qg");
+    expect(transitioned.attachment.hostId).toBe("slab_kjh8f1fpfjzu8zyt");
+  });
 });

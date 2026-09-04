@@ -13,10 +13,12 @@ const fallbackBasis = (point: RoutePoint) => point.attachment?.hostKind === "wal
 
 /** Project a candidate onto the dominant local direction of the last host. */
 export function constrainToHostAxes(previous: RoutePoint, candidate: RoutePoint, mode: DirectionMode): RoutePoint {
-  if (mode === "free") return candidate;
+  if (previous.attachment?.hostId !== candidate.attachment?.hostId) return candidate;
   const basis = previous.attachment?.basis ?? fallbackBasis(previous);
   const delta = subtract(candidate.position, previous.position);
   const alongU = dot(delta, basis.u), alongV = dot(delta, basis.v);
+  if (mode === "free" && candidate.attachment?.curveT !== undefined) return candidate;
+  if (mode === "free") return { ...candidate, position: add(previous.position, add(scale(basis.u, alongU), scale(basis.v, alongV))) };
   const constrained = Math.abs(alongU) >= Math.abs(alongV)
     ? add(previous.position, scale(basis.u, alongU))
     : add(previous.position, scale(basis.v, alongV));

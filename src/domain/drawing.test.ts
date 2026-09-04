@@ -16,6 +16,12 @@ describe("surface drawing preview", () => {
     expect(constrainToHostAxes(slab([0, 0, 0]), slab([3, 0, 1]), "free").position).toEqual([3, 0, 1]);
   });
 
+  it("defines free as arbitrary angle on the active host plane", () => {
+    expect(constrainToHostAxes(wall([0, 1, 0]), wall([2, 3, .8]), "free").position).toEqual([2, 3, 0]);
+    const other = { ...wall([2, 3, .8]), attachment: { ...wall([2, 3, .8]).attachment!, hostId: "adjacent-wall" } };
+    expect(constrainToHostAxes(wall([0, 1, 0]), other, "free")).toBe(other);
+  });
+
   it("adds a cursor-only preview without mutating confirmed route points", () => {
     const confirmed = [slab([0, 0, 0])];
     const preview = previewRoutePoints(confirmed, slab([2, 0, 1]), "orthogonal");

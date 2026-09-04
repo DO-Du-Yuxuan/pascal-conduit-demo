@@ -8,6 +8,7 @@ import { branchAtSegment, commitPlannedRoute, planRoute, type ConstructionVisual
 import { constrainToHostAxes, pointOnWorldAxis, previewRoutePoints, type WorldAxis } from "../domain/drawing";
 import { useOverlayStore } from "../domain/store";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
+import { projectRayToActiveWall } from "./active-host";
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
 import { DEFAULT_3D_LAYERS, type ThreeDLevelMode, type ThreeDViewPreset, type ThreeDWallMode, viewStateForPreset } from "./view-state";
 
@@ -67,6 +68,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const [overlay, setOverlay] = useState(() => copy(matchingOverlay ?? createEmptyOverlay(sourceFile, sourceSha))), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && sharedOverlayDirty)), [undoStack, setUndoStack] = useState<ConduitOverlayDocument[]>([]), [redoStack, setRedoStack] = useState<ConduitOverlayDocument[]>([]);
   const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("power"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [cursor, setCursor] = useState<RoutePoint | null>(null), [orthogonal, setOrthogonal] = useState(false), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [penetrationEntry, setPenetrationEntry] = useState<RoutePoint | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<RoutePoint[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [constructionMode, setConstructionMode] = useState<ConstructionMode>("construction"), [status, setStatus] = useState("Overlay 为空；选择系统后可在 3D 中开始画管。");
   const overlayInput = useRef<HTMLInputElement>(null);
+  const rawSurfaceHit = useRef<ThreeDSurfaceHit | null>(null);
   const hostAssessment = useMemo(() => assessOverlayHosts(overlay, Object.keys(scene?.nodes ?? {})), [overlay, scene]);
   const selectedSegment = overlay.segments.find((segment) => segment.id === selectedId);
   const selectedFitting = overlay.fittings.find((fitting) => fitting.id === selectedId);
@@ -116,10 +118,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const effectiveCursor = cursor && draft.length ? previewPoints[previewPoints.length - 1] : cursor;
   const displayDraft = draft.length ? previewPoints : cursor ? [cursor] : [];
   const onSurfaceMove = (hit: ThreeDSurfaceHit) => {
-    if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart))) setCursor(routePoint(hit));
+    rawSurfaceHit.current = hit;
+    const active = draft[draft.length - 1];
+    if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall" || penetrationEntry)) setCursor(routePoint(hit));
   };
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
-    const point = routePoint(hit);
+    const active = draft[draft.length - 1];
+    const keepActiveWallPoint = !penetrationEntry && active?.attachment?.hostKind === "wall" && effectiveCursor?.attachment?.hostId === active.attachment.hostId;
+    const point = keepActiveWallPoint ? effectiveCursor : routePoint(hit);
     if (tool === "branch" && branchStart) { setBranchEnd(point); setCursor(point); setStatus("分支终点已预览；按 Enter、双击或完成路径直接生成。 "); return; }
     if (tool !== "draw") return;
     if (penetrationEntry) { setDraft((points) => [...points, penetrationEntry, point]); setExplicitPenetrations((points) => [...points, penetrationEntry, point]); setPenetrationEntry(null); setCursor(null); setStatus("已确认穿透出口；继续画管或按 Enter 直接生成。"); return; }
@@ -142,6 +148,17 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const importOverlay = async (file: File) => { const imported = parseOverlay(JSON.parse(await file.text())); setOverlay(imported); setOverlayDirty(false); loadSharedOverlay(imported); setUndoStack([]); setRedoStack([]); const assessment = assessOverlayHosts(imported, Object.keys(scene?.nodes ?? {})); setStatus(imported.source.sha256 === sourceSha ? "Overlay 已恢复。" : assessment.missingHostIds.length ? `底图不同，${assessment.missingHostIds.length} 个宿主悬空；对应槽孔不会重建。` : "底图指纹不同，但宿主仍存在，已允许预览。"); };
   const exportOverlay = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "conduit-overlay.json"; anchor.click(); URL.revokeObjectURL(url); setOverlayDirty(false); markOverlayExported(); };
   const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
+  const onPointerRay = (origin: [number, number, number], direction: [number, number, number]) => {
+    const surfaceHit = rawSurfaceHit.current;
+    rawSurfaceHit.current = null;
+    if (worldAxis && draft.length) { setCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); return; }
+    const active = draft[draft.length - 1];
+    if (tool === "draw" && active?.attachment?.hostKind === "wall" && !penetrationEntry) {
+      const projected = projectRayToActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction);
+      if (projected) { setCursor(projected); return; }
+      if (surfaceHit) setCursor(routePoint(surfaceHit));
+    }
+  };
 
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
   if (!scene.rootNodeIds.length) return <section className="three-d-empty"><b>无法建立 3D 场景</b>{scene.diagnostics.map((diagnostic) => <span key={diagnostic.code}>{diagnostic.message}</span>)}</section>;
@@ -164,7 +181,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           {selectedId && <section><b>已选对象</b><span>{selectedId}</span>{selectedSegment && <><label>系统<select value={selectedSegment.system} onChange={(event) => { const nextSystem = event.target.value as RoutingSystem; commit({ ...overlay, segments: overlay.segments.map((segment) => segment.id === selectedSegment.id ? { ...segment, system: nextSystem, type: nextSystem === "sprinkler" ? "sprinkler-segment" : "conduit-segment" } : segment) }); }}>{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <option key={key} value={key}>{SYSTEM_DEFAULTS[key].label}</option>)}</select></label><label>外径 <input type="number" value={selectedSegment.diameterMm} onChange={(event) => { const value = Number(event.target.value); if (value > 0) commit({ ...overlay, segments: overlay.segments.map((segment) => segment.id === selectedSegment.id ? { ...segment, diameterMm: value } : segment) }); }} /> mm</label></>}{selectedFitting && <label>接头 {selectedFitting.fitting === "tee" ? "三通" : "弯头"}</label>}<small>管段、接头、墙槽和穿孔均与 2D 共享选择状态。</small></section>}
         </>}
       </aside>
-      <Canvas key={projection} orthographic={projection === "orthographic"} camera={projection === "orthographic" ? { position: [10, 10, 10], zoom: 30 } : { position: [10, 10, 10], fov: 50 }} dpr={[1, 1.25]} gl={{ antialias: true, powerPreference: "high-performance" }} onPointerMissed={() => onSelect(null)}><color attach="background" args={["#dfe6e9"]} /><PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} onSelect={(id) => onSelect(id)} overlay={overlay} constructionMode={constructionMode} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} /><ConduitScene overlay={overlay} selectedId={selectedId} constructionMode={constructionMode} visibleSystems={overlay.settings.visibleSystems} activeSystem={system} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewHost={effectiveCursor?.attachment} tool={tool} hoverId={hoverId} onHover={setHoverId} onSelect={onSelect} onBranch={(segment, position) => onBranch(segment.id, position)} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={(origin, direction) => { if (worldAxis && draft.length) setCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); }} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas><div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
+      <Canvas key={projection} orthographic={projection === "orthographic"} camera={projection === "orthographic" ? { position: [10, 10, 10], zoom: 30 } : { position: [10, 10, 10], fov: 50 }} dpr={[1, 1.25]} gl={{ antialias: true, powerPreference: "high-performance" }} onPointerMissed={() => onSelect(null)}><color attach="background" args={["#dfe6e9"]} /><PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationEntry?.attachment?.hostId} onSelect={(id) => onSelect(id)} overlay={overlay} constructionMode={constructionMode} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} /><ConduitScene overlay={overlay} selectedId={selectedId} constructionMode={constructionMode} visibleSystems={overlay.settings.visibleSystems} activeSystem={system} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewHost={effectiveCursor?.attachment} tool={tool} hoverId={hoverId} onHover={setHoverId} onSelect={onSelect} onBranch={(segment, position) => onBranch(segment.id, position)} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas><div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
     </div>
     <footer className="three-d-status"><span>{scene.itemCount} 件家具 · 不加载 GLB · {scene.hasRoofData ? "已读取屋顶数据" : "当前文件无屋顶数据"}</span><span>{overlay.segments.length} 段管线 · {overlay.fittings.length} 个接头 · {overlay.wallChases.length} 条墙槽 · {overlay.penetrations.length} 个穿孔</span>{overlayDirty && <span className="three-d-warning">Overlay 有未导出变更</span>}<span>{status}</span>{hostAssessment.missingHostIds.length > 0 && <span className="three-d-warning">{hostAssessment.missingHostIds.length} 个 Overlay 宿主悬空</span>}{scene.diagnostics.map((diagnostic) => <span className={`three-d-${diagnostic.severity}`} key={diagnostic.code}>{diagnostic.message}</span>)}</footer>
   </section>;
