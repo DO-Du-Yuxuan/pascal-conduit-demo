@@ -1,7 +1,7 @@
-import { OrbitControls } from "@react-three/drei";
+import { CameraControls, CameraControlsImpl } from "@react-three/drei";
 import { Canvas, type ThreeEvent } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BackSide, MOUSE } from "three";
+import { BackSide } from "three";
 import { ConduitScene, type ConduitTool } from "../components/ConduitScene";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type ConduitOverlayDocument, type RoutePoint, type RoutingSystem, type SurfaceMode } from "../domain/overlay";
 import { branchAtSegment, commitPlannedRoute, planRoute, type ConstructionVisualParameters, type PlannedRoute } from "../domain/routing";
@@ -20,7 +20,7 @@ type Tool = ConduitTool;
 type BranchStart = { segmentId: string; point: RoutePoint };
 
 function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPreset }) {
-  const controls = useRef<any>(null);
+  const controls = useRef<CameraControlsImpl>(null!);
   useEffect(() => {
     if (!controls.current) return;
     const [x, y, z] = bounds.center, distance = bounds.span * 1.35;
@@ -28,9 +28,12 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
       exterior: [x + distance, y + distance * .72, z + distance, x, y, z], interior: [x + distance * .55, Math.max(1.6, y), z + distance * .55, x, Math.max(1.35, y), z], floor: [x, y + distance * 1.6, z, x, 0, z], ceiling: [x, Math.max(.7, y - distance * .15), z, x, y + distance * .55, z], top: [x, y + distance * 1.6, z, x, y, z], front: [x, y + distance * .45, z + distance, x, y, z], back: [x, y + distance * .45, z - distance, x, y, z], left: [x - distance, y + distance * .45, z, x, y, z], right: [x + distance, y + distance * .45, z, x, y, z], isometric: [x + distance, y + distance, z + distance, x, y, z],
     };
     const [cameraX, cameraY, cameraZ, targetX, targetY, targetZ] = viewpoints[preset];
-    controls.current.object.position.set(cameraX, cameraY, cameraZ); controls.current.target.set(targetX, targetY, targetZ); controls.current.update();
+    void controls.current.setLookAt(cameraX, cameraY, cameraZ, targetX, targetY, targetZ, false);
   }, [bounds, preset]);
-  return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={.08} zoomToCursor minDistance={.01} mouseButtons={{ LEFT: undefined, MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE }} />;
+  // `infinityDolly` deliberately moves the orbit target after reaching the
+  // closest distance.  No scene geometry is registered as a collider, so the
+  // camera can pass through all walls, furniture proxies and conduit meshes.
+  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={.01} mouseButtons={{ left: CameraControlsImpl.ACTION.NONE, middle: CameraControlsImpl.ACTION.TRUCK, right: CameraControlsImpl.ACTION.ROTATE, wheel: CameraControlsImpl.ACTION.DOLLY }} />;
 }
 
 function PointerCapture({ bounds, onRay }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number]) => void }) {
