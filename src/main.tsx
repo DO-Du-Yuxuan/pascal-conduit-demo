@@ -178,11 +178,18 @@ function App() {
   const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), sidebarResize = useRef<{ startX: number; startWidth: number } | null>(null);
   const nodes = data?.nodes || {};
   const conduitOverlay = useOverlayStore((state) => state.overlay);
+  const conduitOverlayDirty = useOverlayStore((state) => state.dirty);
   const resetConduitOverlay = useOverlayStore((state) => state.load);
   const levels = Object.values(nodes).filter((n) => n.type === "level");
   const threeDScene = useMemo(() => data ? buildThreeDSceneInput(data) : null, [data]);
   const hiddenNodeIds = useMemo(() => new Set(sceneVisibility.hiddenNodeIds), [sceneVisibility.hiddenNodeIds]);
   useEffect(() => { const closeTransientUi = (event: KeyboardEvent) => { if (event.key !== "Escape") return; setMeasurementMode("off"); if (activeEvaluationHighlight) { setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); return; } setEvaluationHighlights([]); setEvaluationFocusMessage(null); }; window.addEventListener("keydown", closeTransientUi); return () => window.removeEventListener("keydown", closeTransientUi); }, [activeEvaluationHighlight]);
+  useEffect(() => {
+    if (!conduitOverlayDirty) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [conduitOverlayDirty]);
   useEffect(() => subscribeFloorplanImageCrop(() => setImageCropRevision((revision) => revision + 1)), []);
   const clearEvaluationResults = () => {
     setEvaluationReport(null);
