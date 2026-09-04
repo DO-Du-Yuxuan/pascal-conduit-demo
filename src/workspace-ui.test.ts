@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
+const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 describe("conduit workspace UI contract", () => {
@@ -24,5 +25,12 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("state.preview");
     expect(source).toContain("conduit-plan-preview");
     expect(source).toContain("preview.plan.segments.map");
+  });
+
+  it("does not turn drawing clicks into global scene selections in split view", () => {
+    expect(threeDSource).toContain('if (tool === "select") onSelect(id)');
+    expect(threeDSource).toContain("onPointerMissed={() => selectWhileBrowsing(null)}");
+    expect(threeDSource).toContain("onSelect={selectWhileBrowsing}");
+    expect(styles).toContain("contain:layout paint");
   });
 });
