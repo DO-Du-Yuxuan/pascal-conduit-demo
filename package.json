@@ -1,5 +1,5 @@
 {
-  "name": "pascal-layout-auditor",
+  "name": "pascal-conduit-demo",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "report:sample": "GENERATE_SAMPLE_REPORT=1 vitest run scripts/generate-sample-evaluation-report.test.ts",
     "verify:sample": "shasum -a 256 sample-data/default-layout.json | grep 32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167"
   },
   "dependencies": {
