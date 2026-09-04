@@ -6,7 +6,7 @@ import { ConduitScene, type BranchPreview, type ConduitTool } from "../component
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type ConduitOverlayDocument, type HostAttachment, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceMode } from "../domain/overlay";
 import { commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, type ConstructionVisualParameters, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { constrainToHostAxes, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint, type WorldAxis } from "../domain/drawing";
+import { constrainToHostAxes, directionStateForArrow, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint, type DirectionArrow, type WorldAxis } from "../domain/drawing";
 import { useOverlayStore } from "../domain/store";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { projectRayToActiveWall } from "./active-host";
@@ -69,10 +69,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const publishOverlay = useOverlayStore((state) => state.publish);
   const loadSharedOverlay = useOverlayStore((state) => state.load);
   const markOverlayExported = useOverlayStore((state) => state.markExported);
+  const publishRoutePreview = useOverlayStore((state) => state.publishPreview);
+  const clearRoutePreview = useOverlayStore((state) => state.clearPreview);
   const matchingOverlay = sharedOverlay?.source.sha256 === sourceSha ? sharedOverlay : null;
   const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
   const [overlay, setOverlay] = useState(() => copy(matchingOverlay ?? createEmptyOverlay(sourceFile, sourceSha))), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && sharedOverlayDirty)), [undoStack, setUndoStack] = useState<ConduitOverlayDocument[]>([]), [redoStack, setRedoStack] = useState<ConduitOverlayDocument[]>([]);
-  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("power"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [cursor, setCursor] = useState<RoutePoint | null>(null), [orthogonal, setOrthogonal] = useState(false), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationEntry, setPenetrationEntry] = useState<RoutePoint | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<RoutePoint[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [constructionMode, setConstructionMode] = useState<ConstructionMode>("construction"), [status, setStatus] = useState("Overlay 为空；选择系统后可在 3D 中开始画管。");
+  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("power"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [cursor, setCursor] = useState<RoutePoint | null>(null), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationEntry, setPenetrationEntry] = useState<RoutePoint | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<RoutePoint[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [constructionMode, setConstructionMode] = useState<ConstructionMode>("construction"), [status, setStatus] = useState("Overlay 为空；选择系统后可在 3D 中开始画管。");
   const overlayInput = useRef<HTMLInputElement>(null);
   const rawSurfaceHit = useRef<ThreeDSurfaceHit | null>(null);
   const surfaceOccluded = useRef(false);
@@ -83,7 +85,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
 
   useEffect(() => {
     const stored = useOverlayStore.getState(), restored = stored.overlay?.source.sha256 === sourceSha ? stored.overlay : null;
-    setOverlay(copy(restored ?? createEmptyOverlay(sourceFile, sourceSha))); setOverlayDirty(Boolean(restored && stored.dirty)); setUndoStack([]); setRedoStack([]); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); setStatus(restored ? "已恢复当前会话 Overlay。" : "已为当前建筑建立空白 Overlay。");
+    setOverlay(copy(restored ?? createEmptyOverlay(sourceFile, sourceSha))); setOverlayDirty(Boolean(restored && stored.dirty)); setUndoStack([]); setRedoStack([]); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setStatus(restored ? "已恢复当前会话 Overlay。" : "已为当前建筑建立空白 Overlay。");
   }, [scene?.sceneKey, sourceFile, sourceSha]);
   useEffect(() => { publishOverlay(overlay, overlayDirty); }, [overlay, overlayDirty, publishOverlay]);
   useEffect(() => {
@@ -93,10 +95,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setOverlayDirty(true); if (event.shiftKey) setRedoStack((redo) => { const next = redo[redo.length - 1]; if (!next) return redo; setUndoStack((undo) => [...undo, copy(overlay)]); setOverlay(copy(next)); return redo.slice(0, -1); }); else setUndoStack((undo) => { const previous = undo[undo.length - 1]; if (!previous) return undo; setRedoStack((redo) => [...redo, copy(overlay)]); setOverlay(copy(previous)); return undo.slice(0, -1); }); return; }
       if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); setStatus("已切换到选择模式。"); return; }
       if (event.key === "Shift" && !event.repeat) { event.preventDefault(); setOrthogonal((value) => !value); return; }
-      if (event.key === "ArrowLeft" && draft.length) { event.preventDefault(); setWorldAxis("x"); return; }
-      if (event.key === "ArrowUp" && draft.length) { event.preventDefault(); setWorldAxis("y"); return; }
-      if (event.key === "ArrowRight" && draft.length) { event.preventDefault(); setWorldAxis("z"); return; }
-      if (event.key === "ArrowDown") { event.preventDefault(); setWorldAxis(null); return; }
+      if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
       if (event.key === "Escape") { setBranchStart(null); setBranchEnd(null); setPenetrationEntry(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
       if (event.key === "Enter") { event.preventDefault(); finishCurrentRoute(); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && cursor?.attachment && draft.length) {
@@ -144,6 +143,21 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const effectiveCursor = cursor && draft.length ? previewPoints[previewPoints.length - 1] : cursor;
   const displayDraft = draft.length ? previewPoints : cursor ? [cursor] : [];
   const previewPlan = useMemo(() => displayDraft.length >= 2 && (tool === "draw" || tool === "branch" && branchStart) ? validatedPlan(displayDraft, branchStart?.segmentId) : null, [displayDraft, tool, branchStart, overlay, system, diameterMm, surfaceMode, constructionParameters, explicitPenetrations]);
+  useEffect(() => {
+    const drawing = tool === "draw" || tool === "branch";
+    const branchNode = branchPreview
+      ? { kind: branchPreview.kind, position: branchPreview.point, sizeMm: branchPreview.sizeMm }
+      : branchStart
+        ? { kind: system === "sprinkler" ? "tee" as const : "junction-box" as const, position: branchStart.point.position, sizeMm: overlay.settings.junctionBoxSizeMm }
+        : undefined;
+    if (!drawing || !displayDraft.length && !branchNode) { clearRoutePreview(); return; }
+    const levelId = [...displayDraft].reverse().find((point) => point.attachment?.levelId)?.attachment?.levelId
+      ?? branchStart?.point.attachment?.levelId
+      ?? (branchPreview ? overlay.segments.find((segment) => segment.id === branchPreview.segmentId)?.start.attachment?.levelId : null)
+      ?? null;
+    publishRoutePreview({ sourceSha, system, diameterMm, levelId, points: displayDraft, plan: previewPlan, branchNode });
+  }, [tool, sourceSha, system, diameterMm, displayDraft, previewPlan, branchPreview, branchStart, overlay.settings.junctionBoxSizeMm, overlay.segments, publishRoutePreview, clearRoutePreview]);
+  useEffect(() => () => clearRoutePreview(), [clearRoutePreview]);
   useEffect(() => {
     if (!previewPlan || previewPlan.canCommit) return;
     const first = previewPlan.diagnostics[0], ids = first?.objectIds?.length ? `（${first.objectIds.join("、")}）` : "";

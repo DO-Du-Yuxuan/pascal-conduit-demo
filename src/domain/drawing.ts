@@ -2,6 +2,7 @@ import type { RoutePoint, Vec3 } from "./overlay";
 
 export type DirectionMode = "free" | "orthogonal";
 export type WorldAxis = "x" | "y" | "z";
+export type DirectionArrow = "ArrowLeft" | "ArrowUp" | "ArrowRight" | "ArrowDown";
 
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -49,6 +50,10 @@ export function displayedRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint
 }
 
 const axisVector = (axis: WorldAxis): Vec3 => axis === "x" ? [1, 0, 0] : axis === "y" ? [0, 1, 0] : [0, 0, 1];
+
+export function directionStateForArrow(key: DirectionArrow): { worldAxis: WorldAxis | null; orthogonal: false } {
+  return { worldAxis: key === "ArrowLeft" ? "x" : key === "ArrowUp" ? "y" : key === "ArrowRight" ? "z" : null, orthogonal: false };
+}
 
 /** Closest point on a world axis through `start` to a pointer ray. */
 export function pointOnWorldAxis(start: RoutePoint, axis: WorldAxis, rayOrigin: Vec3, rayDirection: Vec3): RoutePoint {

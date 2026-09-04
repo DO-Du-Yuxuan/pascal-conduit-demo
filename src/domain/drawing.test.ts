@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrainToHostAxes, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint } from "./drawing";
+import { constrainToHostAxes, directionStateForArrow, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint } from "./drawing";
 import type { RoutePoint } from "./overlay";
 
 const wall = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] }, localPosition: position } });
@@ -60,5 +60,12 @@ describe("surface drawing preview", () => {
     expect(displayedRoutePoints([slab([0, 0, 0])], displayedExit, "orthogonal", { penetrationEntry: entry })).toEqual([slab([0, 0, 0]), entry, displayedExit]);
     expect(resolveConfirmedRoutePoint(displayedExit, rearHit)).toBe(displayedExit);
     expect(resolveConfirmedRoutePoint(null, rearHit)).toBe(rearHit);
+  });
+
+  it("turns off surface orthogonal mode for every world-axis arrow", () => {
+    expect(directionStateForArrow("ArrowLeft")).toEqual({ worldAxis: "x", orthogonal: false });
+    expect(directionStateForArrow("ArrowUp")).toEqual({ worldAxis: "y", orthogonal: false });
+    expect(directionStateForArrow("ArrowRight")).toEqual({ worldAxis: "z", orthogonal: false });
+    expect(directionStateForArrow("ArrowDown")).toEqual({ worldAxis: null, orthogonal: false });
   });
 });

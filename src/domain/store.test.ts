@@ -24,4 +24,15 @@ describe("overlay history", () => {
     useOverlayStore.getState().markExported();
     expect(useOverlayStore.getState().dirty).toBe(false);
   });
+
+  it("publishes a transient route preview without changing Overlay history", () => {
+    const overlay = createEmptyOverlay("a.json", "a");
+    useOverlayStore.getState().load(overlay);
+    useOverlayStore.getState().publishPreview({ sourceSha: "a", system: "power", diameterMm: 20, levelId: "L0", points: [{ position: [0, 0, 0] }, { position: [1, 0, 0] }], plan: null });
+    expect(useOverlayStore.getState().preview?.points).toHaveLength(2);
+    expect(useOverlayStore.getState().dirty).toBe(false);
+    expect(useOverlayStore.getState().undoStack).toHaveLength(0);
+    useOverlayStore.getState().load(overlay);
+    expect(useOverlayStore.getState().preview).toBeNull();
+  });
 });

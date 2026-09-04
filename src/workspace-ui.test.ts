@@ -19,4 +19,10 @@ describe("conduit workspace UI contract", () => {
     expect(styles).toContain("--split-ratio");
     expect(styles).toContain(".workspace-split-divider");
   });
+
+  it("renders the transient 3D route preview in the 2D plan overlay", () => {
+    expect(source).toContain("state.preview");
+    expect(source).toContain("conduit-plan-preview");
+    expect(source).toContain("preview.plan.segments.map");
+  });
 });
