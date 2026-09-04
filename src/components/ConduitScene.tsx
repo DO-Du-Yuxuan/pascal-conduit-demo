@@ -2,8 +2,7 @@ import { Line } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
 import { useMemo } from "react";
 import { Quaternion, Vector3 } from "three";
-import type { Vec3 } from "../domain/building";
-import type { ConduitOverlayDocument, RouteFitting, RouteSegment, RoutingSystem } from "../domain/overlay";
+import type { ConduitOverlayDocument, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
 
 type Props = { overlay: ConduitOverlayDocument; selectedId: string | null; constructionMode: "construction" | "finished" | "xray"; visibleSystems: Record<RoutingSystem, boolean>; draft: Vec3[]; draftColor: string; onSelect: (id: string) => void; onBranch: (segment: RouteSegment, point: Vec3) => void };
 

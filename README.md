@@ -1,46 +1,24 @@
-# Pascal 施工管线路由 Demo
+# pascal-layout-auditor
 
-一个独立的、只读 Pascal 建筑底图上的管线路由演示器。它不读取、不写入、也不影响 `pascal-layout-auditor` 的评价数据或规则。
+一个独立、只读的 Pascal JSON 平面布局核验 Demo。它与 Pascal Editor / dsphr editor 的关系是：这里抽取可迁移的 JSON 解析、诊断、家具尺寸和坐标变换逻辑，验证通过后可由维护团队集成；本项目不是 Fork，也不复制完整编辑器。
 
-## 启动与校验
+## 支持范围
+
+浏览器本地导入或拖入 JSON；支持 site、building、level、zone、wall、door、window、item、slab、ceiling、shelf、stair 的最小宽容解析；未知节点保留并诊断。SVG 显示 Zone、墙体、门窗、家具数学占地框、PNG、中心点和局部 +Z 方向轴。点击家具可查看原始字段、坐标链路、尺寸和图片加载信息。
+
+工作区可在 2D 平面与只读 3D 查看间切换。3D 使用轻量 WebGL 适配层只读渲染墙、门窗、楼板、天花、楼梯、屋顶、Shelf 与家具尺寸占位，支持鼠标环绕/平移/缩放、视角预设、透视/正交、楼层叠放/爆炸/单层和墙体展示模式。它从 Parser 输出制作独立副本载入，不写回 JSON，也不改变任何 G1/G2/G3/S1 的证据或结论；评价卡片的“在图中查看”始终回到 2D。无 `roof` 或 `roof-segment` 时会明确提示，绝不自动生成屋顶；为保证大量家具场景稳定，3D 不加载 GLB。
+
+家具尺寸公式为 `finalWidth/Height/Depth = asset.dimensions × item.scale`，`asset.scale` 是 GLB 校正变换，不参与二维尺寸。局部 +Z 轴不等于家具语义正面。图片校验只能人工观察，尚未从 GLB 自动生成对比图。
+
+明确不支持：3D 编辑/建模/移动/保存、自动生成缺失建筑构件或屋顶、自动评分、PNG 图像分析/修复、复杂空间规则、后端、数据库、登录、上传服务。
+
+## 运行
 
 ```bash
 npm install
-npm run verify:sample
+npm run dev
 npm test
 npm run build
-npm run dev
 ```
 
-默认加载 `sample-data/default-layout.json`，它是用户提供的 `layout_2026-09-03 (1).json` 的逐字节副本，SHA-256 为 `32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167`。默认 Overlay 没有任何预置管线；可参考 `sample-data/empty-overlay.example.json`。
-
-## 路由模型
-
-- 强电：红色 `#ef4444`，20 mm。
-- 弱电：蓝色 `#3b82f6`，20 mm。
-- 信号：白色 `#ffffff`（二维符号使用灰色描边），20 mm。
-- 消防喷淋：绿色 `#22c55e`，50 mm。
-
-建筑 JSON 始终保持只读。所有直管、弯头、三通、墙槽和穿孔写入可单独导入、导出的 Overlay sidecar。完成路径后才会一次性提交路由和施工影响；鼠标移动只更新预览中心线与宿主高亮，不创建正式网格或执行 CSG。
-
-电气线管的墙面段会生成独立 `wall-chase`；默认墙槽宽度为管径 + 10 mm、深度为管径 + 5 mm。穿透模式的孔径为管径 + 10 mm。它们都是 Demo 视觉参数，不是施工规范结论。消防喷淋默认吊顶内明敷，不生成墙槽；可使用穿透模式通过墙、楼板或天花。
-
-施工态和 X-Ray 仅在运行时克隆的宿主网格上显示槽孔，完工态恢复饰面并隐藏暗敷电气线管。CSG 失败时，Overlay 本身仍完整保留，且槽线/孔位仍以替代标记显示。
-
-## 操作
-
-- 左键：选择、落下路由点、确认分支终点。
-- 右键拖动：旋转；中键拖动：平移；滚轮：缩放。
-- `Shift`：按当前点锁定主要轴。
-- 双击或 `Enter`：完成路径；`Esc`：移除最后一点或取消预览。
-- “分支”模式下，先点击同一系统的既有管段，再点击宿主表面，会将原段拆开并显式插入三通。
-
-3D 是唯一的绘制入口。2D 平面图只用于按系统图层查看、选择同步及显示直管、弯头、三通、升降和穿透符号。
-
-## Overlay 兼容性
-
-导入 Overlay 时，SHA-256 一致会正常恢复。SHA 不同但宿主 ID 存在时允许预览并给出提示。若宿主 ID 缺失，管线坐标仍保留并标记为悬空，相关槽孔不会在当前建筑上重建。
-
-## 非目标
-
-本 Demo 不包含自动寻路、给排水、风管、喷头/设备末端、规范校核、材料清单或云端协作，也不包含第一人称模式或鼠标锁定。
+应用只在浏览器内读取 JSON，不修改原始对象、不上传服务器。后续迁移建议复用 `src/parser/parse.ts`、`src/geometry/transform.ts` 和 `src/diagnostics/check.ts` 的纯函数。

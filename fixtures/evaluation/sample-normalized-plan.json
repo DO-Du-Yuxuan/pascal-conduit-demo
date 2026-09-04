@@ -1,0 +1,47 @@
+{
+  "schemaVersion": "1.0",
+  "source": { "format": "Pascal JSON", "rootNodeIds": ["site_ki35u6k5svcjwzv3"] },
+  "units": { "length": "meter", "area": "square-meter", "angles": "radian", "planCoordinates": "Pascal Level plane [x,z]", "svgProjection": "[x,z] -> [x,y] identity; default viewer rotation is clockwise 90 degrees" },
+  "levels": [
+    { "id": "level_jwi4ovhyra2ayxa5", "rawPascalId": "level_jwi4ovhyra2ayxa5", "name": "Level 1", "parentId": null, "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "ordinal": 0 },
+    { "id": "level_tf1ug5dswkkzfhqa", "rawPascalId": "level_tf1ug5dswkkzfhqa", "name": "Level 2", "parentId": "building_mzbjbmaocmp350cc", "levelId": "level_tf1ug5dswkkzfhqa", "visible": true, "ordinal": 1 }
+  ],
+  "zones": [
+    { "id": "zone_03shf4yl22n5zgcq", "rawPascalId": "zone_03shf4yl22n5zgcq", "name": "OFFICE 1", "parentId": "level_jwi4ovhyra2ayxa5", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "color": "#ef4444", "outline": [[-1.148022018724731,2.15],[2.7,2.2],[2.7,-1.8537885665893556],[0.2,-1.8],[0.2,-1.15],[-0.15,-0.4],[-0.5,-0.05],[-1,0.4],[-1.1480220187247308,0.5]], "areaSquareMeters": 13.132573690536853 },
+    { "id": "zone_0mk39mn9yzgozpvl", "rawPascalId": "zone_0mk39mn9yzgozpvl", "name": "READING", "parentId": "level_tf1ug5dswkkzfhqa", "levelId": "level_tf1ug5dswkkzfhqa", "visible": true, "color": "#cccccc", "outline": [[-1.1387845183948346,0.8997244259752715],[-1.15,-1.9],[2.7,-1.8537885665893556],[2.6500000000005555,0.8478581309188948]], "areaSquareMeters": 10.505892311731966 }
+  ],
+  "spaces": [
+    { "id": "zone_03shf4yl22n5zgcq", "rawPascalId": "zone_03shf4yl22n5zgcq", "name": "OFFICE 1", "parentId": "level_jwi4ovhyra2ayxa5", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "sourceZoneId": "zone_03shf4yl22n5zgcq", "source": "derived-from-zone", "outline": [[-1.148022018724731,2.15],[2.7,2.2],[2.7,-1.8537885665893556],[0.2,-1.8],[0.2,-1.15],[-0.15,-0.4],[-0.5,-0.05],[-1,0.4],[-1.1480220187247308,0.5]], "areaSquareMeters": 13.132573690536853 }
+  ],
+  "walls": [
+    { "id": "wall_yuvcspiakcghzx4g", "rawPascalId": "wall_yuvcspiakcghzx4g", "name": "Wall 95", "parentId": "level_jwi4ovhyra2ayxa5", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "start": [-7.699985684586803,2.500000266943914], "end": [-11.19999999999968,2.499999978484372], "thicknessMeters": 0.1, "thicknessSource": "pascal-default", "heightMeters": 3.05, "curveOffsetMeters": 0, "frontSide": "exterior", "backSide": "interior", "footprintValidation": { "valid": true, "codes": [], "areaSquareMeters": 0.35000143154128885, "footprint": [[-7.699985683993745,2.5500002669439144],[-11.200000000014922,2.549999978484372],[-11.19999999999968,2.499999978484372],[-11.149999999999643,2.449999982605206],[-7.749985970898406,2.4500002628230564],[-7.699985684586803,2.500000266943914]] } },
+    { "id": "wall_nqx2se3a3eksgajk", "rawPascalId": "wall_nqx2se3a3eksgajk", "name": "Wall 106", "parentId": "level_tf1ug5dswkkzfhqa", "levelId": "level_tf1ug5dswkkzfhqa", "visible": true, "start": [2.7,0.8478581309318545], "end": [-1.138415994959748,0.8478581299369649], "thicknessMeters": 0.1, "thicknessSource": "pascal-default", "heightMeters": 2.74, "curveOffsetMeters": 0, "frontSide": "interior", "backSide": "exterior", "footprintValidation": { "valid": true, "codes": [], "areaSquareMeters": 0.38384159949598774, "footprint": [[2.75,0.8978581309448143],[-1.0887699957778507,0.8978581299498328],[-1.138415994959748,0.8478581299369649],[-1.0886263331131427,0.79785812994987],[2.6500000000000004,0.7978581309188947],[2.7,0.8478581309318545]] } }
+  ],
+  "doors": [
+    { "id": "door_8flujo6mj2vg8y4c", "rawPascalId": "door_8flujo6mj2vg8y4c", "name": "Door 3", "parentId": "wall_yuvcspiakcghzx4g", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "hostWallId": "wall_yuvcspiakcghzx4g", "rawWallLocalPosition": [0.6999999999999975,1.05,0], "resolvedWorldPosition": [-8.399985684586801,2.500000210252005], "resolvedTangentRadians": -3.141592571305616, "widthMeters": 1.07, "heightMeters": 2.1, "side": "front", "openingKind": "door", "openingShape": "rectangle", "doorType": "hinged", "hingesSide": "left", "swingDirection": "outward", "swingAngleRadians": 1.5707963267948966, "slideDirection": "left", "trackStyle": "none", "leafCount": 1, "garagePanelCount": 4 },
+    { "id": "door_63mh4bxrm80jvzw3", "rawPascalId": "door_63mh4bxrm80jvzw3", "name": "Door 4", "parentId": "wall_grk3h1cdzdwzqwq0", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "hostWallId": "wall_grk3h1cdzdwzqwq0", "rawWallLocalPosition": [7.027958154678345,1.2,0], "widthMeters": 4.10113639831543, "heightMeters": 2.4, "side": "back", "openingKind": "door", "openingShape": "rectangle", "doorType": "garage-sectional", "hingesSide": "left", "swingDirection": "inward", "slideDirection": "left", "trackStyle": "overhead", "leafCount": 1, "garagePanelCount": 4 }
+  ],
+  "windows": [
+    { "id": "window_0ei5meru0ws6ho6c", "rawPascalId": "window_0ei5meru0ws6ho6c", "name": "Window 1", "parentId": "wall_nqx2se3a3eksgajk", "levelId": "level_tf1ug5dswkkzfhqa", "visible": true, "hostWallId": "wall_nqx2se3a3eksgajk", "rawWallLocalPosition": [1.908626687489826,1.4,0], "resolvedWorldPosition": [0.791373312510174,0.8478581304373583], "resolvedTangentRadians": -3.141592653330542, "widthMeters": 1.83, "heightMeters": 1.5, "side": "back", "openingKind": "window", "openingShape": "rectangle", "windowType": "awning", "awningDirection": "up", "casementStyle": "french", "sill": false, "sillDepthMeters": 0.08 }
+  ],
+  "furniture": [
+    { "id": "item_010u26nmiwafik24", "rawPascalId": "item_010u26nmiwafik24", "name": "Herman Miller Aeron", "parentId": "level_tf1ug5dswkkzfhqa", "levelId": "level_tf1ug5dswkkzfhqa", "visible": true, "assetId": "herman-miller-aeron-mo8x36k9", "category": "office-chairs", "functionTags": ["office-chairs"], "dimensionsMeters": [0.67,1.06,0.66], "rawPosition": [-7.45,0,2.65], "resolvedWorldPosition": [-7.45,2.65], "resolvedRotationRadians": 18.84955592153876, "transformStatus": "ok" }
+  ],
+  "equipment": [
+    { "id": "item_xbz96hwvq9vgqvfh", "rawPascalId": "item_xbz96hwvq9vgqvfh", "name": "Stove", "parentId": "level_jwi4ovhyra2ayxa5", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "assetId": "stove", "category": "kitchen-appliances", "functionTags": ["kitchen-appliances"], "dimensionsMeters": [0.736,0.68,0.608], "rawPosition": [-11.7,0,-4.9], "resolvedWorldPosition": [-11.7,-4.9], "resolvedRotationRadians": 7.853981633974483, "transformStatus": "ok" }
+  ],
+  "columns": [],
+  "shelves": [],
+  "shafts": [],
+  "stairs": [
+    { "id": "stair_dyp7dqxtm1mg9fxb", "rawPascalId": "stair_dyp7dqxtm1mg9fxb", "name": "Staircase 1", "parentId": "level_jwi4ovhyra2ayxa5", "levelId": "level_jwi4ovhyra2ayxa5", "visible": true, "stairType": "spiral", "fromLevelId": "level_fkoejbpxrc8pfko1", "toLevelId": "level_3xsbeo3c6y50zj52", "widthMeters": 1.1, "totalRiseMeters": 3.5, "stepCount": 20, "innerRadiusMeters": 0.4, "sweepAngleRadians": -5.585053606381854, "footprint": [] }
+  ],
+  "relationships": {
+    "parentChild": [{ "parentId": "wall_yuvcspiakcghzx4g", "childId": "door_8flujo6mj2vg8y4c" }, { "parentId": "wall_nqx2se3a3eksgajk", "childId": "window_0ei5meru0ws6ho6c" }, { "parentId": "level_jwi4ovhyra2ayxa5", "childId": "zone_03shf4yl22n5zgcq" }],
+    "levelMembership": [{ "nodeId": "door_8flujo6mj2vg8y4c", "levelId": "level_jwi4ovhyra2ayxa5" }, { "nodeId": "window_0ei5meru0ws6ho6c", "levelId": "level_tf1ug5dswkkzfhqa" }, { "nodeId": "item_010u26nmiwafik24", "levelId": "level_tf1ug5dswkkzfhqa" }],
+    "hostedOpenings": [{ "openingId": "door_8flujo6mj2vg8y4c", "wallId": "wall_yuvcspiakcghzx4g" }, { "openingId": "window_0ei5meru0ws6ho6c", "wallId": "wall_nqx2se3a3eksgajk" }],
+    "wallConnections": []
+  },
+  "unclassifiedNodes": [{ "id": "building_mzbjbmaocmp350cc", "rawPascalId": "building_mzbjbmaocmp350cc", "type": "building" }],
+  "diagnostics": []
+}

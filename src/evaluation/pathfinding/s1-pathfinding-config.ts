@@ -1,0 +1,11 @@
+export const S1_PATHFINDING_PROVIDER = "polygon_visibility_graph" as const;
+export const S1_PATHFINDING_AGENT_RADIUS_METERS = 0.2;
+export const S1_PATHFINDING_SNAP_TOLERANCE_METERS = 0.03;
+export const S1_PATHFINDING_GEOMETRY_EPSILON_METERS = 1e-6;
+/** Matches the maximum chord error of the round offset approximation. */
+export const S1_PATHFINDING_CLEARANCE_VALIDATION_TOLERANCE_METERS = 0.021;
+export const S1_PATHFINDING_OFFSET_ARC_TOLERANCE_METERS = 0.02;
+export const S1_PATHFINDING_BED_EDGE_SAMPLE_FRACTIONS = [0.25, 0.5, 0.75] as const;
+export const S1_PATHFINDING_BED_EDGE_EXTRA_OFFSET_METERS = 0.01;
+export const S1_PATHFINDING_BED_LONG_EDGE_MIN_RATIO = 1.05;
+export const S1_PATHFINDING_REGION_TARGET_SAMPLE_SPACING_METERS = 1;

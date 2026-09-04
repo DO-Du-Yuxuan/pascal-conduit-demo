@@ -1,5 +1,5 @@
 {
-  "name": "pascal-conduit-demo",
+  "name": "pascal-layout-auditor",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -7,28 +7,39 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
+    "report:sample": "GENERATE_SAMPLE_REPORT=1 vitest run scripts/generate-sample-evaluation-report.test.ts",
     "verify:sample": "shasum -a 256 sample-data/default-layout.json | grep 32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167"
   },
   "dependencies": {
     "@pascal-app/core": "0.9.2",
+    "@pascal-app/viewer": "0.9.2",
     "@react-three/drei": "10.7.8",
     "@react-three/fiber": "9.7.0",
     "@types/three": "0.185.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
+    "@vitejs/plugin-react": "latest",
+    "clipper-lib": "6.4.2",
+    "polygon-clipping": "^0.15.7",
+    "react": "latest",
+    "react-dom": "latest",
     "three": "0.185.0",
     "three-bvh-csg": "0.0.18",
     "three-mesh-bvh": "0.9.8",
-    "zod": "4.3.6",
+    "typescript": "latest",
+    "vite": "latest",
+    "zod": "latest",
     "zustand": "5.0.11"
   },
   "devDependencies": {
-    "@types/react": "19.2.7",
-    "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "5.1.1",
-    "jsdom": "27.0.1",
-    "typescript": "5.9.3",
-    "vite": "7.3.0",
-    "vitest": "4.0.17"
+    "@recast-navigation/core": "^0.43.1",
+    "@recast-navigation/generators": "^0.43.1",
+    "@types/clipper-lib": "^6.4.0",
+    "@types/earcut": "^3.0.0",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/yuka": "^0.7.4",
+    "earcut": "^3.0.2",
+    "jsdom": "latest",
+    "vitest": "latest",
+    "yuka": "^0.7.8"
   }
 }

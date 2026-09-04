@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://do-du-yuxuan.github.io/pascal-layout-auditor/schema/parser-normalized-plan-1.0.json",
+  "title": "Pascal Layout Auditor evaluation handoff",
+  "type": "object",
+  "required": ["schemaVersion", "source", "units", "levels", "zones", "spaces", "walls", "doors", "windows", "furniture", "equipment", "columns", "shelves", "shafts", "stairs", "relationships", "diagnostics"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "source": { "type": "object", "required": ["format", "rootNodeIds"], "properties": { "format": { "const": "Pascal JSON" }, "rootNodeIds": { "type": "array", "items": { "type": "string" } } } },
+    "units": { "type": "object", "required": ["length", "area", "angles", "planCoordinates", "svgProjection"] },
+    "levels": { "type": "array", "items": { "$ref": "#/$defs/baseNode" } },
+    "zones": { "type": "array", "items": { "$ref": "#/$defs/spatialRegion" } },
+    "spaces": { "type": "array", "items": { "$ref": "#/$defs/spatialRegion" } },
+    "slabs": { "type": "array", "items": { "$ref": "#/$defs/spatialRegion" } },
+    "ceilings": { "type": "array", "items": { "$ref": "#/$defs/spatialRegion" } },
+    "walls": { "type": "array", "items": { "$ref": "#/$defs/wall" } },
+    "doors": { "type": "array", "items": { "$ref": "#/$defs/opening" } },
+    "windows": { "type": "array", "items": { "$ref": "#/$defs/opening" } },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "furniture": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "equipment": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "columns": { "type": "array", "items": { "$ref": "#/$defs/item" } },
+    "shelves": { "type": "array", "items": { "$ref": "#/$defs/shelf" } },
+    "shafts": { "type": "array", "items": { "$ref": "#/$defs/baseNode" } },
+    "stairs": { "type": "array", "items": { "$ref": "#/$defs/stair" } },
+    "relationships": { "type": "object", "required": ["parentChild", "levelMembership", "hostedOpenings", "wallConnections"] },
+    "diagnostics": { "type": "array" }
+  },
+  "$defs": {
+    "point": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "minItems": 2, "maxItems": 2 },
+    "baseNode": { "type": "object", "required": ["id", "rawPascalId", "parentId", "levelId", "visible"], "properties": { "id": { "type": "string" }, "rawPascalId": { "type": "string" }, "name": { "type": ["string", "null"] }, "parentId": { "type": ["string", "null"] }, "levelId": { "type": ["string", "null"] }, "visible": { "type": "boolean" } } },
+    "spatialRegion": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["outline", "areaSquareMeters"], "properties": { "spaceFunctionCode": { "type": ["string", "null"] }, "spaceFunctionName": { "type": ["string", "null"] }, "outline": { "type": "array", "items": { "$ref": "#/$defs/point" } }, "holes": { "type": "array", "items": { "type": "array", "items": { "$ref": "#/$defs/point" } } }, "areaSquareMeters": { "type": ["number", "null"] } } }] },
+    "wall": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["start", "end", "thicknessMeters", "curveOffsetMeters", "footprintValidation"], "properties": { "start": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "end": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "thicknessMeters": { "type": "number" }, "curveOffsetMeters": { "type": "number" }, "footprintValidation": { "type": "object", "required": ["valid", "codes", "areaSquareMeters", "footprint"], "properties": { "valid": { "type": "boolean" }, "codes": { "type": "array", "items": { "type": "string" } }, "areaSquareMeters": { "type": "number" }, "footprint": { "type": "array", "items": { "$ref": "#/$defs/point" } } } } } }] },
+    "opening": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["hostWallId", "rawWallLocalPosition", "widthMeters", "heightMeters"], "properties": { "hostWallId": { "type": ["string", "null"] }, "rawWallLocalPosition": { "type": ["array", "null"] }, "resolvedWorldPosition": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "widthMeters": { "type": ["number", "null"] }, "heightMeters": { "type": ["number", "null"] }, "rawRotationYRadians": { "type": "number" }, "placementFlipped": { "type": "boolean" }, "effectiveHingesSide": { "enum": ["left", "right", null] }, "effectiveSwingDirection": { "enum": ["inward", "outward", null] } } }] },
+    "item": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["assetId", "category", "dimensionsMeters", "transformStatus"], "properties": { "assetId": { "type": ["string", "null"] }, "assetName": { "type": ["string", "null"] }, "assetTags": { "type": "array", "items": { "type": "string" } }, "assetSource": { "type": ["string", "null"] }, "category": { "type": ["string", "null"] }, "functionTags": { "type": "array", "items": { "type": "string" } }, "attachTo": { "type": ["string", "null"] }, "dimensionsMeters": { "type": ["array", "null"] }, "itemScale": { "type": ["array", "null"] }, "openingDirections": { "type": "array", "items": { "enum": ["front", "back", "left", "right", "up", "down"] } }, "rawMaxOpeningDepthMeters": { "type": ["number", "null"] }, "rawMinOpeningUseClearanceMeters": { "type": ["number", "null"] }, "rawPosition": { "type": ["array", "null"] }, "rawRotation": { "type": ["array", "null"] }, "resolvedWorldPosition": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "resolvedRotationRadians": { "type": ["number", "null"] }, "resolvedVerticalRangeMeters": { "anyOf": [{ "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } }, { "type": "null" }] }, "verticalTransformError": { "type": ["string", "null"] }, "transformStatus": { "enum": ["ok", "error"] } } }] },
+    "shelf": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["dimensionsMeters", "footprint"], "properties": { "functionTags": { "type": "array", "items": { "type": "string" } }, "itemScale": { "type": "array" }, "openingDirections": { "type": "array", "items": { "enum": ["front", "back", "left", "right", "up", "down"] } }, "rawMaxOpeningDepthMeters": { "type": ["number", "null"] }, "rawMinOpeningUseClearanceMeters": { "type": ["number", "null"] }, "dimensionsMeters": { "type": "array" }, "footprint": { "type": "array", "items": { "$ref": "#/$defs/point" } }, "resolvedWorldPosition": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "resolvedRotationRadians": { "type": ["number", "null"] }, "resolvedVerticalRangeMeters": { "type": ["array", "null"] }, "transformStatus": { "enum": ["ok", "error"] } } }] },
+    "stair": { "allOf": [{ "$ref": "#/$defs/baseNode" }, { "type": "object", "required": ["fromLevelId", "toLevelId", "footprint"], "properties": { "fromLevelId": { "type": ["string", "null"] }, "toLevelId": { "type": ["string", "null"] }, "footprint": { "type": "array", "items": { "$ref": "#/$defs/point" } }, "fromLandingCenter": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "toLandingCenter": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "fromLandingOutward": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "toLandingOutward": { "anyOf": [{ "$ref": "#/$defs/point" }, { "type": "null" }] }, "landingWidthMeters": { "type": ["number", "null"] } } }] }
+  }
+}

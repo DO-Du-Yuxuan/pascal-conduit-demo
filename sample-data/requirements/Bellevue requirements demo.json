@@ -1,0 +1,84 @@
+{
+  "schemaVersion": "0.1",
+  "source": {
+    "name": "Bellevue Demo 客户需求"
+  },
+  "requirements": [
+    {
+      "id": "REQ-001",
+      "name": "独立中厨",
+      "type": "space_presence",
+      "targetSpace": { "semantic": "chinese_kitchen", "label": "独立中厨" },
+      "autoCheckSupported": true,
+      "originalDescription": "需要一间独立中厨。"
+    },
+    {
+      "id": "REQ-002",
+      "name": "至少四间卧室",
+      "type": "space_count",
+      "targetSpace": { "semantic": "bedroom", "label": "卧室" },
+      "quantity": { "min": 4 },
+      "autoCheckSupported": true,
+      "originalDescription": "至少需要四间卧室。"
+    },
+    {
+      "id": "REQ-003",
+      "name": "主卧面积不少于30平方米",
+      "type": "space_area",
+      "targetSpace": { "semantic": "primary_bedroom", "label": "主卧" },
+      "area": { "mode": "any", "minSquareMeters": 30 },
+      "autoCheckSupported": true
+    },
+    {
+      "id": "REQ-004",
+      "name": "洗衣房位于二楼",
+      "type": "level_location",
+      "targetSpace": { "semantic": "laundry", "label": "洗衣房" },
+      "level": { "levelId": "level_tf1ug5dswkkzfhqa", "ordinal": 1, "name": "Level 2" },
+      "quantity": { "min": 1 },
+      "autoCheckSupported": true
+    },
+    {
+      "id": "REQ-005",
+      "name": "主卧直接连接主卫",
+      "type": "space_adjacency",
+      "leftSpace": { "semantic": "primary_bedroom", "label": "主卧" },
+      "rightSpace": { "semantic": "primary_bathroom", "label": "主卫" },
+      "relationship": "directly_connected",
+      "autoCheckSupported": true
+    },
+    {
+      "id": "REQ-006",
+      "name": "至少五间卧室",
+      "type": "space_count",
+      "targetSpace": { "semantic": "bedroom", "label": "卧室" },
+      "quantity": { "min": 5 },
+      "autoCheckSupported": true
+    },
+    {
+      "id": "REQ-007",
+      "name": "车库不应直接连接Mud Room",
+      "type": "space_separation",
+      "leftSpace": { "semantic": "garage", "label": "车库" },
+      "rightSpace": { "semantic": "mud_room", "label": "Mud Room" },
+      "relationship": "directly_connected",
+      "autoCheckSupported": true
+    },
+    {
+      "id": "REQ-008",
+      "name": "安置两台洗衣机和一台冰箱",
+      "type": "manual",
+      "autoCheckSupported": false,
+      "manualReviewNote": "当前平面数据未提供客户设备绑定或明确预留位置，暂时无法自动确认。",
+      "originalDescription": "客户现有两台洗衣机和一台冰箱需要带入新家并妥善安置。"
+    },
+    {
+      "id": "REQ-009",
+      "name": "客厅需要有仪式感且足够安静",
+      "type": "manual",
+      "autoCheckSupported": false,
+      "manualReviewNote": "“有仪式感”和“足够安静”属于主观体验，当前平面数据没有可验证的客户评价尺度。",
+      "originalDescription": "客厅希望有仪式感，并且足够安静。"
+    }
+  ]
+}

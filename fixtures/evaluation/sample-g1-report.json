@@ -1,0 +1,738 @@
+{
+  "reportVersion": "1.0",
+  "handoffSchemaVersion": "1.0",
+  "generatedAt": "2026-07-20T00:00:00.000Z",
+  "scope": "G1-foundation",
+  "overallStatus": "issue",
+  "counts": {
+    "pass": 4,
+    "issue": 1,
+    "unable_to_determine": 7,
+    "not_applicable": 0
+  },
+  "tolerances": {
+    "lengthMeters": 0.000001,
+    "areaSquareMeters": 1e-8,
+    "pointOnBoundaryMeters": 0.01,
+    "overlapAreaSquareMeters": 0.01,
+    "roomMinimumAreaSquareMeters": 0.5,
+    "roomNumericalSliverAreaSquareMeters": 0.001,
+    "roomSlendernessMinimum": 0.03,
+    "roomWallGapMeters": 0.02,
+    "zoneRoomMatchMinimumRatio": 0.5,
+    "zoneCrossRoomMinimumRatio": 0.2,
+    "zoneOverlapMaximumRatio": 0.05,
+    "doorPortalSampleClearanceMeters": 0.05,
+    "doorPortalEndClearanceMeters": 0.02,
+    "doorEntryDepthMeters": 0.45,
+    "doorEntryMinimumClearRatio": 0.2,
+    "doorOperationMinimumAngleRadians": 1.5707963267948966,
+    "doorCollisionAreaSquareMeters": 0.01,
+    "doorLeafThicknessMeters": 0.04,
+    "basicPassageWidthMeters": 0.8,
+    "personRadiusMeters": 0.4,
+    "navigationGridMeters": 0.1,
+    "portalLandingSearchMeters": 0.75,
+    "largeFurnitureMinimumAreaSquareMeters": 1,
+    "smallObjectMaximumAreaSquareMeters": 0.35
+  },
+  "rules": [
+    {
+      "ruleId": "G1-001",
+      "ruleName": "项目单位有效",
+      "status": "pass",
+      "severity": "info",
+      "summary": "长度、面积和角度单位均受支持",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "length",
+          "value": "meter"
+        },
+        {
+          "name": "area",
+          "value": "square-meter"
+        },
+        {
+          "name": "angles",
+          "value": "radian"
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "required-length",
+          "value": "meter"
+        },
+        {
+          "name": "required-area",
+          "value": "square-meter"
+        },
+        {
+          "name": "required-angles",
+          "value": "radian"
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "high",
+        "score": 1,
+        "reasons": []
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-002",
+      "ruleName": "参与评价的对象具有唯一身份",
+      "status": "pass",
+      "severity": "info",
+      "summary": "11 个参与评价对象的标准化 ID 唯一",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "participatingObjectCount",
+          "value": 11
+        },
+        {
+          "name": "duplicateIdCount",
+          "value": 0
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "maximumDuplicateIdCount",
+          "value": 0
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "high",
+        "score": 1,
+        "reasons": []
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-003",
+      "ruleName": "对象的楼层归属明确",
+      "status": "pass",
+      "severity": "info",
+      "summary": "所有参与评价对象均可归属到已知楼层",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "unresolvedLevelObjectCount",
+          "value": 0
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "maximumUnresolvedLevelObjectCount",
+          "value": 0
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "high",
+        "score": 1,
+        "reasons": []
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-004",
+      "ruleName": "对象尺寸与坐标有效",
+      "status": "pass",
+      "severity": "info",
+      "summary": "已提供的评价对象尺寸与坐标有效",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "invalidObjectCount",
+          "value": 0
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "minimumLength",
+          "value": 0.000001,
+          "unit": "m"
+        },
+        {
+          "name": "minimumArea",
+          "value": 1e-8,
+          "unit": "m²"
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "high",
+        "score": 1,
+        "reasons": []
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-005",
+      "ruleName": "对象关联关系有效",
+      "status": "issue",
+      "severity": "error",
+      "summary": "发现 4 条失效引用",
+      "details": [
+        "door_63mh4bxrm80jvzw3: parentId wall_grk3h1cdzdwzqwq0 不存在",
+        "door_63mh4bxrm80jvzw3: hostWallId wall_grk3h1cdzdwzqwq0 不存在",
+        "stair_dyp7dqxtm1mg9fxb: fromLevelId level_fkoejbpxrc8pfko1 不存在",
+        "stair_dyp7dqxtm1mg9fxb: toLevelId level_3xsbeo3c6y50zj52 不存在"
+      ],
+      "normalizedObjectIds": [
+        "door_63mh4bxrm80jvzw3",
+        "stair_dyp7dqxtm1mg9fxb"
+      ],
+      "pascalSourceIds": [
+        "door_63mh4bxrm80jvzw3",
+        "stair_dyp7dqxtm1mg9fxb"
+      ],
+      "measurements": [
+        {
+          "name": "brokenReferenceCount",
+          "value": 4
+        },
+        {
+          "name": "knownLevelIds",
+          "value": "level_jwi4ovhyra2ayxa5, level_tf1ug5dswkkzfhqa"
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "maximumBrokenReferenceCount",
+          "value": 0
+        }
+      ],
+      "missingData": [
+        "door_63mh4bxrm80jvzw3: parentId wall_grk3h1cdzdwzqwq0 不存在",
+        "door_63mh4bxrm80jvzw3: hostWallId wall_grk3h1cdzdwzqwq0 不存在",
+        "stair_dyp7dqxtm1mg9fxb: fromLevelId level_fkoejbpxrc8pfko1 不存在",
+        "stair_dyp7dqxtm1mg9fxb: toLevelId level_3xsbeo3c6y50zj52 不存在"
+      ],
+      "confidence": {
+        "level": "high",
+        "score": 1,
+        "reasons": []
+      },
+      "diagnostics": [
+        {
+          "severity": "error",
+          "code": "missing_reference",
+          "message": "Door 4 的 parentId 指向项目中不存在的对象",
+          "normalizedObjectIds": [
+            "door_63mh4bxrm80jvzw3"
+          ],
+          "field": "parentId",
+          "actualValue": "wall_grk3h1cdzdwzqwq0",
+          "expectedValue": "现有标准化对象 ID",
+          "origin": "source_data",
+          "recommendation": "检查源 Pascal JSON 中的引用 ID；若项目经历复制或楼层重建，请重新关联该对象。"
+        },
+        {
+          "severity": "error",
+          "code": "missing_reference",
+          "message": "Door 4 的 hostWallId 指向项目中不存在的对象",
+          "normalizedObjectIds": [
+            "door_63mh4bxrm80jvzw3"
+          ],
+          "field": "hostWallId",
+          "actualValue": "wall_grk3h1cdzdwzqwq0",
+          "expectedValue": "现有标准化对象 ID",
+          "origin": "source_data",
+          "recommendation": "检查源 Pascal JSON 中的引用 ID；若项目经历复制或楼层重建，请重新关联该对象。"
+        },
+        {
+          "severity": "error",
+          "code": "missing_reference",
+          "message": "Staircase 1 的 fromLevelId 指向项目中不存在的对象",
+          "normalizedObjectIds": [
+            "stair_dyp7dqxtm1mg9fxb"
+          ],
+          "field": "fromLevelId",
+          "actualValue": "level_fkoejbpxrc8pfko1",
+          "expectedValue": "现有 Level ID",
+          "origin": "source_data",
+          "recommendation": "检查源 Pascal JSON 中的引用 ID；若项目经历复制或楼层重建，请重新关联该对象。"
+        },
+        {
+          "severity": "error",
+          "code": "missing_reference",
+          "message": "Staircase 1 的 toLevelId 指向项目中不存在的对象",
+          "normalizedObjectIds": [
+            "stair_dyp7dqxtm1mg9fxb"
+          ],
+          "field": "toLevelId",
+          "actualValue": "level_3xsbeo3c6y50zj52",
+          "expectedValue": "现有 Level ID",
+          "origin": "source_data",
+          "recommendation": "检查源 Pascal JSON 中的引用 ID；若项目经历复制或楼层重建，请重新关联该对象。"
+        }
+      ]
+    },
+    {
+      "ruleId": "G1-006",
+      "ruleName": "建筑平面边界能够识别",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "2 个楼层缺少可作为建筑范围的可靠 Slab 轮廓",
+      "details": [
+        "level_jwi4ovhyra2ayxa5: 该楼层没有可用的 Floor/Slab 轮廓",
+        "level_tf1ug5dswkkzfhqa: 该楼层没有可用的 Floor/Slab 轮廓"
+      ],
+      "normalizedObjectIds": [
+        "level_jwi4ovhyra2ayxa5",
+        "level_tf1ug5dswkkzfhqa"
+      ],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "envelopeArea",
+          "value": null,
+          "unit": "m²",
+          "normalizedObjectId": "level_jwi4ovhyra2ayxa5"
+        },
+        {
+          "name": "polygonCount",
+          "value": 0,
+          "normalizedObjectId": "level_jwi4ovhyra2ayxa5"
+        },
+        {
+          "name": "holeCount",
+          "value": 0,
+          "normalizedObjectId": "level_jwi4ovhyra2ayxa5"
+        },
+        {
+          "name": "usableForEvaluation",
+          "value": false,
+          "normalizedObjectId": "level_jwi4ovhyra2ayxa5"
+        },
+        {
+          "name": "sourceType",
+          "value": "none",
+          "normalizedObjectId": "level_jwi4ovhyra2ayxa5"
+        },
+        {
+          "name": "envelopeArea",
+          "value": null,
+          "unit": "m²",
+          "normalizedObjectId": "level_tf1ug5dswkkzfhqa"
+        },
+        {
+          "name": "polygonCount",
+          "value": 0,
+          "normalizedObjectId": "level_tf1ug5dswkkzfhqa"
+        },
+        {
+          "name": "holeCount",
+          "value": 0,
+          "normalizedObjectId": "level_tf1ug5dswkkzfhqa"
+        },
+        {
+          "name": "usableForEvaluation",
+          "value": false,
+          "normalizedObjectId": "level_tf1ug5dswkkzfhqa"
+        },
+        {
+          "name": "sourceType",
+          "value": "none",
+          "normalizedObjectId": "level_tf1ug5dswkkzfhqa"
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "minimumEnvelopeArea",
+          "value": 1e-8,
+          "unit": "m²"
+        },
+        {
+          "name": "boundaryContactTolerance",
+          "value": 0.01,
+          "unit": "m"
+        }
+      ],
+      "missingData": [
+        "level_jwi4ovhyra2ayxa5: 该楼层没有可用的 Floor/Slab 轮廓",
+        "level_tf1ug5dswkkzfhqa: 该楼层没有可用的 Floor/Slab 轮廓"
+      ],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "该楼层没有可用的 Floor/Slab 轮廓",
+          "该楼层没有可用的 Floor/Slab 轮廓"
+        ]
+      },
+      "diagnostics": [
+        {
+          "severity": "warning",
+          "code": "no_level_slab",
+          "message": "该楼层没有可用的 Floor/Slab 轮廓",
+          "normalizedObjectIds": [
+            "level_jwi4ovhyra2ayxa5"
+          ],
+          "origin": "insufficient_information",
+          "recommendation": "补充或修复该楼层的可见室内 Floor/Slab Polygon；Zone 不会被当作建筑边界。"
+        },
+        {
+          "severity": "warning",
+          "code": "no_level_slab",
+          "message": "该楼层没有可用的 Floor/Slab 轮廓",
+          "normalizedObjectIds": [
+            "level_tf1ug5dswkkzfhqa"
+          ],
+          "origin": "insufficient_information",
+          "recommendation": "补充或修复该楼层的可见室内 Floor/Slab Polygon；Zone 不会被当作建筑边界。"
+        }
+      ]
+    },
+    {
+      "ruleId": "G1-007",
+      "ruleName": "应封闭空间的边界闭合",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "Zone 缺少足以确认“必须独立封闭”的功能语义",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [],
+      "thresholds": [],
+      "missingData": [
+        "应封闭空间用途分类"
+      ],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "未根据名称以外的结构化用途字段识别到应封闭空间"
+        ]
+      },
+      "diagnostics": [
+        {
+          "severity": "warning",
+          "code": "enclosure_semantics_unavailable",
+          "message": "没有结构化空间用途可用于确认哪些 Zone 必须独立封闭",
+          "normalizedObjectIds": [],
+          "origin": "insufficient_information"
+        }
+      ]
+    },
+    {
+      "ruleId": "G1-009",
+      "ruleName": "不同空间不存在异常重叠",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "缺少可靠 Room Region，无法检查空间重叠",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "zonePairOverlapCount",
+          "value": 0
+        },
+        {
+          "name": "zoneCrossRoomCount",
+          "value": 0
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "overlapAreaTolerance",
+          "value": 0.01,
+          "unit": "m²"
+        },
+        {
+          "name": "zoneOverlapMaximumRatio",
+          "value": 0.05
+        },
+        {
+          "name": "zoneCrossRoomMinimumRatio",
+          "value": 0.2
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "开放式空间内多个不重叠 Zone 共享同一 Room 不视为异常"
+        ]
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-012",
+      "ruleName": "不存在错误空间",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "部分楼层缺少可靠建筑边界，无法排查错误空间",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [
+        {
+          "name": "roomRegionCount",
+          "value": 0
+        },
+        {
+          "name": "numericalSliverCount",
+          "value": 0
+        },
+        {
+          "name": "unconfirmedFragmentCount",
+          "value": 0
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "minimumRoomArea",
+          "value": 0.5,
+          "unit": "m²"
+        },
+        {
+          "name": "numericalSliverArea",
+          "value": 0.001,
+          "unit": "m²"
+        },
+        {
+          "name": "minimumRoomCompactness",
+          "value": 0.03
+        },
+        {
+          "name": "wallEndpointProximity",
+          "value": 0.02,
+          "unit": "m"
+        }
+      ],
+      "missingData": [],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "低于 0.001 m² 且形状极小的区域判为评价器计算残差",
+          "来源未确认的碎片不会被直接认定为设计错误"
+        ]
+      },
+      "diagnostics": []
+    },
+    {
+      "ruleId": "G1-013",
+      "ruleName": "门窗位于有效开口边界",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "1 个门窗因几何或宿主证据不足无法判断",
+      "details": [
+        "door_63mh4bxrm80jvzw3: invalid（宿主墙缺失）"
+      ],
+      "normalizedObjectIds": [
+        "door_63mh4bxrm80jvzw3"
+      ],
+      "pascalSourceIds": [
+        "door_63mh4bxrm80jvzw3"
+      ],
+      "measurements": [
+        {
+          "name": "wallLength",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "openingCenterAlongWall",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "openingWidth",
+          "value": 4.10113639831543,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "openingStart",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "openingEnd",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "rightOvershoot",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "leftOvershoot",
+          "value": null,
+          "unit": "m",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        },
+        {
+          "name": "resolvedWorldPosition",
+          "normalizedObjectId": "door_63mh4bxrm80jvzw3"
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "pointOnBoundaryTolerance",
+          "value": 0.01,
+          "unit": "m"
+        }
+      ],
+      "missingData": [
+        "door_63mh4bxrm80jvzw3: 宿主墙缺失"
+      ],
+      "confidence": {
+        "level": "medium",
+        "score": 0.75,
+        "reasons": [
+          "door_63mh4bxrm80jvzw3: 宿主墙缺失"
+        ]
+      },
+      "diagnostics": [
+        {
+          "severity": "warning",
+          "code": "invalid_opening_geometry",
+          "message": "宿主墙缺失",
+          "normalizedObjectIds": [
+            "door_63mh4bxrm80jvzw3"
+          ],
+          "origin": "source_data",
+          "recommendation": "修复宿主墙或门窗的几何字段后再检查。"
+        }
+      ]
+    },
+    {
+      "ruleId": "G1-019",
+      "ruleName": "主要空间具有明确名称",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "未形成可用于命名检查的可靠 Room Region",
+      "details": [],
+      "normalizedObjectIds": [],
+      "pascalSourceIds": [],
+      "measurements": [],
+      "thresholds": [],
+      "missingData": [
+        "可靠 Room Region",
+        "独立 Space 对象"
+      ],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "level_jwi4ovhyra2ayxa5 没有可用建筑边界，未生成 Room Region",
+          "level_tf1ug5dswkkzfhqa 没有可用建筑边界，未生成 Room Region"
+        ]
+      },
+      "diagnostics": [
+        {
+          "severity": "warning",
+          "code": "room_regions_unavailable",
+          "message": "当前无法建立独立物理空间区域，因此不能判断主要空间名称",
+          "normalizedObjectIds": [],
+          "origin": "insufficient_information"
+        }
+      ]
+    },
+    {
+      "ruleId": "G1-023",
+      "ruleName": "家具与设备位于有效建筑范围",
+      "status": "unable_to_determine",
+      "severity": "warning",
+      "summary": "2 个家具或设备因边界、类别或占地信息不足无法判断",
+      "details": [
+        "Herman Miller Aeron 所属楼层没有可靠建筑边界",
+        "Stove 所属楼层没有可靠建筑边界"
+      ],
+      "normalizedObjectIds": [
+        "item_010u26nmiwafik24",
+        "item_xbz96hwvq9vgqvfh"
+      ],
+      "pascalSourceIds": [
+        "item_010u26nmiwafik24",
+        "item_xbz96hwvq9vgqvfh"
+      ],
+      "measurements": [
+        {
+          "name": "participatingItemCount",
+          "value": 2
+        },
+        {
+          "name": "outsideItemCount",
+          "value": 0
+        },
+        {
+          "name": "unableToDetermineItemCount",
+          "value": 2
+        }
+      ],
+      "thresholds": [
+        {
+          "name": "outsideAreaTolerance",
+          "value": 0.0002,
+          "unit": "m²"
+        },
+        {
+          "name": "boundaryContactTolerance",
+          "value": 0.01,
+          "unit": "m"
+        }
+      ],
+      "missingData": [
+        "item_010u26nmiwafik24: 需要可靠的对象 footprint 与所属 Level 建筑边界",
+        "item_xbz96hwvq9vgqvfh: 需要可靠的对象 footprint 与所属 Level 建筑边界"
+      ],
+      "confidence": {
+        "level": "low",
+        "score": 0.4,
+        "reasons": [
+          "建筑边界由 Slab 并集推导",
+          "item_010u26nmiwafik24 缺少包含关系输入",
+          "item_xbz96hwvq9vgqvfh 缺少包含关系输入"
+        ]
+      },
+      "diagnostics": [
+        {
+          "severity": "warning",
+          "code": "building_envelope_unavailable",
+          "message": "Herman Miller Aeron 所属楼层没有可靠建筑边界",
+          "normalizedObjectIds": [
+            "item_010u26nmiwafik24"
+          ],
+          "origin": "insufficient_information",
+          "recommendation": "先补充该楼层的有效 Floor/Slab Polygon。"
+        },
+        {
+          "severity": "warning",
+          "code": "building_envelope_unavailable",
+          "message": "Stove 所属楼层没有可靠建筑边界",
+          "normalizedObjectIds": [
+            "item_xbz96hwvq9vgqvfh"
+          ],
+          "origin": "insufficient_information",
+          "recommendation": "先补充该楼层的有效 Floor/Slab Polygon。"
+        }
+      ]
+    }
+  ],
+  "diagnostics": []
+}

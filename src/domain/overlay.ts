@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { Vec3 } from "./building";
+
+export type Vec3 = [number, number, number];
 
 export const SYSTEMS = ["power", "low-voltage", "signal", "sprinkler"] as const;
 export type RoutingSystem = typeof SYSTEMS[number];
