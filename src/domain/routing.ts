@@ -21,7 +21,10 @@ export type PlannedRoute = {
   penetrations: Penetration[];
 };
 
-export function planRoute(system: RoutingSystem, diameterMm: number, mode: SurfaceMode, points: RoutePoint[]): PlannedRoute {
+export type ConstructionVisualParameters = { chaseWidthMm: number; chaseDepthMm: number; penetrationDiameterMm: number };
+const defaultConstructionParameters = (diameterMm: number): ConstructionVisualParameters => ({ chaseWidthMm: diameterMm + 10, chaseDepthMm: diameterMm + 5, penetrationDiameterMm: diameterMm + 10 });
+
+export function planRoute(system: RoutingSystem, diameterMm: number, mode: SurfaceMode, points: RoutePoint[], parameters = defaultConstructionParameters(diameterMm)): PlannedRoute {
   if (points.length < 2) throw new Error("至少需要两个路由点。");
   const segments = points.slice(0, -1).map((start, index): RouteSegment => ({
     id: nextId(system === "sprinkler" ? "sprinkler" : "conduit"), type: segmentType(system), system, diameterMm,
@@ -33,12 +36,12 @@ export function planRoute(system: RoutingSystem, diameterMm: number, mode: Surfa
   const wallChases: WallChase[] = [];
   if (isElectrical(system) && mode === "surface") for (const segment of segments) {
     const a = segment.start.attachment, b = segment.end.attachment;
-    if (a?.hostKind === "wall" && a.hostId === b?.hostId) wallChases.push({ id: nextId("chase"), type: "wall-chase", wallId: a.hostId, segmentId: segment.id, start: copyPoint(segment.start), end: copyPoint(segment.end), widthMm: diameterMm + 10, depthMm: diameterMm + 5 });
+    if (a?.hostKind === "wall" && a.hostId === b?.hostId) wallChases.push({ id: nextId("chase"), type: "wall-chase", wallId: a.hostId, segmentId: segment.id, start: copyPoint(segment.start), end: copyPoint(segment.end), widthMm: parameters.chaseWidthMm, depthMm: parameters.chaseDepthMm });
   }
   const penetrations: Penetration[] = [];
   if (mode === "penetrate") for (const segment of segments) for (const point of [segment.start, segment.end]) {
     const host = point.attachment;
-    if (host) penetrations.push({ id: nextId("penetration"), type: "penetration", hostId: host.hostId, hostKind: host.hostKind, segmentId: segment.id, point: copyPoint(point), diameterMm: diameterMm + 10 });
+    if (host) penetrations.push({ id: nextId("penetration"), type: "penetration", hostId: host.hostId, hostKind: host.hostKind, segmentId: segment.id, point: copyPoint(point), diameterMm: parameters.penetrationDiameterMm });
   }
   return { system, diameterMm, mode, points: points.map(copyPoint), segments, fittings, wallChases, penetrations };
 }

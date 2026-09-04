@@ -44,6 +44,13 @@ describe("Conduit overlay", () => {
     expect(plan.penetrations[0].diameterMm).toBe(60);
   });
 
+  it("uses explicitly confirmed demo construction parameters", () => {
+    const electrical = planRoute("power", 20, "surface", [point(0, 1, 0), point(1, 1, 0)], { chaseWidthMm: 44, chaseDepthMm: 31, penetrationDiameterMm: 52 });
+    expect(electrical.wallChases[0]).toMatchObject({ widthMm: 44, depthMm: 31 });
+    const through = planRoute("sprinkler", 50, "penetrate", [point(0, 2, 0), point(0, 2, 1, "slab-a")], { chaseWidthMm: 44, chaseDepthMm: 31, penetrationDiameterMm: 52 });
+    expect(through.penetrations.every((feature) => feature.diameterMm === 52)).toBe(true);
+  });
+
   it("splits a compatible segment and inserts one tee", () => {
     resetRoutingIdsForTests();
     const base = createEmptyOverlay("default-layout.json", "abc");
