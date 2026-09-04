@@ -5,7 +5,7 @@ export type ThreeDLevelMode = "stacked" | "exploded" | "solo";
 export type ThreeDWallMode = "up" | "cutaway" | "down" | "translucent";
 
 export const DEFAULT_3D_LAYERS: ThreeDLayerVisibility = {
-  walls: true, floors: true, ceilings: true, roofs: true, openings: true, furniture: true, zones: false,
+  walls: true, floors: true, ceilings: false, roofs: false, openings: false, furniture: false, zones: false,
 };
 
 export type ThreeDViewState = Pick<

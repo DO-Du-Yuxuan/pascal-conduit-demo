@@ -6,11 +6,11 @@ import type { NodeData } from "../types";
 import type { ThreeDLayerVisibility } from "./ThreeDWorkspace";
 import type { ThreeDLevelMode, ThreeDWallMode } from "./view-state";
 import type { ThreeDSceneInput } from "./scene-input";
-import type { ConduitOverlayDocument, HostAttachment, Penetration, Vec3, WallChase } from "../domain/overlay";
+import type { ConduitOverlayDocument, HostAttachment, Penetration, RoutePoint, Vec3, WallChase } from "../domain/overlay";
 import { transitionToAdjacentWall, type WallHostCandidate } from "./host-transition";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit) => void; onSurfaceFinish?: () => void };
 type Point = [number, number, number];
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
@@ -148,7 +148,7 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
   </mesh>;
 }
 
-export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish }: Props) {
+export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, previousRoutePoint, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish }: Props) {
   const levelById = useMemo(() => Object.fromEntries(Object.values(scene.nodes).filter((node) => node.type === "level").map((node) => [node.id, numeric(node.level)])), [scene.nodes]);
   const levelFor = (node: NodeData) => {
     let cursor: NodeData | undefined = node, visited = new Set<string>();
@@ -165,8 +165,8 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
     levelId: levelIdFor(node),
     openings: Object.values(scene.nodes).filter((child) => (child.type === "door" || child.type === "window") && (child.wallId === node.id || child.parentId === node.id)).flatMap((child) => Array.isArray(child.position) && Number.isFinite(child.position[0]) && Number.isFinite(child.width) ? [{ center: child.position[0], width: child.width }] : []),
   })), [scene.nodes, levelById]);
-  const handleSurfaceMove = (hit: ThreeDSurfaceHit) => onSurfaceMove?.(transitionToAdjacentWall(hit, wallHosts));
-  const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts));
+  const handleSurfaceMove = (hit: ThreeDSurfaceHit) => onSurfaceMove?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint));
+  const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint));
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
   const floorTopAt = (level: number, x: number, z: number) => Math.max(0, ...Object.values(scene.nodes).filter((node) => node.type === "slab" && levelFor(node) === level && Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));
   const visible = (node: NodeData) => { const layer = typeLayer(node.type); return node.visible !== false && !hiddenNodeIds.has(node.id) && !!layer && layers[layer] && !(node.type === "wall" && wallMode === "down") && (levelMode !== "solo" || levelFor(node) === 0); };
