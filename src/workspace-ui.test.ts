@@ -33,4 +33,11 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("onSelect={selectWhileBrowsing}");
     expect(styles).toContain("contain:layout paint");
   });
+
+  it("keeps Canvas camera and controls configuration stable across drawing renders", () => {
+    expect(threeDSource).toContain("camera={projection === \"orthographic\" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA}");
+    expect(threeDSource).toContain("dpr={CANVAS_DPR}");
+    expect(threeDSource).toContain("gl={CANVAS_GL}");
+    expect(threeDSource).toContain("mouseButtons={CONTROL_MOUSE_BUTTONS}");
+  });
 });

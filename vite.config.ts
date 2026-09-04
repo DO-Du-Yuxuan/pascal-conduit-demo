@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  base: "/",
+  base: process.env.GITHUB_ACTIONS ? "/pascal-conduit-demo/" : "/",
   plugins: [react()],
   define: {
     "process.env.NEXT_PUBLIC_ASSETS_CDN_URL": JSON.stringify("https://editor.pascal.app"),
