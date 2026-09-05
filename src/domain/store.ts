@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ConduitOverlayDocument, RoutePoint, RoutingSystem, Vec3 } from "./overlay";
+import type { ConduitOverlayDocument, NetworkDeviceType, RoutePoint, RoutingSystem, Vec3 } from "./overlay";
 import type { PlannedRoute } from "./routing";
 
 export type RoutePreviewSnapshot = {
@@ -10,6 +10,7 @@ export type RoutePreviewSnapshot = {
   points: RoutePoint[];
   plan: PlannedRoute | null;
   branchNode?: { kind: "junction-box" | "tee"; position: Vec3; sizeMm: [number, number, number] };
+  deviceNode?: { deviceType: NetworkDeviceType; position: RoutePoint; valid: boolean };
 };
 
 type OverlayState = {

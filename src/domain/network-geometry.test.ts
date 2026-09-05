@@ -5,9 +5,9 @@ import { teeSocketSegments } from "./network-geometry";
 describe("network fitting geometry", () => {
   it("builds a three-barrel tee aligned to its physical ports", () => {
     const fitting: RouteFitting = { id: "tee", type: "sprinkler-fitting", fitting: "tee", system: "sprinkler", diameterMm: 50, position: { position: [1, 2, 3] }, segmentIds: ["a", "b", "c"], ports: [
-      { id: "p1", position: { position: [.95, 2, 3] }, direction: [-1, 0, 0], segmentId: "a" },
-      { id: "p2", position: { position: [1.05, 2, 3] }, direction: [1, 0, 0], segmentId: "b" },
-      { id: "p3", position: { position: [1, 2, 3.05] }, direction: [0, 0, 1], segmentId: "c" },
+      { id: "p1", owner: { kind: "fitting", id: "tee" }, position: { position: [.95, 2, 3] }, direction: [-1, 0, 0], role: "branch", system: "sprinkler", connectedSegmentIds: ["a"], segmentId: "a" },
+      { id: "p2", owner: { kind: "fitting", id: "tee" }, position: { position: [1.05, 2, 3] }, direction: [1, 0, 0], role: "branch", system: "sprinkler", connectedSegmentIds: ["b"], segmentId: "b" },
+      { id: "p3", owner: { kind: "fitting", id: "tee" }, position: { position: [1, 2, 3.05] }, direction: [0, 0, 1], role: "branch", system: "sprinkler", connectedSegmentIds: ["c"], segmentId: "c" },
     ] };
     const sockets = teeSocketSegments(fitting);
     expect(sockets).toHaveLength(3);

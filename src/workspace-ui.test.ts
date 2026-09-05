@@ -28,6 +28,17 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("preview.plan.segments.map");
   });
 
+  it("exposes device placement, rooted drawing and synchronized device symbols", () => {
+    expect(threeDSource).toContain('point: "点位"');
+    expect(threeDSource).toContain("DEVICE_DEFAULTS");
+    expect(threeDSource).toContain("startRouteFromDevice");
+    expect(threeDSource).toContain("devicePreview=");
+    expect(threeDSource).toContain("onDevicePreview={setInlineDevicePreview}");
+    expect(threeDSource).toContain("rootLegacyNetwork");
+    expect(source).toContain("overlay.devices.filter");
+    expect(source).toContain("preview.deviceNode");
+  });
+
   it("does not turn drawing clicks into global scene selections in split view", () => {
     expect(threeDSource).toContain('if (tool === "select") onSelect(id)');
     expect(threeDSource).toContain("onPointerMissed={() => selectWhileBrowsing(null)}");

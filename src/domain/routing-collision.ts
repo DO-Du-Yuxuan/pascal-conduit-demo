@@ -59,6 +59,10 @@ function primitivesForOverlay(overlay: ConduitOverlayDocument, ignoredSegmentId?
     } else result.push({ id: fitting.id, a: fitting.position.position, b: fitting.position.position, radius: fitting.diameterMm / 1800, relatedSegmentIds: fitting.segmentIds });
   }
   for (const box of overlay.junctionBoxes) if (!box.segmentIds.includes(ignoredSegmentId ?? "")) result.push({ id: box.id, a: box.position.position, b: box.position.position, radius: Math.hypot(...box.sizeMm) / 2000, relatedSegmentIds: box.segmentIds });
+  for (const device of overlay.devices) {
+    const relatedSegmentIds = device.ports.flatMap((port) => port.connectedSegmentIds);
+    if (!relatedSegmentIds.includes(ignoredSegmentId ?? "")) result.push({ id: device.id, a: device.position.position, b: device.position.position, radius: Math.hypot(...device.sizeMm) / 2000, relatedSegmentIds });
+  }
   return result;
 }
 

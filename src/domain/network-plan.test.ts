@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RouteFitting } from "./overlay";
 import { planFittingDisplay } from "./network-plan";
 
-const fitting = (kind: RouteFitting["fitting"]): RouteFitting => ({ id: kind, type: "conduit-fitting", fitting: kind, system: "power", diameterMm: 20, position: { position: [0, 0, 0] }, segmentIds: [], ports: [] });
+const fitting = (kind: RouteFitting["fitting"]): RouteFitting => ({ id: kind, type: "conduit-fitting", fitting: kind, system: "receptacle", diameterMm: 20, position: { position: [0, 0, 0] }, segmentIds: [], ports: [] });
 
 describe("2D network symbols", () => {
   it("hides elbow, coupling and tee point symbols", () => {
