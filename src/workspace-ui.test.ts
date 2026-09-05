@@ -78,6 +78,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("生成/更新槽孔");
     expect(threeDSource).toContain("appliedSurfaceChases={appliedConstruction.surfaceChases}");
     expect(threeDSource).toContain("appliedPenetrations={appliedConstruction.penetrations}");
+    expect(threeDSource).toContain("fallbackChaseKeys={chaseFallbacks}");
+    expect(conduitSceneSource).toContain("appliedSurfaceChases.filter");
+    expect(conduitSceneSource).toContain("fallbackChaseKeys");
     expect(threeDSource).not.toContain("个槽待更新");
   });
 
