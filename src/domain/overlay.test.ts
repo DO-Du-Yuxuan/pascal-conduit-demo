@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS } from "./overlay";
-import { branchAtSegment, commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, resetRoutingIdsForTests } from "./routing";
+import { branchAtSegment, commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, resetRoutingIdsForTests, type PenetrationRequest } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostId = "wall-a") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } });
+const floorPoint = (x: number, y: number, z: number, hostId = "slab-a") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
 
 describe("Conduit overlay", () => {
   it("round-trips an empty overlay", () => {
@@ -18,8 +19,13 @@ describe("Conduit overlay", () => {
     const legacy = JSON.parse(JSON.stringify(overlay)); delete legacy.settings.visibleSystems;
     expect(parseOverlay(legacy).settings.visibleSystems.power).toBe(true);
     legacy.schemaVersion = "1.0"; delete legacy.settings.bendRadiusMm; delete legacy.settings.stockLengthMm; delete legacy.settings.junctionBoxSizeMm; delete legacy.junctionBoxes;
-    const migrated = parseOverlay(legacy);
-    expect(migrated).toMatchObject({ schemaVersion: "1.1", junctionBoxes: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
+    delete legacy.surfaceChases; legacy.wallChases = [{ id: "legacy-chase", type: "wall-chase", wallId: "wall-a", segmentId: "pipe", start: point(0, 1, 0), end: point(1, 1, 0), widthMm: 30, depthMm: 25 }];
+    legacy.penetrations = [{ id: "legacy-hole", type: "penetration", hostId: "wall-a", hostKind: "wall", segmentId: "pipe", point: point(.5, 1, 0), diameterMm: 30 }];
+    const migratedLegacy = parseOverlay(legacy);
+    expect(migratedLegacy).toMatchObject({ schemaVersion: "1.2", junctionBoxes: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
+    expect(migratedLegacy.surfaceChases[0]).toMatchObject({ type: "surface-chase", hostId: "wall-a", hostKind: "wall", path: { kind: "line" } });
+    expect(migratedLegacy.penetrations[0]).toMatchObject({ entry: { position: [.5, 1, 0] }, exit: { position: [.5, 1, 0] }, direction: [0, 0, 1], derived: true });
+    expect(parseOverlay(JSON.parse(JSON.stringify(migratedLegacy)))).toEqual(migratedLegacy);
   });
 
   it("uses the documented four system defaults", () => {
@@ -29,13 +35,14 @@ describe("Conduit overlay", () => {
     expect(SYSTEM_DEFAULTS.sprinkler).toMatchObject({ color: "#22c55e", diameterMm: 50 });
   });
 
-  it("makes explicit segments, elbow and electrical wall chase", () => {
+  it("makes explicit segments, sweep and straight-plus-arc wall chases", () => {
     resetRoutingIdsForTests();
     const source = [point(0, 1, 0), point(1, 1, 0), point(1, 1, 1)], before = JSON.stringify(source);
     const plan = planRoute("power", 20, "surface", source);
     expect(plan.segments).toHaveLength(2);
     expect(plan.fittings).toMatchObject([{ fitting: "elbow", system: "power" }]);
-    expect(plan.wallChases).toHaveLength(2);
+    expect(plan.surfaceChases).toHaveLength(3);
+    expect(plan.surfaceChases.map((chase) => chase.path.kind)).toEqual(["line", "line", "arc"]);
     expect(plan.penetrations).toHaveLength(0);
     expect(JSON.stringify(source)).toBe(before);
   });
@@ -43,21 +50,21 @@ describe("Conduit overlay", () => {
   it("does not cut sprinkler wall chases and can mark penetrations", () => {
     resetRoutingIdsForTests();
     const plan = planRoute("sprinkler", 50, "penetrate", [point(0, 2, 0), point(0, 2, 1, "slab-a")]);
-    expect(plan.wallChases).toHaveLength(0);
+    expect(plan.surfaceChases).toHaveLength(0);
     expect(plan.penetrations).toHaveLength(2);
     expect(plan.penetrations[0].diameterMm).toBe(60);
   });
 
   it("uses explicitly confirmed demo construction parameters", () => {
     const electrical = planRoute("power", 20, "surface", [point(0, 1, 0), point(1, 1, 0)], { chaseWidthMm: 44, chaseDepthMm: 31, penetrationDiameterMm: 52 });
-    expect(electrical.wallChases[0]).toMatchObject({ widthMm: 44, depthMm: 31 });
+    expect(electrical.surfaceChases[0]).toMatchObject({ widthMm: 44, depthMm: 31 });
     const through = planRoute("sprinkler", 50, "penetrate", [point(0, 2, 0), point(0, 2, 1, "slab-a")], { chaseWidthMm: 44, chaseDepthMm: 31, penetrationDiameterMm: 52 });
     expect(through.penetrations.every((feature) => feature.diameterMm === 52)).toBe(true);
   });
 
   it("can add a one-shot penetration to an otherwise surface route", () => {
-    const a = point(0, 1, 0), b = point(1, 1, 0), c = point(2, 1, 0);
-    const plan = planRoute("power", 20, "surface", [a, b, c], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 34 }, [b]);
+    const a = point(0, 1, 0), b = point(1, 1, 0), c = point(2, 1, 0), request: PenetrationRequest = { host: b.attachment!, entry: b, exit: c, direction: [1, 0, 0] };
+    const plan = planRoute("power", 20, "surface", [a, b, c], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 34 }, [request]);
     expect(plan.penetrations).toHaveLength(1);
     expect(plan.penetrations[0]).toMatchObject({ hostId: "wall-a", diameterMm: 34 });
   });
@@ -82,6 +89,13 @@ describe("Conduit overlay", () => {
     expect(branch.start.position).toEqual(box.ports[2].position.position);
   });
 
+  it("uses the same unified sweep rule while continuing an electrical branch", () => {
+    const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("power", 20, "surface", [point(0, 1, 0), point(2, 1, 0)]));
+    const plan = planBranchContinuation(routed, routed.segments[0].id, [point(1, 1, 0), point(1, 2, 0), point(2, 2, 0)], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 })!;
+    expect(plan.canCommit).toBe(true);
+    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 200, arc: expect.any(Object) });
+  });
+
   it("splits a sprinkler segment at a physical tee", () => {
     resetRoutingIdsForTests();
     const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(2, 2, 0)]));
@@ -95,7 +109,7 @@ describe("Conduit overlay", () => {
     const removedBox = deleteNetworkObject(branched, branched.junctionBoxes[0].id);
     expect(removedBox.segments).toHaveLength(0);
     expect(removedBox.junctionBoxes).toHaveLength(0);
-    expect(removedBox.wallChases).toHaveLength(0);
+    expect(removedBox.surfaceChases).toHaveLength(0);
     const sprinkler = commitPlannedRoute(base, planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(2, 2, 0)])), sprinklerBranch = branchAtSegment(sprinkler, sprinkler.segments[0].id, point(1, 2, 0), point(1, 2, 1)), tee = sprinklerBranch.fittings.find((fitting) => fitting.fitting === "tee")!;
     expect(deleteNetworkObject(sprinklerBranch, tee.id).segments).toHaveLength(0);
   });
@@ -114,18 +128,53 @@ describe("Conduit overlay", () => {
     expect(plan.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "bend_clearance" })]));
   });
 
-  it("uses right-angle electrical bends across hosts and standard sprinkler bends", () => {
+  it("uses sweep electrical bends across hosts and standard sprinkler bends", () => {
     const electrical = planRoute("power", 20, "surface", [point(0, 1, 0, "wall-a"), point(1, 1, 0, "wall-a"), point(1, 1, 1, "slab-a")]);
-    expect(electrical.fittings[0]).toMatchObject({ bendStyle: "right-angle" });
+    expect(electrical.fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 200, arc: expect.any(Object) });
     const sprinkler = planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(1, 2, 0), point(1, 2, 1)]);
     expect(sprinkler.fittings[0]).toMatchObject({ bendStyle: "standard" });
+  });
+
+  it("uses a 200 mm sweep for every electrical system across the complete host matrix", () => {
+    const wallB = (x: number, y: number, z: number) => ({ ...point(x, y, z, "wall-b"), attachment: { ...point(x, y, z, "wall-b").attachment!, normal: [1, 0, 0] as [number, number, number] } });
+    const cases = [
+      [floorPoint(0, 0, 0), floorPoint(1, 0, 0), floorPoint(1, 0, 1)],
+      [floorPoint(0, 0, 0), point(1, 0, 0), point(1, 1, 0)],
+      [point(0, 1, 0), floorPoint(1, 1, 0), floorPoint(1, 1, 1)],
+      [point(0, 1, 0), wallB(1, 1, 0), wallB(1, 2, 0)],
+      [point(0, 1, 0), point(1, 1, 0), wallB(1, 2, 0), floorPoint(2, 2, 0)],
+      [{ ...point(0, 1, 0), attachment: { ...point(0, 1, 0).attachment!, curveT: .1 } }, { ...point(1, 1, 0), attachment: { ...point(1, 1, 0).attachment!, curveT: .4 } }, { ...point(1, 2, 0), attachment: { ...point(1, 2, 0).attachment!, curveT: .7 } }],
+    ];
+    for (const system of ["power", "low-voltage", "signal"] as const) for (const route of cases) {
+      const plan = planRoute(system, 20, "surface", route);
+      expect(plan.canCommit, `${system}: ${route.map((item) => item.attachment?.hostId).join(" -> ")}`).toBe(true);
+      expect(plan.fittings.filter((fitting) => fitting.fitting === "elbow").every((fitting) => fitting.bendStyle === "sweep" && fitting.radiusMm === 200 && Boolean(fitting.arc))).toBe(true);
+    }
+  });
+
+  it("does not add an elbow to a collinear Tab penetration and sweeps its surrounding turns", () => {
+    const route = [floorPoint(0, 0, 0), floorPoint(1, 0, 0), point(2, 0, 0), point(3, 0, 0), point(3, 1, 0)];
+    const request: PenetrationRequest = { host: route[1].attachment!, entry: route[1], exit: route[2], direction: [1, 0, 0] };
+    const plan = planRoute("power", 20, "surface", route, undefined, [request]);
+    expect(plan.fittings.filter((fitting) => fitting.fitting === "elbow")).toHaveLength(1);
+    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 200 });
+    expect(plan.penetrations).toMatchObject([{ hostId: "slab-a", entry: { position: [1, 0, 0] }, exit: { position: [2, 0, 0] }, direction: [1, 0, 0] }]);
+  });
+
+  it("creates shallow line and arc chase records on every affected wall and slab, never ceilings", () => {
+    const route = [floorPoint(0, 0, 0, "floor"), floorPoint(1, 0, 0, "floor"), point(1, 1, 0, "wall"), { ...point(1, 1, 1, "ceiling"), attachment: { ...point(1, 1, 1, "ceiling").attachment!, hostKind: "ceiling" as const } }];
+    const plan = planRoute("power", 20, "surface", route, { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 });
+    expect(new Set(plan.surfaceChases.map((chase) => chase.hostId))).toEqual(new Set(["floor", "wall"]));
+    expect(plan.surfaceChases.some((chase) => chase.hostKind === "slab" && chase.path.kind === "line")).toBe(true);
+    expect(plan.surfaceChases.some((chase) => chase.hostKind === "wall" && chase.path.kind === "arc")).toBe(true);
+    expect(plan.surfaceChases.every((chase) => chase.widthMm === 30 && chase.depthMm === 25 && chase.hostKind !== ("ceiling" as never))).toBe(true);
   });
 
   it("keeps an old-host sweep until the actual host-transition corner", () => {
     const floor = (x: number, z: number) => ({ position: [x, 0, z] as [number, number, number], attachment: { hostId: "floor", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
     const wall = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number], attachment: { hostId: "wall", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } });
     const plan = planRoute("power", 20, "surface", [floor(0, 0), floor(1, 0), wall(1, 0, 1), wall(1, 1, 1)]);
-    expect(plan.fittings.map((fitting) => fitting.bendStyle)).toEqual(["sweep", "right-angle"]);
+    expect(plan.fittings.map((fitting) => fitting.bendStyle)).toEqual(["sweep", "sweep"]);
   });
 
   it("restores the first sweep after entering a new host plane", () => {
@@ -166,11 +215,11 @@ describe("Conduit overlay", () => {
     expect(overlay.segments).toHaveLength(1);
   });
 
-  it("plans a dense 500-segment preview without generating host cuts", () => {
+  it("plans 500 chase records analytically without invoking runtime CSG", () => {
     const slabPoint = (index: number) => ({ position: [index * .02, 0, 0] as [number, number, number], attachment: { hostId: "slab-a", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
     const plan = planRoute("power", 20, "surface", Array.from({ length: 501 }, (_, index) => slabPoint(index)));
     expect(plan.segments).toHaveLength(500);
-    expect(plan.wallChases).toHaveLength(0);
+    expect(plan.surfaceChases).toHaveLength(500);
     expect(plan.penetrations).toHaveLength(0);
   });
 

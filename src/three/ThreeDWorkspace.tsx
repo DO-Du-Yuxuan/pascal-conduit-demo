@@ -1,12 +1,12 @@
 import { CameraControls, CameraControlsImpl } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackSide } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool } from "../components/ConduitScene";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type ConduitOverlayDocument, type HostAttachment, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceMode } from "../domain/overlay";
-import { commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, type ConstructionVisualParameters, type PlannedRoute } from "../domain/routing";
+import { commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, type ConstructionVisualParameters, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { constrainToHostAxes, directionStateForArrow, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint, type DirectionArrow, type WorldAxis } from "../domain/drawing";
+import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, type DirectionArrow, type PenetrationSession, type WorldAxis } from "../domain/drawing";
 import { useOverlayStore } from "../domain/store";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { projectRayToActiveWall } from "./active-host";
@@ -29,6 +29,7 @@ const ORTHOGRAPHIC_CAMERA = { position: [10, 10, 10] as [number, number, number]
 const CANVAS_DPR: [number, number] = [1, 1.25];
 const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
 const CONTROL_MOUSE_BUTTONS = { left: CameraControlsImpl.ACTION.NONE, middle: CameraControlsImpl.ACTION.TRUCK, right: CameraControlsImpl.ACTION.ROTATE, wheel: CameraControlsImpl.ACTION.DOLLY };
+const NO_CAMERA_COLLIDERS: never[] = [];
 // The footer was intentionally removed from the workspace: status changes
 // must not alter the canvas height while a route is being drawn.
 const setStatus = (_message: string) => undefined;
@@ -57,7 +58,11 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
   // `infinityDolly` deliberately moves the orbit target after reaching the
   // closest distance.  No scene geometry is registered as a collider, so the
   // camera can pass through all walls, furniture proxies and conduit meshes.
-  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={.01} mouseButtons={CONTROL_MOUSE_BUTTONS} />;
+  // Infinity dolly only advances the target after minDistance is reached. A
+  // near-zero minimum makes wheel motion decay until it feels blocked at the
+  // orbit target, so enter pass-through mode at a practical scene-relative
+  // distance instead. Hidden or visible scene meshes are never colliders.
+  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryEnclosesCamera={false} colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={CONTROL_MOUSE_BUTTONS} />;
 }
 
 function PointerCapture({ bounds, onRay }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number]) => void }) {
@@ -86,7 +91,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const matchingOverlay = sharedOverlay?.source.sha256 === sourceSha ? sharedOverlay : null;
   const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
   const [overlay, setOverlay] = useState(() => copy(matchingOverlay ?? createEmptyOverlay(sourceFile, sourceSha))), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && sharedOverlayDirty)), [undoStack, setUndoStack] = useState<ConduitOverlayDocument[]>([]), [redoStack, setRedoStack] = useState<ConduitOverlayDocument[]>([]);
-  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("power"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [cursor, setCursor] = useState<RoutePoint | null>(null), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationEntry, setPenetrationEntry] = useState<RoutePoint | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<RoutePoint[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [constructionMode, setConstructionMode] = useState<ConstructionMode>("construction");
+  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("power"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [cursor, setCursor] = useState<RoutePoint | null>(null), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [constructionMode, setConstructionMode] = useState<ConstructionMode>("construction"), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set());
   const overlayInput = useRef<HTMLInputElement>(null);
   const rawSurfaceHit = useRef<ThreeDSurfaceHit | null>(null);
   const surfaceOccluded = useRef(false);
@@ -96,30 +101,37 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const selectWhileBrowsing = (id: string | null) => {
     if (tool === "select") onSelect(id);
   };
+  const reportChaseFallback = useCallback((key: string, failed: boolean) => setChaseFallbacks((current) => {
+    const next = new Set(current);
+    if (failed) next.add(key); else next.delete(key);
+    if (next.size === current.size && [...next].every((item) => current.has(item))) return current;
+    return next;
+  }), []);
 
   useEffect(() => {
     const stored = useOverlayStore.getState(), restored = stored.overlay?.source.sha256 === sourceSha ? stored.overlay : null;
-    setOverlay(copy(restored ?? createEmptyOverlay(sourceFile, sourceSha))); setOverlayDirty(Boolean(restored && stored.dirty)); setUndoStack([]); setRedoStack([]); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true);
+    setOverlay(copy(restored ?? createEmptyOverlay(sourceFile, sourceSha))); setOverlayDirty(Boolean(restored && stored.dirty)); setUndoStack([]); setRedoStack([]); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true);
   }, [scene?.sceneKey, sourceFile, sourceSha]);
   useEffect(() => { publishOverlay(overlay, overlayDirty); }, [overlay, overlayDirty, publishOverlay]);
+  useEffect(() => { setChaseFallbacks(new Set()); }, [overlay.surfaceChases, scene?.sceneKey]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
       if (editable) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setOverlayDirty(true); if (event.shiftKey) setRedoStack((redo) => { const next = redo[redo.length - 1]; if (!next) return redo; setUndoStack((undo) => [...undo, copy(overlay)]); setOverlay(copy(next)); return redo.slice(0, -1); }); else setUndoStack((undo) => { const previous = undo[undo.length - 1]; if (!previous) return undo; setRedoStack((redo) => [...redo, copy(overlay)]); setOverlay(copy(previous)); return undo.slice(0, -1); }); return; }
-      if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); setStatus("已切换到选择模式。"); return; }
+      if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setStatus("已切换到选择模式。"); return; }
       if (event.key === "Shift" && !event.repeat) { event.preventDefault(); setOrthogonal((value) => !value); return; }
       if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
-      if (event.key === "Escape") { setBranchStart(null); setBranchEnd(null); setPenetrationEntry(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
+      if (event.key === "Escape") { if (penetrationSession) { setPenetrationSession(null); setCursor(null); return; } setBranchStart(null); setBranchEnd(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
       if (event.key === "Enter") { event.preventDefault(); finishCurrentRoute(); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && cursor?.attachment && draft.length) {
         event.preventDefault();
-        const displayedPoints = previewRoutePoints(draft, cursor, orthogonal ? "orthogonal" : "free"), displayed = displayedPoints[displayedPoints.length - 1] ?? cursor;
-        setPenetrationEntry(displayed); setCursor(displayed); setStatus("已标记穿透入口；移至宿主另一侧并点击确认出口。");
+        const displayedPoints = previewRoutePoints(draft, cursor, orthogonal ? "orthogonal" : "free"), displayed = displayedPoints[displayedPoints.length - 1] ?? cursor, session = beginPenetration(draft, displayed, orthogonal);
+        if (session) { setPenetrationSession(session); setCursor(null); setStatus("已锁定入射方向；移至宿主另一侧并点击确认出口。"); }
       }
     };
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, explicitPenetrations, worldAxis, orthogonal]);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, explicitPenetrations, worldAxis, orthogonal, penetrationSession]);
 
   const commit = (next: ConduitOverlayDocument) => { setUndoStack((history) => [...history, copy(overlay)]); setRedoStack([]); setOverlay(copy(next)); setOverlayDirty(true); };
   const selectSystem = (next: RoutingSystem) => { const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); };
@@ -130,30 +142,33 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!plan) throw new Error("目标分支管段不存在。");
     return withCollisionDiagnostics(overlay, plan, ignoredSegmentId);
   };
-  const clearCompletedDraft = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setPenetrationEntry(null); setWorldAxis(null); };
+  const clearCompletedDraft = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setPenetrationSession(null); setWorldAxis(null); };
   const rejectDiagnostics = (plan: PlannedRoute) => { const first = plan.diagnostics[0]; setStatus(first?.message ?? "当前路径无效，不能生成。"); };
   const finishCurrentRoute = () => {
     if (tool !== "draw" && tool !== "branch") return;
-    const preview = cursor ? (draft.length && !worldAxis && !penetrationEntry ? constrainToHostAxes(draft[draft.length - 1], cursor, orthogonal ? "orthogonal" : "free") : cursor) : null;
+    if (penetrationSession) return;
+    const preview = effectiveCursor;
     const points = preview && (!draft.length || preview.position.some((value, axis) => Math.abs(value - draft[draft.length - 1].position[axis]) > 1e-7)) ? [...draft, preview] : draft;
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else commit(commitPlannedRoute(overlay, plan));
+    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else commit(commitPlannedRoute(overlay, plan));
     clearCompletedDraft(); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const finishPath = finishCurrentRoute;
   const finishAtCursor = () => {
     if ((tool !== "draw" && tool !== "branch") || !cursor) return finishCurrentRoute();
-    const point = draft.length && !worldAxis && !penetrationEntry ? constrainToHostAxes(draft[draft.length - 1], cursor, orthogonal ? "orthogonal" : "free") : cursor;
+    if (penetrationSession) return;
+    const point = effectiveCursor;
+    if (!point) return;
     const points = [...draft, point];
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else commit(commitPlannedRoute(overlay, plan));
+    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else commit(commitPlannedRoute(overlay, plan));
     clearCompletedDraft(); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
-  const previewPoints = useMemo(() => displayedRoutePoints(draft, cursor, orthogonal ? "orthogonal" : "free", { worldAxis, penetrationEntry }), [draft, cursor, orthogonal, penetrationEntry, worldAxis]);
+  const previewPoints = useMemo(() => displayedRoutePoints(draft, cursor, orthogonal ? "orthogonal" : "free", { worldAxis, penetration: penetrationSession }), [draft, cursor, orthogonal, penetrationSession, worldAxis]);
   const effectiveCursor = cursor && draft.length ? previewPoints[previewPoints.length - 1] : cursor;
   const displayDraft = draft.length ? previewPoints : cursor ? [cursor] : [];
   const previewPlan = useMemo(() => displayDraft.length >= 2 && (tool === "draw" || tool === "branch" && branchStart) ? validatedPlan(displayDraft, branchStart?.segmentId) : null, [displayDraft, tool, branchStart, overlay, system, diameterMm, surfaceMode, constructionParameters, explicitPenetrations]);
@@ -182,13 +197,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     surfaceOccluded.current = false;
     rawSurfaceHit.current = hit;
     const active = draft[draft.length - 1];
-    if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall" || penetrationEntry)) setCursor(routePoint(hit));
+    if (penetrationSession) { setCursor(hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
+    if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) setCursor(routePoint(hit));
   };
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     const point = resolveConfirmedRoutePoint(effectiveCursor, routePoint(hit));
     if (!point) return;
-    if (penetrationEntry) { setDraft((points) => [...points, penetrationEntry, point]); setExplicitPenetrations((points) => [...points, penetrationEntry, point]); setPenetrationEntry(null); setCursor(null); setStatus("已确认穿透出口；继续画管或按 Enter 直接生成。"); return; }
+    if (penetrationSession) { const exit = projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
     const constrained = point, candidate = [...draft, constrained];
     if (candidate.length >= 2) { const plan = validatedPlan(candidate, branchStart?.segmentId); if (!plan.canCommit) { rejectDiagnostics(plan); return; } }
     setDraft(candidate); setBranchEnd(constrained); setCursor(null); setStatus("已确定落点；移动鼠标预览下一段，按 Enter、双击或完成路径直接生成。");
@@ -219,7 +235,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (worldAxis && draft.length) { setCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); return; }
     if (blockedByOpening) { setCursor(null); return; }
     const active = draft[draft.length - 1];
-    if ((tool === "draw" || tool === "branch" && branchStart) && active?.attachment?.hostKind === "wall" && !penetrationEntry) {
+    if (penetrationSession) { setCursor(surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
+    if ((tool === "draw" || tool === "branch" && branchStart) && active?.attachment?.hostKind === "wall") {
       const projected = projectRayToActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction);
       if (projected) { setCursor(projected); return; }
       if (surfaceHit) setCursor(routePoint(surfaceHit));
@@ -242,15 +259,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       <aside className={`conduit-panel ${panelCollapsed ? "collapsed" : ""}`} aria-label="管线编辑工具">
         <button className="conduit-panel-collapse" onClick={() => setPanelCollapsed((value) => !value)}>{panelCollapsed ? "展开管线" : "收起"}</button>
         {!panelCollapsed && <>
-          <section><b>编辑工具</b><div className="conduit-button-grid">{(["select", "draw", "branch", "delete"] as Tool[]).map((item) => <button key={item} className={tool === item ? "active" : ""} onClick={() => { setTool(item); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); }}>{({ select: "选择", draw: "画管", branch: "分支", delete: "删除" } as const)[item]}</button>)}</div><div className="conduit-button-grid"><button disabled={displayDraft.length < 2 || Boolean(previewPlan && !previewPlan.canCommit)} onClick={finishPath}>完成路径</button><button disabled={!draft.length && !branchStart && !penetrationEntry} onClick={() => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationEntry(null); setExplicitPenetrations([]); setWorldAxis(null); }}>取消</button></div></section>
+          <section><b>编辑工具</b><div className="conduit-button-grid">{(["select", "draw", "branch", "delete"] as Tool[]).map((item) => <button key={item} className={tool === item ? "active" : ""} onClick={() => { setTool(item); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); }}>{({ select: "选择", draw: "画管", branch: "分支", delete: "删除" } as const)[item]}</button>)}</div><div className="conduit-button-grid"><button disabled={Boolean(penetrationSession) || displayDraft.length < 2 || Boolean(previewPlan && !previewPlan.canCommit)} onClick={finishPath}>完成路径</button><button disabled={!draft.length && !branchStart && !penetrationSession} onClick={() => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); }}>取消</button></div></section>
           <section><b>管线参数</b><label>系统<select disabled={tool === "branch" && Boolean(branchStart)} value={system} onChange={(event) => selectSystem(event.target.value as RoutingSystem)}>{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <option key={key} value={key}>{SYSTEM_DEFAULTS[key].label}</option>)}</select></label><label>外径 <input disabled={tool === "branch" && Boolean(branchStart)} type="number" min="5" max="200" value={diameterMm} onChange={(event) => setDiameterMm(Number(event.target.value))} /> mm</label><label>敷设<select value={surfaceMode} onChange={(event) => setSurfaceMode(event.target.value as SurfaceMode)}><option value="surface">贴面暗敷</option><option value="suspended">吊顶内明敷</option></select></label><label>大弯半径 <input type="number" min="1" value={overlay.settings.bendRadiusMm} onChange={(event) => { setOverlay((current) => ({ ...current, settings: { ...current.settings, bendRadiusMm: Math.max(1, Number(event.target.value)) } })); setOverlayDirty(true); }} /> mm</label><label>定尺长度 <input type="number" min="100" value={overlay.settings.stockLengthMm} onChange={(event) => { setOverlay((current) => ({ ...current, settings: { ...current.settings, stockLengthMm: Math.max(100, Number(event.target.value)) } })); setOverlayDirty(true); }} /> mm</label><div className="conduit-button-grid"><button className={orthogonal ? "active" : ""} onClick={() => setOrthogonal((value) => !value)}>正交 {orthogonal ? "开" : "关"}</button><button className={worldAxis ? "active" : ""} onClick={() => setWorldAxis(null)}>{worldAxis ? `世界 ${worldAxis.toUpperCase()}` : "宿主面"}</button></div><small>按 Shift 切换正交；← X、↑ Y、→ Z 锁定世界轴；↓ 恢复宿主面；Tab 穿透当前宿主。</small></section>
-          <section><b>施工显示</b><div className="conduit-button-grid">{(["construction", "finished", "xray"] as ConstructionMode[]).map((item) => <button key={item} className={constructionMode === item ? "active" : ""} onClick={() => setConstructionMode(item)}>{({ construction: "施工态", finished: "完工态", xray: "X-Ray" } as const)[item]}</button>)}</div><label>墙槽宽 <input type="number" min="1" value={constructionParameters.chaseWidthMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, chaseWidthMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><label>墙槽深 <input type="number" min="1" value={constructionParameters.chaseDepthMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, chaseDepthMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><label>穿孔径 <input type="number" min="1" value={constructionParameters.penetrationDiameterMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, penetrationDiameterMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><small>以上为 Demo 视觉参数，非施工规范结论。</small></section>
+          <section><b>施工显示</b><div className="conduit-button-grid">{(["construction", "finished", "xray"] as ConstructionMode[]).map((item) => <button key={item} className={constructionMode === item ? "active" : ""} onClick={() => setConstructionMode(item)}>{({ construction: "施工态", finished: "完工态", xray: "X-Ray" } as const)[item]}</button>)}</div><label>槽宽 <input type="number" min="1" value={constructionParameters.chaseWidthMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, chaseWidthMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><label>槽深 <input type="number" min="1" value={constructionParameters.chaseDepthMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, chaseDepthMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><label>穿孔径 <input type="number" min="1" value={constructionParameters.penetrationDiameterMm} onChange={(event) => setConstructionParameters((current) => ({ ...current, penetrationDiameterMm: Math.max(1, Number(event.target.value)) }))} /> mm</label><small>以上为 Demo 视觉参数，非施工规范结论。</small>{chaseFallbacks.size > 0 && <small role="alert">{chaseFallbacks.size} 个宿主浅槽切割失败，已保留 Overlay 并显示替代槽线。</small>}</section>
           <section><b>图层</b>{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <label key={key}><input type="checkbox" checked={overlay.settings.visibleSystems[key]} onChange={() => { setOverlay((current) => ({ ...current, settings: { ...current.settings, visibleSystems: { ...current.settings.visibleSystems, [key]: !current.settings.visibleSystems[key] } } })); setOverlayDirty(true); }} />{SYSTEM_DEFAULTS[key].label}</label>)}</section>
           <section><b>历史与文件</b><div className="conduit-button-grid"><button disabled={!undoStack.length} onClick={() => { const previous = undoStack[undoStack.length - 1]; if (previous) { setRedoStack((history) => [...history, copy(overlay)]); setUndoStack((history) => history.slice(0, -1)); setOverlay(copy(previous)); setOverlayDirty(true); } }}>撤销</button><button disabled={!redoStack.length} onClick={() => { const next = redoStack[redoStack.length - 1]; if (next) { setUndoStack((history) => [...history, copy(overlay)]); setRedoStack((history) => history.slice(0, -1)); setOverlay(copy(next)); setOverlayDirty(true); } }}>重做</button></div><div className="conduit-button-grid"><button onClick={() => overlayInput.current?.click()}>导入</button><button onClick={exportOverlay}>导出</button></div><input ref={overlayInput} hidden type="file" accept="application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOverlay(file); event.currentTarget.value = ""; }} /></section>
           {selectedId && <section><b>已选对象</b><span>{selectedId}</span>{selectedSegment && <><label>系统<select value={selectedSegment.system} onChange={(event) => { const nextSystem = event.target.value as RoutingSystem; commit({ ...overlay, segments: overlay.segments.map((segment) => segment.id === selectedSegment.id ? { ...segment, system: nextSystem, type: nextSystem === "sprinkler" ? "sprinkler-segment" : "conduit-segment" } : segment) }); }}>{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <option key={key} value={key}>{SYSTEM_DEFAULTS[key].label}</option>)}</select></label><label>外径 <input type="number" value={selectedSegment.diameterMm} onChange={(event) => { const value = Number(event.target.value); if (value > 0) commit({ ...overlay, segments: overlay.segments.map((segment) => segment.id === selectedSegment.id ? { ...segment, diameterMm: value } : segment) }); }} /> mm</label></>}{selectedFitting && <label>接头 {selectedFitting.fitting === "tee" ? "三通" : selectedFitting.fitting === "coupling" ? "直接接头" : selectedFitting.bendStyle === "sweep" ? "圆角大弯" : "弯头"}</label>}{selectedBox && <label>86 检修盒 {selectedBox.sizeMm.join(" × ")} mm</label>}<small>管段、接头、检修盒、墙槽和穿孔均与 2D 共享选择状态。</small></section>}
         </>}
       </aside>
-      <Canvas key={projection} orthographic={projection === "orthographic"} camera={projection === "orthographic" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA} dpr={CANVAS_DPR} gl={CANVAS_GL} onPointerMissed={() => selectWhileBrowsing(null)}><color attach="background" args={["#dfe6e9"]} /><PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" || tool === "branch" && branchStart ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationEntry?.attachment?.hostId} onSelect={selectWhileBrowsing} overlay={overlay} constructionMode={constructionMode} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} /><ConduitScene overlay={overlay} selectedId={selectedId} constructionMode={constructionMode} visibleSystems={overlay.settings.visibleSystems} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewPlan={previewPlan} conflictPoints={previewPlan?.diagnostics.flatMap((item) => item.point ? [item.point] : [])} branchPreview={branchPreview} previewHost={effectiveCursor?.attachment} tool={tool} hoverId={hoverId} onHover={setHoverId} onBranchPreview={(preview) => { if (!preview) { setBranchPreview(null); return; } const radius = preview.kind === "junction-box" ? Math.hypot(...preview.sizeMm) / 2000 : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000; setBranchPreview({ ...preview, valid: preview.valid && validateBranchCandidate(overlay, preview.segmentId, preview.point, radius).length === 0 }); }} onSelect={(id) => selectWhileBrowsing(id)} onBranch={(segment, position) => onBranch(segment.id, position)} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas><div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
+      <Canvas key={projection} orthographic={projection === "orthographic"} camera={projection === "orthographic" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA} dpr={CANVAS_DPR} gl={CANVAS_GL} onPointerMissed={() => selectWhileBrowsing(null)}><color attach="background" args={["#dfe6e9"]} /><PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" || tool === "branch" && branchStart ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationSession?.host.hostId} onSelect={selectWhileBrowsing} overlay={overlay} constructionMode={constructionMode} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} onChaseFallback={reportChaseFallback} /><ConduitScene overlay={overlay} selectedId={selectedId} constructionMode={constructionMode} visibleSystems={overlay.settings.visibleSystems} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewPlan={previewPlan} conflictPoints={previewPlan?.diagnostics.flatMap((item) => item.point ? [item.point] : [])} branchPreview={branchPreview} previewHost={effectiveCursor?.attachment} tool={tool} hoverId={hoverId} onHover={setHoverId} onBranchPreview={(preview) => { if (!preview) { setBranchPreview(null); return; } const radius = preview.kind === "junction-box" ? Math.hypot(...preview.sizeMm) / 2000 : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000; setBranchPreview({ ...preview, valid: preview.valid && validateBranchCandidate(overlay, preview.segmentId, preview.point, radius).length === 0 }); }} onSelect={(id) => selectWhileBrowsing(id)} onBranch={(segment, position) => onBranch(segment.id, position)} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas><div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
     </div>
   </section>;
 }

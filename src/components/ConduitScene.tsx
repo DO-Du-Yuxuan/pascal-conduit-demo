@@ -1,10 +1,11 @@
 import { Line } from "@react-three/drei";
 import type { ThreeEvent } from "@react-three/fiber";
 import { useMemo } from "react";
-import { CatmullRomCurve3, Quaternion, Vector3 } from "three";
-import type { BendArc, ConduitOverlayDocument, HostAttachment, JunctionBox, RouteFitting, RouteSegment, RoutingSystem, Vec3 } from "../domain/overlay";
+import { CatmullRomCurve3, Matrix4, Quaternion, Vector3 } from "three";
+import type { BendArc, ConduitOverlayDocument, HostAttachment, JunctionBox, RouteFitting, RouteSegment, RoutingSystem, SurfaceChase, Vec3 } from "../domain/overlay";
 import type { PlannedRoute } from "../domain/routing";
 import { teeSocketSegments } from "../domain/network-geometry";
+import { sampleChase } from "../three/chase-geometry";
 
 export type ConduitTool = "select" | "draw" | "branch" | "delete";
 export type BranchPreview = { segmentId: string; point: Vec3; attachment?: HostAttachment; system: RoutingSystem; kind: "junction-box" | "tee"; sizeMm: [number, number, number]; valid: boolean };
@@ -69,14 +70,28 @@ function JunctionBoxMesh({ box, color, selected, preview = false, valid = true }
   return <mesh position={box.position.position} quaternion={rotation}><boxGeometry args={[width, height, depth]} /><meshStandardMaterial color={!valid ? "#ef4444" : selected ? "#f59e0b" : color} transparent={preview} opacity={preview ? .62 : 1} roughness={.5} /></mesh>;
 }
 
+function ChaseMesh({ chase }: { chase: SurfaceChase }) {
+  const normal = point(chase.surfaceNormal).normalize(), width = chase.widthMm / 1000, samples = sampleChase(chase);
+  return <group>{samples.slice(0, -1).map((startValue, index) => {
+    const endValue = samples[index + 1], start = point(startValue), end = point(endValue), direction = end.clone().sub(start), length = direction.length();
+    if (length < 1e-6) return null;
+    direction.normalize();
+    const widthAxis = new Vector3().crossVectors(normal, direction).normalize();
+    if (widthAxis.lengthSq() < 1e-8) return null;
+    const rotation = new Quaternion().setFromRotationMatrix(new Matrix4().makeBasis(direction, widthAxis, normal));
+    const position = start.clone().add(end).multiplyScalar(.5).addScaledVector(normal, .001);
+    return <mesh key={index} position={position} quaternion={rotation}><boxGeometry args={[length + width, width, .002]} /><meshStandardMaterial color="#50351f" transparent opacity={.82} roughness={1} /></mesh>;
+  })}</group>;
+}
+
 export function ConduitScene({ overlay, selectedId, constructionMode, visibleSystems, draft, draftColor, previewPlan, conflictPoints = [], branchPreview, previewHost, tool, hoverId, onSelect, onHover, onBranchPreview, onBranch, onDelete }: Props) {
   const visible = (system: RoutingSystem) => visibleSystems[system] && (constructionMode !== "finished" || system === "sprinkler"), previewColor = previewPlan?.canCommit === false ? "#ef4444" : draftColor;
   return <group name="routing">
     {overlay.segments.map((segment) => <SegmentMesh key={segment.id} segment={segment} color={overlay.settings.colors[segment.system]} selected={selectedId === segment.id} hovered={hoverId === segment.id} visible={visible(segment.system)} tool={tool} branchable={visible(segment.system)} boxSize={overlay.settings.junctionBoxSizeMm} onSelect={() => onSelect(segment.id)} onHover={(active) => onHover(active ? segment.id : null)} onBranchPreview={onBranchPreview} onBranch={(branchPoint) => onBranch(segment, branchPoint)} onDelete={() => onDelete(segment.id)} />)}
     {overlay.fittings.map((fitting) => <FittingMesh key={fitting.id} fitting={fitting} color={overlay.settings.colors[fitting.system]} selected={selectedId === fitting.id} hovered={hoverId === fitting.id} visible={visible(fitting.system)} tool={tool} onSelect={() => onSelect(fitting.id)} onHover={(active) => onHover(active ? fitting.id : null)} onDelete={() => onDelete(fitting.id)} />)}
     {overlay.junctionBoxes.map((box) => visible(box.system) && <group key={box.id} onPointerMove={(event) => { event.stopPropagation(); onHover(box.id); }} onPointerOut={() => onHover(null)} onClick={(event) => { event.stopPropagation(); tool === "delete" ? onDelete(box.id) : onSelect(box.id); }}><JunctionBoxMesh box={box} color={tool === "delete" && hoverId === box.id ? "#ef4444" : overlay.settings.colors[box.system]} selected={selectedId === box.id} /></group>)}
-    {constructionMode !== "finished" && overlay.wallChases.map((chase) => <Line key={chase.id} points={[chase.start.position, chase.end.position]} color="#50351f" lineWidth={Math.max(2, chase.widthMm / 5)} transparent opacity={.75} />)}
-    {constructionMode !== "finished" && overlay.penetrations.map((penetration) => <mesh key={penetration.id} position={penetration.point.position}><sphereGeometry args={[penetration.diameterMm / 2000, 10, 8]} /><meshStandardMaterial color="#fbbf24" transparent opacity={.68} /></mesh>)}
+    {constructionMode !== "finished" && overlay.surfaceChases.filter((chase) => { const segment = overlay.segments.find((item) => item.id === chase.routeElementId), fitting = overlay.fittings.find((item) => item.id === chase.routeElementId); return visibleSystems[segment?.system ?? fitting?.system ?? "power"]; }).map((chase) => <ChaseMesh key={chase.id} chase={chase} />)}
+    {constructionMode !== "finished" && overlay.penetrations.filter((penetration) => visibleSystems[overlay.segments.find((segment) => segment.id === penetration.segmentId)?.system ?? "power"]).map((penetration) => <mesh key={penetration.id} position={penetration.entry.position}><sphereGeometry args={[penetration.diameterMm / 2000, 10, 8]} /><meshStandardMaterial color="#fbbf24" transparent opacity={.68} /></mesh>)}
     {previewPlan ? <group>{previewPlan.segments.map((segment) => <PipeMesh key={segment.id} segment={segment} color={previewColor} opacity={.68} />)}{previewPlan.fittings.filter((fitting) => fitting.fitting === "elbow").map((fitting) => <FittingGeometry key={fitting.id} fitting={fitting} color={previewColor} opacity={.68} />)}</group> : draft.length >= 2 && <Line points={draft} color={previewColor} lineWidth={3} dashed dashSize={.14} gapSize={.08} />}
     {draft.length >= 1 && <mesh position={draft[draft.length - 1]}><sphereGeometry args={[.055, 12, 10]} /><meshBasicMaterial color={previewColor} /></mesh>}
     {previewHost && draft.length >= 1 && <mesh position={draft[draft.length - 1]}><ringGeometry args={[.07, .095, 16]} /><meshBasicMaterial color={previewColor} side={2} /></mesh>}

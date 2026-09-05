@@ -30,16 +30,18 @@ export type RouteSegment = { id: string; type: "conduit-segment" | "sprinkler-se
 export type RouteFitting = { id: string; type: "conduit-fitting" | "sprinkler-fitting"; fitting: "elbow" | "tee" | "coupling"; bendStyle?: "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc; system: RoutingSystem; diameterMm: number; position: RoutePoint; segmentIds: string[]; ports: NetworkPort[] };
 export type JunctionBox = { id: string; type: "junction-box"; system: Exclude<RoutingSystem, "sprinkler">; position: RoutePoint; sizeMm: [number, number, number]; segmentIds: string[]; ports: NetworkPort[] };
 export type WallChase = { id: string; type: "wall-chase"; wallId: string; segmentId: string; start: RoutePoint; end: RoutePoint; widthMm: number; depthMm: number };
-export type Penetration = { id: string; type: "penetration"; hostId: string; hostKind: HostKind; segmentId: string; point: RoutePoint; diameterMm: number };
+export type SurfaceChasePath = { kind: "line"; start: RoutePoint; end: RoutePoint } | { kind: "arc"; arc: BendArc };
+export type SurfaceChase = { id: string; type: "surface-chase"; hostId: string; hostKind: "wall" | "slab"; surfaceNormal: Vec3; routeElementId: string; path: SurfaceChasePath; widthMm: number; depthMm: number };
+export type Penetration = { id: string; type: "penetration"; hostId: string; hostKind: HostKind; segmentId: string; entry: RoutePoint; exit: RoutePoint; direction: Vec3; diameterMm: number; derived?: boolean };
 
 export type ConduitOverlayDocument = {
-  schemaVersion: "1.1";
+  schemaVersion: "1.2";
   source: { fileName: string; sha256: string };
   settings: { colors: Record<RoutingSystem, string>; visibleSystems: Record<RoutingSystem, boolean>; bendRadiusMm: number; stockLengthMm: number; junctionBoxSizeMm: [number, number, number] };
   segments: RouteSegment[];
   fittings: RouteFitting[];
   junctionBoxes: JunctionBox[];
-  wallChases: WallChase[];
+  surfaceChases: SurfaceChase[];
   penetrations: Penetration[];
 };
 
@@ -62,11 +64,12 @@ const segmentSchema = z.object({ id: z.string(), type: z.enum(["conduit-segment"
 const fittingSchema = z.object({ id: z.string(), type: z.enum(["conduit-fitting", "sprinkler-fitting"]), fitting: z.enum(["elbow", "tee", "coupling"]), bendStyle: z.enum(["sweep", "right-angle", "standard"]).optional(), radiusMm: z.number().positive().optional(), arc: arcSchema.optional(), system: systemSchema, diameterMm: z.number().positive(), position: pointSchema, segmentIds: z.array(z.string()), ports: z.array(portSchema).optional() });
 const junctionBoxSchema = z.object({ id: z.string(), type: z.literal("junction-box"), system: z.enum(["power", "low-voltage", "signal"]), position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), segmentIds: z.array(z.string()), ports: z.array(portSchema) });
 const wallChaseSchema = z.object({ id: z.string(), type: z.literal("wall-chase"), wallId: z.string(), segmentId: z.string(), start: pointSchema, end: pointSchema, widthMm: z.number().positive(), depthMm: z.number().positive() });
-const penetrationSchema = z.object({ id: z.string(), type: z.literal("penetration"), hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), segmentId: z.string(), point: pointSchema, diameterMm: z.number().positive() });
-const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(systemSchema, z.string()), visibleSystems: z.record(systemSchema, z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), wallChases: z.array(wallChaseSchema), penetrations: z.array(penetrationSchema) });
+const surfaceChaseSchema = z.object({ id: z.string(), type: z.literal("surface-chase"), hostId: z.string(), hostKind: z.enum(["wall", "slab"]), surfaceNormal: vec3Schema, routeElementId: z.string(), path: z.discriminatedUnion("kind", [z.object({ kind: z.literal("line"), start: pointSchema, end: pointSchema }), z.object({ kind: z.literal("arc"), arc: arcSchema })]), widthMm: z.number().positive(), depthMm: z.number().positive() });
+const penetrationSchema = z.object({ id: z.string(), type: z.literal("penetration"), hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), segmentId: z.string(), point: pointSchema.optional(), entry: pointSchema.optional(), exit: pointSchema.optional(), direction: vec3Schema.optional(), diameterMm: z.number().positive(), derived: z.boolean().optional() }).refine((feature) => Boolean(feature.entry || feature.point), { message: "穿孔必须包含入口点或旧版 point。" });
+const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1", "1.2"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(systemSchema, z.string()), visibleSystems: z.record(systemSchema, z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), wallChases: z.array(wallChaseSchema).optional(), surfaceChases: z.array(surfaceChaseSchema).optional(), penetrations: z.array(penetrationSchema) });
 
 export function createEmptyOverlay(fileName: string, sha256: string): ConduitOverlayDocument {
-  return { schemaVersion: "1.1", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], wallChases: [], penetrations: [] };
+  return { schemaVersion: "1.2", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], surfaceChases: [], penetrations: [] };
 }
 
 export function parseOverlay(raw: unknown): ConduitOverlayDocument {
@@ -89,7 +92,15 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
     const startDistance = Math.hypot(...segment.start.position.map((value, axis) => value - port.position.position[axis]));
     if (startDistance < Math.hypot(...segment.end.position.map((value, axis) => value - port.position.position[axis]))) segment.startPortId ??= port.id; else segment.endPortId ??= port.id;
   }
-  return { ...parsed, schemaVersion: "1.1", segments, fittings, junctionBoxes: parsed.junctionBoxes ?? [], settings: { ...parsed.settings, visibleSystems: parsed.settings.visibleSystems ?? Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
+  const migratedChases: SurfaceChase[] = (parsed.wallChases ?? []).map((chase) => ({ id: chase.id, type: "surface-chase", hostId: chase.wallId, hostKind: "wall", surfaceNormal: chase.start.attachment?.normal ?? [0, 0, 1], routeElementId: chase.segmentId, path: { kind: "line", start: chase.start, end: chase.end }, widthMm: chase.widthMm, depthMm: chase.depthMm }));
+  const penetrations: Penetration[] = parsed.penetrations.map((feature) => {
+    const entry = feature.entry ?? feature.point!;
+    const exit = feature.exit ?? entry;
+    const delta = exit.position.map((value, axis) => value - entry.position[axis]) as Vec3;
+    const size = Math.hypot(...delta), fallback = entry.attachment?.normal ?? [0, 0, 1] as Vec3;
+    return { id: feature.id, type: "penetration", hostId: feature.hostId, hostKind: feature.hostKind, segmentId: feature.segmentId, entry, exit, direction: feature.direction ?? (size > 1e-9 ? delta.map((value) => value / size) as Vec3 : fallback), diameterMm: feature.diameterMm, derived: feature.derived ?? !feature.entry };
+  });
+  return { schemaVersion: "1.2", source: parsed.source, segments, fittings, junctionBoxes: parsed.junctionBoxes ?? [], surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, settings: { ...parsed.settings, visibleSystems: parsed.settings.visibleSystems ?? Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
 }
 
 /**
@@ -99,7 +110,7 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
 export function assessOverlayHosts(overlay: ConduitOverlayDocument, hostIds: Iterable<string>): OverlayHostAssessment {
   const available = new Set(hostIds), referenced = new Set<string>();
   for (const segment of overlay.segments) for (const point of [segment.start, segment.end]) if (point.attachment) referenced.add(point.attachment.hostId);
-  for (const chase of overlay.wallChases) referenced.add(chase.wallId);
+  for (const chase of overlay.surfaceChases) referenced.add(chase.hostId);
   for (const penetration of overlay.penetrations) referenced.add(penetration.hostId);
   for (const box of overlay.junctionBoxes) if (box.position.attachment) referenced.add(box.position.attachment.hostId);
   const referencedHostIds = [...referenced].sort();

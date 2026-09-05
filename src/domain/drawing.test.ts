@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constrainToHostAxes, directionStateForArrow, displayedRoutePoints, pointOnWorldAxis, previewRoutePoints, resolveConfirmedRoutePoint } from "./drawing";
+import { beginPenetration, constrainToHostAxes, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint } from "./drawing";
 import type { RoutePoint } from "./overlay";
 
 const wall = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] }, localPosition: position } });
@@ -35,6 +35,13 @@ describe("surface drawing preview", () => {
     expect(confirmed).toHaveLength(1);
   });
 
+  it("rejects unhosted cursor points outside explicit world-axis mode", () => {
+    const start = slab([0, 0, 0]), floating: RoutePoint = { position: [2, 3, 4] };
+    expect(displayedRoutePoints([start], floating, "free")).toEqual([start]);
+    expect(displayedRoutePoints([start], floating, "orthogonal")).toEqual([start]);
+    expect(displayedRoutePoints([start], floating, "orthogonal", { worldAxis: "y" })).toEqual([start, floating]);
+  });
+
   it("uses Shift to temporarily enable surface-relative orthogonal drawing", () => {
     expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free")[1].position).toEqual([2, 0, 1]);
     expect(previewRoutePoints([slab([0, 0, 0])], slab([2, 0, 1]), "free", true)[1].position).toEqual([2, 0, 0]);
@@ -55,11 +62,36 @@ describe("surface drawing preview", () => {
     expect(confirmed?.attachment).toBeUndefined();
   });
 
-  it("uses the displayed penetration exit and only falls back without a preview", () => {
-    const entry = wall([2, 2, 0]), displayedExit = slab([4, 0, 2]), rearHit = wall([9, 2, 0]);
-    expect(displayedRoutePoints([slab([0, 0, 0])], displayedExit, "orthogonal", { penetrationEntry: entry })).toEqual([slab([0, 0, 0]), entry, displayedExit]);
-    expect(resolveConfirmedRoutePoint(displayedExit, rearHit)).toBe(displayedExit);
-    expect(resolveConfirmedRoutePoint(null, rearHit)).toBe(rearHit);
+  it("locks a Tab penetration to its incoming line and restores a real destination host", () => {
+    const start = slab([0, 0, 0]), entry = wall([2, 0, 0]), session = beginPenetration([start], entry, true)!;
+    const rawDestination: RoutePoint = { position: [4, 2, 2], attachment: { hostId: "rear-wall", hostKind: "wall", surface: "interior", normal: [-1, 0, 0], levelId: "L0", basis: { u: [0, 0, 1], v: [0, 1, 0] }, localPosition: [2, 2, 0] } }, displayedExit = projectPenetrationExit(session, rawDestination)!;
+    expect(session.direction).toEqual([1, 0, 0]);
+    expect(displayedExit.position).toEqual([4, 0, 0]);
+    expect(displayedExit.attachment).toMatchObject({ hostId: "rear-wall", localPosition: [0, 0, 0] });
+    expect(displayedRoutePoints([start], displayedExit, "orthogonal", { penetration: session })).toEqual([start, entry, displayedExit]);
+    expect(resolveConfirmedRoutePoint(displayedExit, wall([9, 2, 0]))).toBe(displayedExit);
+    expect(penetrationRequest(session, displayedExit)).toMatchObject({ host: { hostId: "wall" }, entry, exit: displayedExit, direction: [1, 0, 0] });
+  });
+
+  it("rejects a Tab exit behind the entry or without a destination host", () => {
+    const session = beginPenetration([slab([0, 0, 0])], wall([2, 0, 0]), true)!;
+    expect(projectPenetrationExit(session, { position: [1, 0, 0], attachment: { ...wall([1, 0, 0]).attachment!, normal: [-1, 0, 0] } })).toBeNull();
+    expect(projectPenetrationExit(session, slab([4, 1, 0]))).toBeNull();
+    expect(projectPenetrationExit(session, { position: [4, 2, 0] })).toBeNull();
+  });
+
+  it("reattaches a horizontal Tab route to a coplanar slab behind a wall", () => {
+    const session = beginPenetration([slab([0, 0, 0])], wall([2, 0, 0]), true)!;
+    const rearSlab = { ...slab([4, 0, 2]), attachment: { ...slab([4, 0, 2]).attachment!, hostId: "rear-slab" } };
+    expect(projectPenetrationExit(session, rearSlab)).toMatchObject({ position: [4, 0, 0], attachment: { hostId: "rear-slab", localPosition: [4, 0, 0] } });
+  });
+
+  it("keeps every non-world preview attached to a real host after Tab", () => {
+    const start = slab([0, 0, 0]), entry = wall([2, 0, 0]), session = beginPenetration([start], entry, false)!;
+    const destination: RoutePoint = { position: [4, 1, 0], attachment: { ...wall([4, 1, 0]).attachment!, hostId: "destination", normal: [-1, 0, 0] } };
+    const exit = projectPenetrationExit(session, destination)!;
+    expect(exit.attachment?.hostId).toBe("destination");
+    expect(constrainToHostAxes(exit, { ...destination, position: [4, 2, 3] }, session.orthogonal ? "orthogonal" : "free").attachment?.hostId).toBe("destination");
   });
 
   it("turns off surface orthogonal mode for every world-axis arrow", () => {
