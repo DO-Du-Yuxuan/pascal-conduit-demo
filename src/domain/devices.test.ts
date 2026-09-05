@@ -14,6 +14,12 @@ function rooted(system: RoutingSystem) {
 }
 
 describe("network devices and rooted circuits", () => {
+  it.each(["receptacle", "lighting", "network", "sprinkler"] as const)("commits an open %s route from its legal source", (system) => {
+    const overlay = rooted(system);
+    expect(overlay.segments.some((segment) => segment.system === system && segment.legacyUnrooted === false)).toBe(true);
+    expect(overlay.circuits.some((circuit) => circuit.system === system && circuit.status === "rooted")).toBe(true);
+  });
+
   it("enforces device hosts and source system capabilities", () => {
     expect(() => createNetworkDevice("strong-panel", point(0, 0, 0, "slab"))).toThrow();
     const strong = createNetworkDevice("strong-panel", point(0, 1, 0));
@@ -33,6 +39,7 @@ describe("network devices and rooted circuits", () => {
     const used = commitDeviceRoute(first.overlay, planRoute("receptacle", 20, "surface", [first.port.position, point(1, 1, 0)]), first.circuit, first.port);
     const second = startRouteFromDevice(used, used.devices[0].id, "receptacle");
     expect(second.port.id).not.toBe(first.port.id);
+    expect(second.port.position.position).not.toEqual(first.port.position.position);
   });
 
   it("rejects a route commit when the supplied circuit has no valid matching source", () => {
@@ -52,6 +59,13 @@ describe("network devices and rooted circuits", () => {
     expect(inserted.segments.some((segment) => segment.start.position[0] < 1 && segment.end.position[0] > 1)).toBe(false);
     expect(portCanStart(inserted, socket, socket.ports[2], "receptacle")).toBe(true);
     expect(inserted.devices[0].ports.flatMap((port) => port.connectedSegmentIds)).not.toContain(original.id);
+  });
+
+  it("allows an inline socket on a rooted floor route while keeping manual placement wall-only", () => {
+    const original = rooted("receptacle"), segment = original.segments[0], routed = { ...original, segments: [{ ...segment, start: point(0, 0, 0, "slab"), end: point(2, 0, 0, "slab") }] };
+    const inserted = insertDeviceOnSegment(routed, segment.id, "socket", [1, 0, 0]);
+    expect(inserted.devices.some((device) => device.deviceType === "socket" && device.position.attachment?.hostKind === "slab")).toBe(true);
+    expect(() => createNetworkDevice("socket", point(1, 0, 0, "slab"))).toThrow();
   });
 
   it("connects to a terminal device and continues the same circuit from a socket", () => {

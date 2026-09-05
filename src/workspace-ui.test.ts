@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
 const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
 const pascalSceneSource = readFileSync(resolve(process.cwd(), "src/three/PascalScenePreview.tsx"), "utf8");
+const conduitSceneSource = readFileSync(resolve(process.cwd(), "src/components/ConduitScene.tsx"), "utf8");
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 describe("conduit workspace UI contract", () => {
@@ -35,6 +36,12 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("devicePreview=");
     expect(threeDSource).toContain("onDevicePreview={setInlineDevicePreview}");
     expect(threeDSource).toContain("rootLegacyNetwork");
+    expect(threeDSource).toContain('if (tool === "point")');
+    expect(conduitSceneSource).toContain("ignorePreviewRay");
+    expect(threeDSource).not.toContain("网络线路必须连接到网络面板终点");
+    expect(threeDSource).not.toContain('setConstructionMode');
+    expect(threeDSource).not.toContain('<label>大弯半径');
+    expect(threeDSource).not.toContain('<label>定尺长度');
     expect(source).toContain("overlay.devices.filter");
     expect(source).toContain("preview.deviceNode");
   });

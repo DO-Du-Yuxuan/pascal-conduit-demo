@@ -6,6 +6,7 @@ let sequence = 0;
 const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
 const normalize = (value: Vec3): Vec3 => { const size = Math.hypot(...value); return size < 1e-9 ? [0, 1, 0] : value.map((item) => item / size) as Vec3; };
 const clonePoint = (point: RoutePoint): RoutePoint => structuredClone(point);
+const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 export type DeviceDefinition = {
   label: string;
@@ -36,13 +37,24 @@ function devicePort(deviceId: string, index: number, point: RoutePoint, directio
   return { id: `${deviceId}:port:${index}`, owner: { kind: "device", id: deviceId }, position: clonePoint(point), direction: normalize(direction), role, system, connectedSegmentIds: [] };
 }
 
-export function createNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name?: string): NetworkDevice {
+function sourcePortPosition(position: RoutePoint, index: number): RoutePoint {
+  const normal = normalize(position.attachment?.normal ?? [0, 0, 1]), fallbackU = Math.abs(normal[1]) < .9 ? normalize(cross([0, 1, 0], normal)) : [1, 0, 0] as Vec3;
+  const u = normalize(position.attachment?.basis?.u ?? fallbackU), v = normalize(position.attachment?.basis?.v ?? cross(normal, u));
+  const column = index % 6, row = Math.floor(index / 6), offsetU = (column - 2.5) * .035, offsetV = row * .035;
+  return { ...clonePoint(position), position: position.position.map((value, axis) => value + u[axis] * offsetU + v[axis] * offsetV) as Vec3 };
+}
+
+function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean): NetworkDevice {
   const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind;
-  if (!hostKind || !definition.hostKinds.includes(hostKind)) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
+  if (!hostKind || enforceDefaultHost && !definition.hostKinds.includes(hostKind)) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
   const id = nextId(deviceType), orientation = deviceType === "sprinkler-head" ? [0, 1, 0] as Vec3 : normalize(position.attachment?.normal ?? [0, 1, 0]);
   const roles = definition.portRole === "bidirectional" ? ["bidirectional", "bidirectional", "bidirectional"] as const : [definition.portRole];
-  const ports = definition.systems.flatMap((system, systemIndex) => roles.map((role, index) => devicePort(id, systemIndex * roles.length + index, position, orientation, system, role)));
+  const ports = definition.systems.flatMap((system, systemIndex) => roles.map((role, index) => { const portIndex = systemIndex * roles.length + index; return devicePort(id, portIndex, definition.source ? sourcePortPosition(position, portIndex) : position, orientation, system, role); }));
   return { id, type: "network-device", deviceType, name: name ?? definition.label, position: clonePoint(position), sizeMm: [...definition.sizeMm], orientation, systems: [...definition.systems], ports, createdAt: new Date().toISOString() };
+}
+
+export function createNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name?: string): NetworkDevice {
+  return buildNetworkDevice(deviceType, position, name, true);
 }
 
 export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: NetworkDeviceType, position: RoutePoint, name?: string): ConduitOverlayDocument {
@@ -63,7 +75,7 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
   let port = existing;
   let devices = overlay.devices;
   if (!port && isSourceDevice(device)) {
-    port = devicePort(device.id, device.ports.length, device.position, device.orientation, system, "source");
+    port = devicePort(device.id, device.ports.length, sourcePortPosition(device.position, device.ports.length), device.orientation, system, "source");
     devices = overlay.devices.map((item) => item.id === device.id ? { ...item, ports: [...item.ports, port!] } : item);
   }
   if (!port) throw new Error("该设备没有可用的输出端口。");
@@ -138,7 +150,7 @@ export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId
   const segment = overlay.segments.find((item) => item.id === segmentId), definition = DEVICE_DEFAULTS[deviceType];
   if (!segment || !definition.canInsertMidSegment || !definition.systems.includes(segment.system) || segment.legacyUnrooted) return overlay;
   const hostKind = segment.start.attachment?.hostKind ?? segment.end.attachment?.hostKind;
-  if (!hostKind || !definition.hostKinds.includes(hostKind)) return overlay;
+  if (!hostKind) return overlay;
   if (deviceType === "network-outlet") return overlay;
   const delta = segment.end.position.map((value, axis) => value - segment.start.position[axis]) as Vec3, lengthSquared = delta.reduce((sum, value) => sum + value * value, 0);
   const t = lengthSquared < 1e-9 ? 0 : Math.max(0, Math.min(1, world.map((value, axis) => value - segment.start.position[axis]).reduce((sum, value, axis) => sum + value * delta[axis], 0) / lengthSquared));
@@ -148,7 +160,7 @@ export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId
     const branchEnd: RoutePoint = { position: [position[0], position[1] + .12, position[2]], attachment };
     const branched = commitBranchRoute(overlay, segment.id, [point, branchEnd], { chaseWidthMm: 60, chaseDepthMm: 55, penetrationDiameterMm: 60 });
     if (branched === overlay) return overlay;
-    const device = createNetworkDevice(deviceType, branchEnd), branchSegment = branched.segments.filter((item) => !overlay.segments.some((old) => old.id === item.id)).find((item) => distance(item.end.position, branchEnd.position) < .02 || distance(item.start.position, branchEnd.position) < .02);
+    const device = buildNetworkDevice(deviceType, branchEnd, undefined, false), branchSegment = branched.segments.filter((item) => !overlay.segments.some((old) => old.id === item.id)).find((item) => distance(item.end.position, branchEnd.position) < .02 || distance(item.start.position, branchEnd.position) < .02);
     if (!branchSegment) return overlay;
     const port = { ...device.ports[0], connectedSegmentIds: [branchSegment.id] };
     branchSegment.endPortId = port.id;
@@ -156,7 +168,7 @@ export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId
   }
   const half = definition.sizeMm[0] / 2000, direction = normalize(delta), leftPosition = position.map((value, axis) => value - direction[axis] * half) as Vec3, rightPosition = position.map((value, axis) => value + direction[axis] * half) as Vec3;
   const left: RouteSegment = { ...segment, id: nextId("split"), end: { position: leftPosition, attachment }, endPortId: undefined }, right: RouteSegment = { ...segment, id: nextId("split"), start: { position: rightPosition, attachment }, startPortId: undefined };
-  const device = createNetworkDevice(deviceType, point), ports = [
+  const device = buildNetworkDevice(deviceType, point, undefined, false), ports = [
     { ...device.ports[0], position: { position: leftPosition, attachment }, direction: direction.map((value) => -value) as Vec3, connectedSegmentIds: [left.id] },
     { ...(device.ports[1] ?? device.ports[0]), id: `${device.id}:port:1`, position: { position: rightPosition, attachment }, direction, connectedSegmentIds: [right.id] },
     ...device.ports.slice(2),
