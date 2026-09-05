@@ -40,4 +40,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("gl={CANVAS_GL}");
     expect(threeDSource).toContain("mouseButtons={CONTROL_MOUSE_BUTTONS}");
   });
+
+  it("does not render a height-changing 3D workspace footer", () => {
+    expect(threeDSource).not.toContain('<footer className="three-d-status">');
+    expect(styles).not.toContain(".three-d-status");
+  });
 });
