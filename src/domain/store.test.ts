@@ -16,10 +16,24 @@ describe("overlay history", () => {
     expect(useOverlayStore.getState().overlay?.segments).toHaveLength(1);
   });
 
+  it("preserves immutable overlay references instead of cloning the whole network on every commit", () => {
+    useOverlayStore.getState().load(createEmptyOverlay("a.json", "a"));
+    const previous = useOverlayStore.getState().overlay!;
+    const next = { ...previous, devices: [...previous.devices] };
+    useOverlayStore.getState().commit(next);
+    expect(useOverlayStore.getState().overlay).toBe(next);
+    useOverlayStore.getState().undo();
+    expect(useOverlayStore.getState().overlay).toBe(previous);
+    useOverlayStore.getState().redo();
+    expect(useOverlayStore.getState().overlay).toBe(next);
+  });
+
   it("keeps shared snapshots dirty until the Overlay is exported", () => {
     const overlay = createEmptyOverlay("a.json", "a");
     useOverlayStore.getState().load(overlay);
-    useOverlayStore.getState().publish({ ...overlay, settings: { ...overlay.settings, visibleSystems: { ...overlay.settings.visibleSystems, receptacle: false } } }, true);
+    const published = { ...overlay, settings: { ...overlay.settings, visibleSystems: { ...overlay.settings.visibleSystems, receptacle: false } } };
+    useOverlayStore.getState().publish(published, true);
+    expect(useOverlayStore.getState().overlay).toBe(published);
     expect(useOverlayStore.getState().dirty).toBe(true);
     useOverlayStore.getState().markExported();
     expect(useOverlayStore.getState().dirty).toBe(false);

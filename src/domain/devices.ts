@@ -120,19 +120,19 @@ export function rootLegacyNetwork(overlay: ConduitOverlayDocument, legacySegment
 }
 
 export function deviceDiagnostics(overlay: ConduitOverlayDocument): string[] {
-  const deviceIds = new Set(overlay.devices.map((device) => device.id)), segmentIds = new Set(overlay.segments.map((segment) => segment.id));
+  const devicesById = new Map(overlay.devices.map((device) => [device.id, device])), segmentsById = new Map(overlay.segments.map((segment) => [segment.id, segment])), circuitIds = new Set(overlay.circuits.map((circuit) => circuit.id));
   const diagnostics: string[] = [];
   for (const circuit of overlay.circuits) {
     if (circuit.status === "legacy-unrooted") diagnostics.push(`${circuit.id}: 未接源旧线路`);
-    else if (!circuit.sourceDeviceId || !deviceIds.has(circuit.sourceDeviceId)) diagnostics.push(`${circuit.id}: 源设备缺失`);
+    else if (!circuit.sourceDeviceId || !devicesById.has(circuit.sourceDeviceId)) diagnostics.push(`${circuit.id}: 源设备缺失`);
     else {
-      const source = overlay.devices.find((device) => device.id === circuit.sourceDeviceId);
+      const source = devicesById.get(circuit.sourceDeviceId);
       if (!source || !isSourceDevice(source) || !source.systems.includes(circuit.system)) diagnostics.push(`${circuit.id}: 来源设备与系统不兼容`);
     }
-    if (circuit.segmentIds.some((id) => !segmentIds.has(id))) diagnostics.push(`${circuit.id}: 管段引用断裂`);
-    if (overlay.segments.some((segment) => circuit.segmentIds.includes(segment.id) && segment.system !== circuit.system)) diagnostics.push(`${circuit.id}: 管段系统不一致`);
+    if (circuit.segmentIds.some((id) => !segmentsById.has(id))) diagnostics.push(`${circuit.id}: 管段引用断裂`);
+    if (circuit.segmentIds.some((id) => { const segment = segmentsById.get(id); return Boolean(segment && segment.system !== circuit.system); })) diagnostics.push(`${circuit.id}: 管段系统不一致`);
   }
-  for (const segment of overlay.segments) if (!segment.circuitId || !overlay.circuits.some((circuit) => circuit.id === segment.circuitId)) diagnostics.push(`${segment.id}: 未接源`);
+  for (const segment of overlay.segments) if (!segment.circuitId || !circuitIds.has(segment.circuitId)) diagnostics.push(`${segment.id}: 未接源`);
   for (const device of overlay.devices) for (const port of device.ports) if (port.role === "sink" && port.connectedSegmentIds.length > 1) diagnostics.push(`${device.id}: 终端端口重复连接`);
   if (overlay.junctionBoxes.some((box) => box.system === "network") || overlay.fittings.some((fitting) => fitting.system === "network" && fitting.fitting === "tee")) diagnostics.push("网络线路存在禁止的分支节点");
   return [...new Set(diagnostics)];

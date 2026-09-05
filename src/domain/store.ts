@@ -41,23 +41,23 @@ export const useOverlayStore = create<OverlayState>((set, get) => ({
   load: (overlay) => set({ overlay: clone(overlay), undoStack: [], redoStack: [], dirty: false, preview: null }),
   // 3D owns transient drawing state, while 2D consumes this shared snapshot.
   // Publishing must not reset history or silently mark local edits as exported.
-  publish: (overlay, dirty) => set({ overlay: clone(overlay), dirty }),
+  publish: (overlay, dirty) => set({ overlay, dirty }),
   markExported: () => set({ dirty: false }),
   commit: (next) => {
     const current = get().overlay;
-    set({ overlay: clone(next), undoStack: current ? [...get().undoStack, clone(current)] : get().undoStack, redoStack: [], dirty: true });
+    set({ overlay: next, undoStack: current ? [...get().undoStack, current] : get().undoStack, redoStack: [], dirty: true });
   },
   undo: () => {
     const [previous, ...rest] = [...get().undoStack].reverse();
     const current = get().overlay;
     if (!previous || !current) return;
-    set({ overlay: clone(previous), undoStack: rest.reverse(), redoStack: [...get().redoStack, clone(current)], dirty: true });
+    set({ overlay: previous, undoStack: rest.reverse(), redoStack: [...get().redoStack, current], dirty: true });
   },
   redo: () => {
     const [next, ...rest] = [...get().redoStack].reverse();
     const current = get().overlay;
     if (!next || !current) return;
-    set({ overlay: clone(next), redoStack: rest.reverse(), undoStack: [...get().undoStack, clone(current)], dirty: true });
+    set({ overlay: next, redoStack: rest.reverse(), undoStack: [...get().undoStack, current], dirty: true });
   },
   // Preview is ephemeral UI state: no clone, history entry, dirty flag or export.
   publishPreview: (preview) => set({ preview }),

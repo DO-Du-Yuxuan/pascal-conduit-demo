@@ -34,7 +34,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("DEVICE_DEFAULTS");
     expect(threeDSource).toContain("startRouteFromDevice");
     expect(threeDSource).toContain("devicePreview=");
-    expect(threeDSource).toContain("onDevicePreview={setInlineDevicePreview}");
+    expect(threeDSource).toContain("onDevicePreview={scheduleInlineDevicePreview}");
     expect(threeDSource).toContain("rootLegacyNetwork");
     expect(threeDSource).toContain('if (tool === "point")');
     expect(conduitSceneSource).toContain("ignorePreviewRay");
@@ -67,8 +67,23 @@ describe("conduit workspace UI contract", () => {
 
   it("coalesces live pointer work and renders the 3D canvas only on demand", () => {
     expect(threeDSource).toContain("useRafCoalescedCursor");
+    expect(threeDSource).toContain("useRafCoalescedDevicePreview");
+    expect(threeDSource).toContain("onDevicePreview={scheduleInlineDevicePreview}");
     expect(threeDSource).toContain("latestCursor.current");
     expect(threeDSource).toContain('frameloop="demand"');
+  });
+
+  it("defers host boolean cuts until the construction update button is used", () => {
+    expect(threeDSource).toContain("constructionPending");
+    expect(threeDSource).toContain("生成/更新槽孔");
+    expect(threeDSource).toContain("appliedSurfaceChases={appliedConstruction.surfaceChases}");
+    expect(threeDSource).toContain("appliedPenetrations={appliedConstruction.penetrations}");
+    expect(threeDSource).not.toContain("个槽待更新");
+  });
+
+  it("keeps the 3D editor panel scrollable without a visible scrollbar", () => {
+    expect(styles).toContain(".conduit-panel::-webkit-scrollbar{display:none}");
+    expect(styles).toContain("scrollbar-width:none");
   });
 
   it("keeps permanent 2D network rendering separate from transient previews", () => {

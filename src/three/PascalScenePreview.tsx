@@ -12,7 +12,7 @@ import { isFrontmostSurfaceEvent } from "./surface-picking";
 import { subtractHorizontalChases, subtractWallChases } from "./chase-geometry";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
 type Point = [number, number, number];
 const EMPTY_CHASES: SurfaceChase[] = [];
 const EMPTY_PENETRATIONS: Penetration[] = [];
@@ -166,7 +166,7 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
   </mesh>;
 }
 
-export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
+export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, onSelect, overlay, appliedSurfaceChases, appliedPenetrations, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
   const sceneIndex = useMemo(() => {
     const nodes = Object.values(scene.nodes), levelIdByNode: Record<string, string | null> = {}, levelValueByNode: Record<string, number> = {}, openingsByWall: Record<string, NodeData[]> = {}, slabsByLevel: Record<string, NodeData[]> = {};
     const levelIdFor = (node: NodeData) => {
@@ -191,16 +191,18 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
     levelId: levelIdFor(node),
     openings: (sceneIndex.openingsByWall[node.id] ?? EMPTY_OPENINGS).flatMap((child) => Array.isArray(child.position) && Number.isFinite(child.position[0]) && Number.isFinite(child.width) ? [{ center: child.position[0], width: child.width }] : []),
   })), [sceneIndex]);
+  const renderedChases = appliedSurfaceChases ?? overlay?.surfaceChases ?? EMPTY_CHASES;
+  const renderedPenetrations = appliedPenetrations ?? overlay?.penetrations ?? EMPTY_PENETRATIONS;
   const chasesByHost = useMemo(() => {
     const grouped: Record<string, SurfaceChase[]> = {};
-    for (const chase of overlay?.surfaceChases ?? []) (grouped[chase.hostId] ??= []).push(chase);
+    for (const chase of renderedChases) (grouped[chase.hostId] ??= []).push(chase);
     return grouped;
-  }, [overlay?.surfaceChases]);
+  }, [renderedChases]);
   const penetrationsByHost = useMemo(() => {
     const grouped: Record<string, Penetration[]> = {};
-    for (const penetration of overlay?.penetrations ?? []) (grouped[penetration.hostId] ??= []).push(penetration);
+    for (const penetration of renderedPenetrations) (grouped[penetration.hostId] ??= []).push(penetration);
     return grouped;
-  }, [overlay?.penetrations]);
+  }, [renderedPenetrations]);
   const handleSurfaceMove = (hit: ThreeDSurfaceHit | null) => onSurfaceMove?.(hit ? transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId) : null);
   const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId));
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
