@@ -14,6 +14,9 @@ import { subtractHorizontalChases, subtractWallChases } from "./chase-geometry";
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
 type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
 type Point = [number, number, number];
+const EMPTY_CHASES: SurfaceChase[] = [];
+const EMPTY_PENETRATIONS: Penetration[] = [];
+const EMPTY_OPENINGS: NodeData[] = [];
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const vector = (value: unknown): Point => Array.isArray(value) ? [numeric(value[0]), numeric(value[1]), numeric(value[2])] : [0, 0, 0];
@@ -42,7 +45,7 @@ const typeLayer = (type: string): keyof ThreeDLayerVisibility | null => {
   return null;
 };
 
-function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, chases = [], penetrations = [], onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; chases?: SurfaceChase[]; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
+function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; chases?: SurfaceChase[]; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
   const result = useMemo(() => {
     const polygon = Array.isArray(node.polygon) ? node.polygon : [];
     if (polygon.length < 3) return { geometry: null, failed: false };
@@ -64,6 +67,7 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
     return subtractHorizontalChases(base, chases, y, thickness);
   }, [node.polygon, node.holes, penetrations, chases, thickness, y]);
   useEffect(() => { onChaseFallback?.(node.id, result.failed); return () => onChaseFallback?.(node.id, false); }, [node.id, result.failed, result.geometry, onChaseFallback]);
+  useEffect(() => () => result.geometry?.dispose(), [result.geometry]);
   const geometry = result.geometry;
   if (!geometry) return null;
   const hit = (event: any): ThreeDSurfaceHit | null => attachment ? { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey } : null;
@@ -87,11 +91,12 @@ type WallPartSpec = { x: number; y: number; width: number; height: number };
 function WallPartMesh({ diagnosticKey, part, start, end, wallY, thickness, chases, selected, translucent, hit, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { diagnosticKey: string; part: WallPartSpec; start: Vec3; end: Vec3; wallY: number; thickness: number; chases: SurfaceChase[]; selected: boolean; translucent: boolean; hit: (event: any) => ThreeDSurfaceHit; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
   const result = useMemo(() => subtractWallChases(new BoxGeometry(part.width, part.height, thickness), chases, start, end, wallY, part.x, part.y, thickness), [part.width, part.height, part.x, part.y, thickness, chases, start[0], start[2], end[0], end[2], wallY]);
   useEffect(() => { onChaseFallback?.(diagnosticKey, result.failed); return () => onChaseFallback?.(diagnosticKey, false); }, [diagnosticKey, result.failed, result.geometry, onChaseFallback]);
+  useEffect(() => () => result.geometry.dispose(), [result.geometry]);
   const geometry = result.geometry;
   return <mesh position={[part.x, part.y, 0]} onPointerMove={(event) => { if (isFrontmostSurfaceEvent(event)) onSurfaceMove?.(hit(event)); }} onClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}><primitive object={geometry} attach="geometry" /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={translucent} opacity={translucent ? .3 : 1} roughness={.92} /></mesh>;
 }
 
-function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback, curveT }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: SurfaceChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void; curveT?: number }) {
+function Wall({ node, hostId, levelId, openings, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback, curveT }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: SurfaceChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void; curveT?: number }) {
   const start = vector([node.start?.[0], 0, node.start?.[1]]), end = vector([node.end?.[0], 0, node.end?.[1]]);
   const length = Math.hypot(end[0] - start[0], end[2] - start[2]);
   if (length < .001) return null;
@@ -134,7 +139,7 @@ function Wall({ node, hostId, levelId, openings, chases = [], penetrations = [],
 /** Pascal stores a curve as a chord plus sagitta. Render it as short tangent
  * wall pieces, preserving the same source curveOffset rather than mirroring it
  * into an arbitrary spline. Openings are split across every overlapping piece. */
-function CurvedWall({ node, hostId, levelId, openings, chases = [], penetrations = [], y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: SurfaceChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
+function CurvedWall({ node, hostId, levelId, openings, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: SurfaceChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
   const start = vector([node.start?.[0], 0, node.start?.[1]]), end = vector([node.end?.[0], 0, node.end?.[1]]), chordLength = Math.hypot(end[0] - start[0], end[2] - start[2]);
   const segments = Math.max(12, Math.min(32, Math.ceil(chordLength * 3)));
   return <group>{Array.from({ length: segments }, (_, index) => {
@@ -162,22 +167,30 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
 }
 
 export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, onSelect, overlay, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
-  const levelById = useMemo(() => Object.fromEntries(Object.values(scene.nodes).filter((node) => node.type === "level").map((node) => [node.id, numeric(node.level)])), [scene.nodes]);
-  const levelFor = (node: NodeData) => {
-    let cursor: NodeData | undefined = node, visited = new Set<string>();
-    while (cursor && !visited.has(cursor.id)) { visited.add(cursor.id); if (cursor.type === "level") return levelById[cursor.id] ?? 0; cursor = cursor.parentId ? scene.nodes[cursor.parentId] : undefined; }
-    return 0;
-  };
-  const levelIdFor = (node: NodeData) => {
-    let cursor: NodeData | undefined = node, visited = new Set<string>();
-    while (cursor && !visited.has(cursor.id)) { visited.add(cursor.id); if (cursor.type === "level") return cursor.id; cursor = cursor.parentId ? scene.nodes[cursor.parentId] : undefined; }
-    return null;
-  };
-  const wallHosts = useMemo<WallHostCandidate[]>(() => Object.values(scene.nodes).filter((node) => node.type === "wall").map((node) => ({
+  const sceneIndex = useMemo(() => {
+    const nodes = Object.values(scene.nodes), levelIdByNode: Record<string, string | null> = {}, levelValueByNode: Record<string, number> = {}, openingsByWall: Record<string, NodeData[]> = {}, slabsByLevel: Record<string, NodeData[]> = {};
+    const levelIdFor = (node: NodeData) => {
+      if (node.id in levelIdByNode) return levelIdByNode[node.id];
+      let cursor: NodeData | undefined = node, visited = new Set<string>(), result: string | null = null;
+      while (cursor && !visited.has(cursor.id)) { visited.add(cursor.id); if (cursor.type === "level") { result = cursor.id; break; } cursor = cursor.parentId ? scene.nodes[cursor.parentId] : undefined; }
+      levelIdByNode[node.id] = result;
+      return result;
+    };
+    for (const node of nodes) {
+      const levelId = levelIdFor(node), levelNode = levelId ? scene.nodes[levelId] : undefined;
+      levelValueByNode[node.id] = levelNode ? numeric(levelNode.level) : 0;
+      if ((node.type === "door" || node.type === "window") && (node.wallId || node.parentId)) (openingsByWall[node.wallId ?? node.parentId!] ??= []).push(node);
+      if (node.type === "slab") (slabsByLevel[levelId ?? ""] ??= []).push(node);
+    }
+    return { nodes, levelIdByNode, levelValueByNode, openingsByWall, slabsByLevel };
+  }, [scene.nodes]);
+  const levelFor = (node: NodeData) => sceneIndex.levelValueByNode[node.id] ?? 0;
+  const levelIdFor = (node: NodeData) => sceneIndex.levelIdByNode[node.id] ?? null;
+  const wallHosts = useMemo<WallHostCandidate[]>(() => sceneIndex.nodes.filter((node) => node.type === "wall").map((node) => ({
     node,
     levelId: levelIdFor(node),
-    openings: Object.values(scene.nodes).filter((child) => (child.type === "door" || child.type === "window") && (child.wallId === node.id || child.parentId === node.id)).flatMap((child) => Array.isArray(child.position) && Number.isFinite(child.position[0]) && Number.isFinite(child.width) ? [{ center: child.position[0], width: child.width }] : []),
-  })), [scene.nodes, levelById]);
+    openings: (sceneIndex.openingsByWall[node.id] ?? EMPTY_OPENINGS).flatMap((child) => Array.isArray(child.position) && Number.isFinite(child.position[0]) && Number.isFinite(child.width) ? [{ center: child.position[0], width: child.width }] : []),
+  })), [sceneIndex]);
   const chasesByHost = useMemo(() => {
     const grouped: Record<string, SurfaceChase[]> = {};
     for (const chase of overlay?.surfaceChases ?? []) (grouped[chase.hostId] ??= []).push(chase);
@@ -191,21 +204,21 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
   const handleSurfaceMove = (hit: ThreeDSurfaceHit | null) => onSurfaceMove?.(hit ? transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId) : null);
   const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId));
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
-  const floorTopAt = (level: number, x: number, z: number) => Math.max(0, ...Object.values(scene.nodes).filter((node) => node.type === "slab" && levelFor(node) === level && Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));
+  const floorTopAt = (levelId: string | null, x: number, z: number) => Math.max(0, ...(sceneIndex.slabsByLevel[levelId ?? ""] ?? EMPTY_OPENINGS).filter((node) => Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));
   const visible = (node: NodeData) => { const layer = typeLayer(node.type); return node.visible !== false && !hiddenNodeIds.has(node.id) && !!layer && layers[layer] && !(node.type === "wall" && wallMode === "down") && (levelMode !== "solo" || levelFor(node) === 0); };
   return <group name="pascal-readonly-preview">
     <ambientLight intensity={1.25} />
     <directionalLight position={[14, 22, 10]} intensity={2.3} castShadow />
-    {Object.values(scene.nodes).map((node) => {
+    {sceneIndex.nodes.map((node) => {
       if (!visible(node)) return null;
       const selected = node.id === selectedId || node.id === highlightHostId, select = () => onSelect(node.id), y = elevation(node);
-      if (node.type === "wall") return <Wall key={node.id} node={node} hostId={node.id} levelId={levelIdFor(node)} openings={Object.values(scene.nodes).filter((candidate) => (candidate.type === "door" || candidate.type === "window") && (candidate.wallId === node.id || candidate.parentId === node.id))} chases={constructionMode === "finished" ? [] : chasesByHost[node.id] ?? []} penetrations={constructionMode === "finished" ? [] : penetrationsByHost[node.id] ?? []} y={y} selected={selected} wallMode={constructionMode === "xray" ? "translucent" : wallMode} onSelect={select} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
-      if (node.type === "slab") return <Surface key={node.id} node={node} y={y} thickness={Math.max(.01, Math.abs(numeric(node.elevation, .05)))} color="#c4a484" opacity={constructionMode === "xray" ? .32 : 1} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: levelIdFor(node) }} chases={constructionMode === "finished" ? [] : chasesByHost[node.id] ?? []} penetrations={constructionMode === "finished" ? [] : penetrationsByHost[node.id] ?? []} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
-      if (node.type === "ceiling") return <Surface key={node.id} node={node} y={y + numeric(node.height, 2.7)} thickness={.04} color="#f7f2e8" opacity={constructionMode === "xray" ? .24 : .94} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "ceiling", surface: "ceiling-face", normal: [0, -1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? [] : penetrationsByHost[node.id] ?? []} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;
+      if (node.type === "wall") return <Wall key={node.id} node={node} hostId={node.id} levelId={levelIdFor(node)} openings={sceneIndex.openingsByWall[node.id] ?? EMPTY_OPENINGS} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} y={y} selected={selected} wallMode={constructionMode === "xray" ? "translucent" : wallMode} onSelect={select} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
+      if (node.type === "slab") return <Surface key={node.id} node={node} y={y} thickness={Math.max(.01, Math.abs(numeric(node.elevation, .05)))} color="#c4a484" opacity={constructionMode === "xray" ? .32 : 1} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: levelIdFor(node) }} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
+      if (node.type === "ceiling") return <Surface key={node.id} node={node} y={y + numeric(node.height, 2.7)} thickness={.04} color="#f7f2e8" opacity={constructionMode === "xray" ? .24 : .94} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "ceiling", surface: "ceiling-face", normal: [0, -1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;
       if (node.type === "zone") return <Surface key={node.id} node={node} y={y + .012} color={typeof node.color === "string" ? node.color : "#60a5fa"} opacity={.24} selected={selected} onSelect={select} />;
       if (node.type === "item" || node.type === "shelf" || node.type === "cabinet" || node.type === "cabinet-module") {
         const transform = resolveItemPlanTransform(node.id, scene.nodes), position = vector(node.position);
-        const itemLevel = levelFor(node), grounded = node.asset?.attachTo === "wall-side" || node.asset?.attachTo === "ceiling" ? 0 : floorTopAt(itemLevel, transform.status === "ok" ? transform.x : position[0], transform.status === "ok" ? transform.z : position[2]);
+        const itemLevelId = levelIdFor(node), grounded = node.asset?.attachTo === "wall-side" || node.asset?.attachTo === "ceiling" ? 0 : floorTopAt(itemLevelId, transform.status === "ok" ? transform.x : position[0], transform.status === "ok" ? transform.z : position[2]);
         return <ItemProxy key={node.id} node={node} position={transform.status === "ok" ? [transform.x, y + grounded + position[1], transform.z] : [position[0], y + grounded + position[1], position[2]]} selected={selected} onSelect={select} />;
       }
       if (node.type === "door" || node.type === "window") return <Opening key={node.id} node={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />;

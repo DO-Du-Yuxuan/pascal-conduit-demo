@@ -65,6 +65,19 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("minDistance={Math.max(.12, bounds.span * .01)}");
   });
 
+  it("coalesces live pointer work and renders the 3D canvas only on demand", () => {
+    expect(threeDSource).toContain("useRafCoalescedCursor");
+    expect(threeDSource).toContain("latestCursor.current");
+    expect(threeDSource).toContain('frameloop="demand"');
+  });
+
+  it("keeps permanent 2D network rendering separate from transient previews", () => {
+    expect(source).toContain("ConduitPlanPermanent = React.memo");
+    expect(source).toContain("<ConduitPlanPermanent");
+    expect(pascalSceneSource).toContain("EMPTY_CHASES");
+    expect(pascalSceneSource).toContain("sceneIndex");
+  });
+
   it("does not render a height-changing 3D workspace footer", () => {
     expect(threeDSource).not.toContain('<footer className="three-d-status">');
     expect(styles).not.toContain(".three-d-status");

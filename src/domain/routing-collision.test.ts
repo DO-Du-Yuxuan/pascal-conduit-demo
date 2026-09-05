@@ -12,6 +12,15 @@ describe("routing collision validation", () => {
     const plan = withCollisionDiagnostics(overlay, planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
     expect(plan.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: "route_collision", objectIds: expect.arrayContaining([overlay.devices[0].id]) })]));
   });
+
+  it("can ignore only the route's explicit source device without dropping other device collisions", () => {
+    let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", { ...point(0, 0, 0), attachment: { ...point(0, 0, 0).attachment, hostKind: "wall" as const } });
+    overlay = placeNetworkDevice(overlay, "strong-panel", { ...point(1, 0, 0), attachment: { ...point(1, 0, 0).attachment, hostKind: "wall" as const } });
+    const plan = planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(2, 0, 0)]);
+    const checked = withCollisionDiagnostics(overlay, plan, undefined, new Set([overlay.devices[0].id]));
+    expect(checked.diagnostics).not.toEqual(expect.arrayContaining([expect.objectContaining({ objectIds: expect.arrayContaining([overlay.devices[0].id]) })]));
+    expect(checked.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ objectIds: expect.arrayContaining([overlay.devices[1].id]) })]));
+  });
   it("rejects a non-adjacent self crossing", () => {
     const plan = planRoute("sprinkler", 50, "suspended", [point(-1, 1, 0), point(1, 1, 0), point(0, 1, -1), point(0, 1, 1)]);
     const checked = withCollisionDiagnostics(createEmptyOverlay("a.json", "sha"), plan);

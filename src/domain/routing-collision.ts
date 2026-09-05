@@ -2,6 +2,8 @@ import type { BendArc, ConduitOverlayDocument, RouteSegment, Vec3 } from "./over
 import type { PlannedRoute, RouteDiagnostic } from "./routing";
 
 type Primitive = { id: string; a: Vec3; b: Vec3; radius: number; segmentId?: string; relatedSegmentIds?: string[]; portIds?: string[] };
+type OverlayCollisionIndex = { primitives: Primitive[]; candidatesFor: ReturnType<typeof spatialIndex> };
+const overlayIndexCache = new WeakMap<ConduitOverlayDocument, OverlayCollisionIndex>();
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 const scale = (v: Vec3, n: number): Vec3 => [v[0] * n, v[1] * n, v[2] * n];
@@ -66,6 +68,14 @@ function primitivesForOverlay(overlay: ConduitOverlayDocument, ignoredSegmentId?
   return result;
 }
 
+function collisionIndexFor(overlay: ConduitOverlayDocument): OverlayCollisionIndex {
+  const cached = overlayIndexCache.get(overlay);
+  if (cached) return cached;
+  const primitives = primitivesForOverlay(overlay), result = { primitives, candidatesFor: spatialIndex(primitives) };
+  overlayIndexCache.set(overlay, result);
+  return result;
+}
+
 function primitiveBounds(value: Primitive) {
   return { minX: Math.min(value.a[0], value.b[0]) - value.radius, maxX: Math.max(value.a[0], value.b[0]) + value.radius, minY: Math.min(value.a[1], value.b[1]) - value.radius, maxY: Math.max(value.a[1], value.b[1]) + value.radius, minZ: Math.min(value.a[2], value.b[2]) - value.radius, maxZ: Math.max(value.a[2], value.b[2]) + value.radius };
 }
@@ -86,10 +96,15 @@ function spatialIndex(primitives: Primitive[], cellSize = 1) {
 }
 
 /** Exact narrow phase over a lightweight primitive list; no meshes or CSG. */
-export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string): RouteDiagnostic[] {
-  const diagnostics = [...plan.diagnostics], proposed = primitivesForPlan(plan), existing = primitivesForOverlay(overlay, ignoredSegmentId), candidatesFor = spatialIndex(existing), tolerance = .001;
+export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds: ReadonlySet<string> = new Set()): RouteDiagnostic[] {
+  const diagnostics = [...plan.diagnostics], proposed = primitivesForPlan(plan), { candidatesFor } = collisionIndexFor(overlay), tolerance = .001;
   const linked = new Set(plan.fittings.flatMap((fitting) => fitting.segmentIds.flatMap((first) => fitting.segmentIds.filter((second) => first < second).map((second) => `${first}|${second}`))));
   for (const candidate of proposed) for (const obstacle of candidatesFor(candidate)) {
+    if (
+      ignoredObjectIds.has(obstacle.id) ||
+      (ignoredSegmentId !== undefined &&
+        (obstacle.segmentId === ignoredSegmentId || obstacle.relatedSegmentIds?.includes(ignoredSegmentId)))
+    ) continue;
     if (candidate.portIds?.some((id) => obstacle.portIds?.includes(id))) continue;
     const hit = closestSegmentPoints(candidate, obstacle);
     if (hit.distance < candidate.radius + obstacle.radius + tolerance) diagnostics.push({ code: "route_collision", message: `预览管线与 ${obstacle.id} 发生实体交叉。`, objectIds: [obstacle.id], point: hit.point });
@@ -105,13 +120,13 @@ export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: Plan
 
 export function validateBranchCandidate(overlay: ConduitOverlayDocument, ignoredSegmentId: string, point: Vec3, radius: number): RouteDiagnostic[] {
   const candidate: Primitive = { id: "branch-node-preview", a: point, b: point, radius };
-  return primitivesForOverlay(overlay, ignoredSegmentId).flatMap((obstacle) => {
+  return collisionIndexFor(overlay).primitives.filter((obstacle) => obstacle.segmentId !== ignoredSegmentId && !obstacle.relatedSegmentIds?.includes(ignoredSegmentId)).flatMap((obstacle) => {
     const hit = closestSegmentPoints(candidate, obstacle);
     return hit.distance < candidate.radius + obstacle.radius + .001 ? [{ code: "branch_clearance" as const, message: `分支节点与 ${obstacle.id} 空间冲突。`, objectIds: [obstacle.id], point: hit.point }] : [];
   });
 }
 
-export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string): PlannedRoute {
-  const diagnostics = validatePlannedRoute(overlay, plan, ignoredSegmentId);
+export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>): PlannedRoute {
+  const diagnostics = validatePlannedRoute(overlay, plan, ignoredSegmentId, ignoredObjectIds);
   return { ...plan, diagnostics, canCommit: diagnostics.length === 0 };
 }
