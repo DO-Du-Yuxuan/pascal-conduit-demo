@@ -41,7 +41,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("gl={CANVAS_GL}");
     expect(threeDSource).toContain("mouseButtons={CONTROL_MOUSE_BUTTONS}");
     expect(threeDSource).toContain("colliderMeshes={NO_CAMERA_COLLIDERS}");
-    expect(threeDSource).toContain("boundaryEnclosesCamera={false}");
+    expect(threeDSource).toContain("GROUND_CAMERA_CLEARANCE");
+    expect(threeDSource).toContain("boundaryEnclosesCamera");
+    expect(threeDSource).toContain("boundaryFriction={.12}");
     expect(threeDSource).toContain("minDistance={Math.max(.12, bounds.span * .01)}");
   });
 

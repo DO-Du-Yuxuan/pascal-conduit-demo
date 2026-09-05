@@ -1,7 +1,7 @@
 import { CameraControls, CameraControlsImpl } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BackSide } from "three";
+import { BackSide, Box3, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool } from "../components/ConduitScene";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type ConduitOverlayDocument, type HostAttachment, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceMode } from "../domain/overlay";
 import { commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, type ConstructionVisualParameters, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
@@ -30,6 +30,7 @@ const CANVAS_DPR: [number, number] = [1, 1.25];
 const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
 const CONTROL_MOUSE_BUTTONS = { left: CameraControlsImpl.ACTION.NONE, middle: CameraControlsImpl.ACTION.TRUCK, right: CameraControlsImpl.ACTION.ROTATE, wheel: CameraControlsImpl.ACTION.DOLLY };
 const NO_CAMERA_COLLIDERS: never[] = [];
+const GROUND_CAMERA_CLEARANCE = .04;
 // The footer was intentionally removed from the workspace: status changes
 // must not alter the canvas height while a route is being drawn.
 const setStatus = (_message: string) => undefined;
@@ -48,6 +49,8 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
   }, [canvas]);
   useEffect(() => {
     if (!controls.current) return;
+    const extent = Number.MAX_SAFE_INTEGER;
+    controls.current.setBoundary(new Box3(new Vector3(-extent, GROUND_CAMERA_CLEARANCE, -extent), new Vector3(extent, extent, extent)));
     const [x, y, z] = bounds.center, distance = bounds.span * 1.35;
     const viewpoints: Record<ViewPreset, [number, number, number, number, number, number]> = {
       exterior: [x + distance, y + distance * .72, z + distance, x, y, z], interior: [x + distance * .55, Math.max(1.6, y), z + distance * .55, x, Math.max(1.35, y), z], floor: [x, y + distance * 1.6, z, x, 0, z], ceiling: [x, Math.max(.7, y - distance * .15), z, x, y + distance * .55, z], top: [x, y + distance * 1.6, z, x, y, z], front: [x, y + distance * .45, z + distance, x, y, z], back: [x, y + distance * .45, z - distance, x, y, z], left: [x - distance, y + distance * .45, z, x, y, z], right: [x + distance, y + distance * .45, z, x, y, z], isometric: [x + distance, y + distance, z + distance, x, y, z],
@@ -56,13 +59,14 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
     void controls.current.setLookAt(cameraX, cameraY, cameraZ, targetX, targetY, targetZ, false);
   }, [bounds, preset]);
   // `infinityDolly` deliberately moves the orbit target after reaching the
-  // closest distance.  No scene geometry is registered as a collider, so the
-  // camera can pass through all walls, furniture proxies and conduit meshes.
+  // closest distance. No scene geometry is registered as a collider, so the
+  // camera can pass through walls, ceilings, furniture and conduit. The only
+  // boundary is the world ground plane configured above.
   // Infinity dolly only advances the target after minDistance is reached. A
   // near-zero minimum makes wheel motion decay until it feels blocked at the
   // orbit target, so enter pass-through mode at a practical scene-relative
   // distance instead. Hidden or visible scene meshes are never colliders.
-  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryEnclosesCamera={false} colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={CONTROL_MOUSE_BUTTONS} />;
+  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryFriction={.12} boundaryEnclosesCamera colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={CONTROL_MOUSE_BUTTONS} />;
 }
 
 function PointerCapture({ bounds, onRay }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number]) => void }) {
