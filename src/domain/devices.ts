@@ -86,21 +86,39 @@ function luminairePorts(id: string, position: RoutePoint, frame: DeviceFrame, si
   return [horizontalRight, scale(horizontalRight, -1), horizontalForward, scale(horizontalForward, -1)].map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
 }
 
-function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount } = {}): NetworkDevice {
-  const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind;
+function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number] } = {}): NetworkDevice {
+  const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind, sizeMm = options.sizeMm ?? definition.sizeMm;
   if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind))) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
   const id = nextId(deviceType), frame = deviceFrame(position, options.tangent), orientation = deviceType === "sprinkler-head" ? [0, 1, 0] as Vec3 : frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
     if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, systemIndex), orientation, system, "source")];
-    if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, definition.sizeMm, system, definition.portRole);
-    if (deviceType === "luminaire") return luminairePorts(id, position, frame, definition.sizeMm, system);
+    if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, sizeMm, system, definition.portRole);
+    if (deviceType === "luminaire") return luminairePorts(id, position, frame, sizeMm, system);
     return [devicePort(id, systemIndex, position, orientation, system, definition.portRole)];
   });
-  return { id, type: "network-device", deviceType, name: name ?? definition.label, position: clonePoint(position), sizeMm: [...definition.sizeMm], orientation, frame, mount: mountFor(position, options.mount), systems: [...definition.systems], ports, createdAt: new Date().toISOString() };
+  return { id, type: "network-device", deviceType, name: name ?? definition.label, position: clonePoint(position), sizeMm: [...sizeMm], orientation, frame, mount: mountFor(position, options.mount), systems: [...definition.systems], ports, createdAt: new Date().toISOString() };
 }
 
 export function createNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name?: string): NetworkDevice {
   return buildNetworkDevice(deviceType, position, name, true);
+}
+
+export function createReferencePlaneDevice(deviceType: "luminaire" | "sprinkler-head", position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
+  return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm } });
+}
+
+export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.sizeMm): NetworkDevice {
+  const rebuilt = buildNetworkDevice(device.deviceType, device.position, device.name, false, { mount: device.mount, tangent: device.mount?.kind === "segment" ? device.mount.tangent : undefined, sizeMm });
+  const used = new Set<string>();
+  const ports = rebuilt.ports.map((port, index) => {
+    const previous = device.ports.find((candidate) => !used.has(candidate.id) && candidate.system === port.system && candidate.face === port.face && candidate.slot === port.slot)
+      ?? device.ports.find((candidate) => !used.has(candidate.id) && candidate.system === port.system && candidate.role === port.role)
+      ?? device.ports[index];
+    if (!previous) return { ...port, id: `${device.id}:port:${index}`, owner: { kind: "device" as const, id: device.id } };
+    used.add(previous.id);
+    return { ...port, id: previous.id, owner: { kind: "device" as const, id: device.id }, connectedSegmentIds: [...previous.connectedSegmentIds] };
+  });
+  return { ...rebuilt, id: device.id, createdAt: device.createdAt, positioning: device.positioning, ports };
 }
 
 export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: NetworkDeviceType, position: RoutePoint, name?: string): ConduitOverlayDocument {
@@ -213,6 +231,7 @@ export function deviceDiagnostics(overlay: ConduitOverlayDocument): string[] {
   const diagnostics: string[] = [];
   for (const circuit of overlay.circuits) {
     if (circuit.status === "legacy-unrooted") diagnostics.push(`${circuit.id}: 未接源旧线路`);
+    else if (circuit.status === "broken") diagnostics.push(`${circuit.id}: 设备移动后存在待重连开放管端`);
     else if (!circuit.sourceDeviceId || !devicesById.has(circuit.sourceDeviceId)) diagnostics.push(`${circuit.id}: 源设备缺失`);
     else {
       const source = devicesById.get(circuit.sourceDeviceId);
@@ -294,7 +313,7 @@ export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId
 export type OpenRouteEndpoint = { segmentId: string; end: "start" | "end"; point: RoutePoint; direction: Vec3; system: RoutingSystem; circuit: Circuit };
 
 export function openRouteEndpoints(overlay: ConduitOverlayDocument): OpenRouteEndpoint[] {
-  const circuits = new Map(overlay.circuits.filter((circuit) => circuit.status === "rooted").map((circuit) => [circuit.id, circuit]));
+  const circuits = new Map(overlay.circuits.filter((circuit) => circuit.status === "rooted" || circuit.status === "broken").map((circuit) => [circuit.id, circuit]));
   return overlay.segments.flatMap((segment) => {
     const circuit = segment.circuitId ? circuits.get(segment.circuitId) : undefined;
     if (!circuit || segment.legacyUnrooted) return [];
@@ -327,7 +346,7 @@ export function placeDeviceAtEndpoint(overlay: ConduitOverlayDocument, endpoint:
 }
 
 /** Connects a new planned route to a rooted, physically open conduit end. */
-export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: OpenRouteEndpoint, plan: PlannedRoute): ConduitOverlayDocument {
+export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: OpenRouteEndpoint, plan: PlannedRoute, endDeviceId?: string): ConduitOverlayDocument {
   const target = overlay.segments.find((segment) => segment.id === endpoint.segmentId), first = plan.segments[0];
   if (!target || !first || !plan.canCommit || target.system !== plan.system || target.circuitId !== endpoint.circuit.id) return overlay;
   const firstDirection = normalize(subtract(first.end.position, first.start.position)), sameDirection = dot(endpoint.direction, firstDirection) > .995;
@@ -339,7 +358,16 @@ export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: O
   const updatedFirst = { ...first, startPortId: ports[1].id };
   const fitting: RouteFitting = { id, type: target.system === "sprinkler" ? "sprinkler-fitting" : "conduit-fitting", fitting: sameDirection ? "coupling" : "elbow", bendStyle: sameDirection ? undefined : (target.system === "sprinkler" ? "standard" : "right-angle"), system: target.system, diameterMm: target.diameterMm, position: clonePoint(endpoint.point), segmentIds: [target.id, first.id], ports };
   const segments = plan.segments.map((segment, index) => index === 0 ? updatedFirst : segment);
-  return { ...overlay, segments: overlay.segments.map((segment) => segment.id === target.id ? updatedTarget : segment).concat(segments), fittings: [...overlay.fittings, fitting, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((circuit) => circuit.id === endpoint.circuit.id ? { ...circuit, segmentIds: [...new Set([...circuit.segmentIds, ...segments.map((segment) => segment.id)])] } : circuit) };
+  let devices = overlay.devices;
+  if (endDeviceId) {
+    const endDevice = devices.find((device) => device.id === endDeviceId), endPort = endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+    if (!endDevice || !endPort) return overlay;
+    segments[segments.length - 1] = { ...segments[segments.length - 1], endPortId: endPort.id };
+    devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);
+  }
+  const nextSegments = overlay.segments.map((segment) => segment.id === target.id ? updatedTarget : segment).concat(segments);
+  const stillOpen = nextSegments.some((segment) => segment.circuitId === endpoint.circuit.id && (!segment.startPortId || !segment.endPortId));
+  return { ...overlay, devices, segments: nextSegments, fittings: [...overlay.fittings, fitting, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((circuit) => circuit.id === endpoint.circuit.id ? { ...circuit, status: stillOpen ? "broken" as const : "rooted" as const, segmentIds: [...new Set([...circuit.segmentIds, ...segments.map((segment) => segment.id)])] } : circuit) };
 }
 
 export function resetDeviceIdsForTests() { sequence = 0; }
