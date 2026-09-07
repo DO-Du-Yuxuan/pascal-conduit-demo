@@ -5,6 +5,7 @@ export type DirectionMode = "free" | "orthogonal";
 export type WorldAxis = "x" | "y" | "z";
 export type DirectionArrow = "ArrowLeft" | "ArrowUp" | "ArrowRight" | "ArrowDown";
 export type PenetrationSession = { entry: RoutePoint; host: HostAttachment; direction: Vec3; orthogonal: boolean };
+export type RouteCompletionMode = "confirmed-only" | "include-preview";
 
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -46,6 +47,14 @@ export function previewRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint |
  */
 export function resolveConfirmedRoutePoint(preview: RoutePoint | null, clickHit: RoutePoint | null): RoutePoint | null {
   return preview ?? clickHit;
+}
+
+/** Selects the route points owned by a completion gesture without mutating the draft. */
+export function routePointsForCompletion(confirmed: RoutePoint[], preview: RoutePoint | null, mode: RouteCompletionMode): RoutePoint[] {
+  if (mode === "confirmed-only" || !preview) return confirmed;
+  const last = confirmed[confirmed.length - 1];
+  if (last && preview.position.every((value, axis) => Math.abs(value - last.position[axis]) <= 1e-7)) return confirmed;
+  return [...confirmed, preview];
 }
 
 export function beginPenetration(confirmed: RoutePoint[], entry: RoutePoint | null, orthogonal: boolean): PenetrationSession | null {

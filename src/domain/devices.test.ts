@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, insertDeviceOnSegment, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
+import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostKind: HostKind = "wall"): RoutePoint => ({ position: [x, y, z], attachment: { hostId: `${hostKind}-a`, hostKind, surface: hostKind === "wall" ? "interior" : "top", normal: hostKind === "wall" ? [0, 0, 1] : [0, 1, 0], levelId: "L0" } });
 function rooted(system: RoutingSystem) {
@@ -14,6 +15,19 @@ function rooted(system: RoutingSystem) {
 }
 
 describe("network devices and rooted circuits", () => {
+  it("keeps a bridge bend when a routed endpoint connects to a target device port", () => {
+    let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", point(-2, 0, 0));
+    overlay = placeNetworkDevice(overlay, "socket", point(2, 0, 1));
+    const started = startRouteFromDevice(overlay, overlay.devices[0].id, "receptacle"), target = overlay.devices[1].ports.find((port) => port.system === "receptacle")!;
+    const existing = planRoute("lighting", 20, "surface", [point(0, 0, -1, "slab"), point(0, 0, 1, "slab")]);
+    overlay = { ...started.overlay, segments: existing.segments, fittings: existing.fittings };
+    const planned = withCollisionDiagnostics(overlay, planRoute("receptacle", 20, "surface", [started.port.position, point(-1, 0, 0, "slab"), point(1, 0, 0, "slab"), target.position]), undefined, new Set([overlay.devices[0].id, overlay.devices[1].id]));
+    const committed = commitDeviceRoute(overlay, planned, started.circuit, started.port, overlay.devices[1].id, target.id);
+    expect(planned.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(true);
+    expect(committed.devices[1].ports.find((port) => port.id === target.id)?.connectedSegmentIds).toHaveLength(1);
+    expect(committed.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(true);
+  });
+
   it.each(["receptacle", "lighting", "network", "sprinkler"] as const)("commits an open %s route from its legal source", (system) => {
     const overlay = rooted(system);
     expect(overlay.segments.some((segment) => segment.system === system && segment.legacyUnrooted === false)).toBe(true);

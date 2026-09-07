@@ -5,7 +5,7 @@ export type DevicePositioningContext = {
   levelFloorY: Readonly<Record<string, number>>;
   wallSpans: Readonly<Record<string, readonly [number, number]>>;
   wallOpenings?: Readonly<Record<string, readonly { id: string; start: number; end: number }[]>>;
-  wallFaces?: readonly { id: string; levelId: string; point: Vec3; normal: Vec3 }[];
+  wallFaces?: readonly { id: string; levelId: string; point: Vec3; normal: Vec3; start?: Vec3; end?: Vec3; halfThickness?: number }[];
 };
 
 export type DevicePositionDescription = {
@@ -42,9 +42,16 @@ const footprintExtent = (device: NetworkDevice, normal: Vec3) => Math.abs(normal
 
 function planarReferences(device: NetworkDevice, context: DevicePositioningContext): NonNullable<DevicePositionDescription["planar"]> {
   const levelId = device.mount?.kind === "reference-plane" ? device.mount.levelId : device.position.attachment?.levelId;
-  const candidates = (context.wallFaces ?? []).filter((face) => face.levelId === levelId).map((face) => {
+  const candidates = (context.wallFaces ?? []).filter((face) => {
+    if (face.levelId !== levelId || !face.start || !face.end) return face.levelId === levelId;
+    const tangent = subtract(face.end, face.start), length = Math.hypot(...tangent);
+    if (length < 1e-8) return false;
+    const along = dot(subtract(device.position.position, face.start), scale(tangent, 1 / length));
+    return along >= -1e-6 && along <= length + 1e-6;
+  }).map((face) => {
     const signed = dot(subtract(device.position.position, face.point), face.normal), direction = scale(face.normal, signed < 0 ? -1 : 1);
-    return { millimeters: Math.max(0, Math.round((Math.abs(signed) - footprintExtent(device, face.normal)) * 1000)), wallId: face.id, direction, distance: Math.abs(signed) };
+    const surfaceDistance = Math.max(0, Math.abs(signed) - (face.halfThickness ?? 0));
+    return { millimeters: Math.max(0, Math.round((surfaceDistance - footprintExtent(device, face.normal)) * 1000)), wallId: face.id, direction, distance: surfaceDistance };
   });
   const persisted = device.positioning?.planarWallIds?.map((id) => candidates.find((candidate) => candidate.wallId === id)).filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
   const ordered = persisted?.length ? persisted : candidates.sort((a, b) => a.distance - b.distance || a.wallId.localeCompare(b.wallId));

@@ -150,7 +150,7 @@ const segmentLength = (segment: RouteSegment) => length(subtract(segment.end.pos
 /** Replaces a newly planned straight floor crossing with a raised double-45 bridge. */
 function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): PlannedRoute | null {
   for (const proposed of plan.segments) {
-    if (!electrical(proposed.system) || !isGroundSegment(proposed) || plan.fittings.some((fitting) => fitting.segmentIds.includes(proposed.id))) continue;
+    if (!electrical(proposed.system) || !isGroundSegment(proposed)) continue;
     const direction = normalize(subtract(proposed.end.position, proposed.start.position)), proposedLength = segmentLength(proposed);
     for (const obstacle of overlay.segments) {
       if (!electrical(obstacle.system) || !sameGround(proposed, obstacle)) continue;
@@ -162,15 +162,21 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): P
       if (along < required || proposedLength - along < required) continue;
       const entry = add(hit.point, scale(direction, -(rise + topHalf))), crestStart = add(add(hit.point, scale(direction, -topHalf)), [0, rise, 0]), crestEnd = add(add(hit.point, scale(direction, topHalf)), [0, rise, 0]), exit = add(hit.point, scale(direction, rise + topHalf));
       const entryFactor = Math.max(0, Math.min(1, dot(subtract(entry, proposed.start.position), direction) / proposedLength)), exitFactor = Math.max(0, Math.min(1, dot(subtract(exit, proposed.start.position), direction) / proposedLength));
-      const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor) }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor) };
+      const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor), endPortId: undefined }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor), startPortId: undefined };
       const bridgeId = `${proposed.id}:bridge`, bridgePorts: NetworkPort[] = [
         { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system: proposed.system, connectedSegmentIds: [before.id], segmentId: before.id },
         { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
       ];
       before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
       const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: 200, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: [...hit.point] as Vec3, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacle.id, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
+      const replacementFor = (position: Vec3) => samePoint(position, proposed.start.position) ? before.id : after.id;
+      const fittings = plan.fittings.map((item) => {
+        if (!item.segmentIds.includes(proposed.id)) return item;
+        const ports = item.ports.map((port) => port.segmentId !== proposed.id ? port : { ...port, segmentId: replacementFor(port.position.position), connectedSegmentIds: port.connectedSegmentIds.map((id) => id === proposed.id ? replacementFor(port.position.position) : id) });
+        return { ...item, ports, segmentIds: item.segmentIds.flatMap((id) => id !== proposed.id ? [id] : [...new Set(ports.filter((port) => port.segmentId === before.id || port.segmentId === after.id).map((port) => port.segmentId!))]) };
+      });
       const surfaceChases = plan.surfaceChases.flatMap((chase) => chase.routeElementId !== proposed.id || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: `${chase.id}:bridge-a`, routeElementId: before.id, path: { kind: "line" as const, start: clonePoint(before.start), end: clonePoint(before.end) } }, { ...chase, id: `${chase.id}:bridge-b`, routeElementId: after.id, path: { kind: "line" as const, start: clonePoint(after.start), end: clonePoint(after.end) } }]);
-      return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...plan.fittings, fitting], surfaceChases };
+      return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...fittings, fitting], surfaceChases };
     }
   }
   return null;

@@ -25,4 +25,10 @@ describe("route object snap resolution", () => {
     expect(resolveSnapCandidate(point(0, 0, 0), [candidate("open-end", 2, .1, 0)], { tolerancePixels: 12, hostOrthogonal: true })).toMatchObject({ kind: "alignment", point: { position: [2, 0, 0] } });
     expect(resolveSnapCandidate(point(0, 0, 0), [candidate("open-end", 2, 0, 0)], { tolerancePixels: 12, hostOrthogonal: true })).toMatchObject({ kind: "snap" });
   });
+
+  it("uses world-axis alignment for an orthogonal suspended route instead of snapping diagonally", () => {
+    const suspendedStart: RoutePoint = { position: [0, 2.7, 0] };
+    const suspendedTarget = { ...candidate("device-port", 2, 3.2, 1), point: { position: [2, 3.2, 1] as [number, number, number] } };
+    expect(resolveSnapCandidate(suspendedStart, [suspendedTarget], { tolerancePixels: 12, hostOrthogonal: true })).toMatchObject({ kind: "alignment", point: { position: [2, 2.7, 0] } });
+  });
 });

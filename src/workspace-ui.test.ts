@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
+const planSource = readFileSync(resolve(process.cwd(), "src/plan/ConduitPlan.tsx"), "utf8");
 const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
 const pascalSceneSource = readFileSync(resolve(process.cwd(), "src/three/PascalScenePreview.tsx"), "utf8");
 const conduitSceneSource = readFileSync(resolve(process.cwd(), "src/components/ConduitScene.tsx"), "utf8");
@@ -24,9 +25,9 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("renders the transient 3D route preview in the 2D plan overlay", () => {
-    expect(source).toContain("state.preview");
-    expect(source).toContain("conduit-plan-preview");
-    expect(source).toContain("preview.plan.segments.map");
+    expect(planSource).toContain("state.preview");
+    expect(planSource).toContain("conduit-plan-preview");
+    expect(planSource).toContain("preview.plan.segments.map");
   });
 
   it("exposes device placement, rooted drawing and synchronized device symbols", () => {
@@ -42,8 +43,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).not.toContain('setConstructionMode');
     expect(threeDSource).not.toContain('<label>大弯半径');
     expect(threeDSource).not.toContain('<label>定尺长度');
-    expect(source).toContain("overlay.devices.filter");
-    expect(source).toContain("preview.deviceNode");
+    expect(planSource).toContain("overlay.devices.filter");
+    expect(planSource).toContain("preview.deviceNode");
   });
 
   it("does not turn drawing clicks into global scene selections in split view", () => {
@@ -73,9 +74,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain('frameloop="demand"');
   });
 
-  it("defers host boolean cuts until the construction update button is used", () => {
-    expect(threeDSource).toContain("constructionPending");
-    expect(threeDSource).toContain("生成/更新槽孔");
+  it("keeps construction rendering data-compatible while hiding its controls", () => {
+    expect(threeDSource).not.toContain("constructionPending");
+    expect(threeDSource).not.toContain("生成/更新槽孔");
     expect(threeDSource).toContain("appliedSurfaceChases={appliedConstruction.surfaceChases}");
     expect(threeDSource).toContain("appliedPenetrations={appliedConstruction.penetrations}");
     expect(threeDSource).toContain("fallbackChaseKeys={chaseFallbacks}");
@@ -89,9 +90,21 @@ describe("conduit workspace UI contract", () => {
     expect(styles).toContain("scrollbar-width:none");
   });
 
+  it("keeps the 3D editor task-focused and moves low-frequency controls into compact sections", () => {
+    expect(threeDSource).toContain('className="conduit-tool-grid"');
+    expect(threeDSource).toContain('tool === "draw" || tool === "branch"');
+    expect(threeDSource).toContain('tool === "point"');
+    expect(threeDSource).toContain('tool === "select"');
+    expect(threeDSource).toContain('className="conduit-panel-details"');
+    expect(threeDSource).not.toContain("施工与槽孔");
+    expect(threeDSource).toContain("管线图层");
+    expect(threeDSource).toContain('className="conduit-utility-grid"');
+    expect(styles).toContain("grid-template-columns:repeat(5,minmax(0,1fr))");
+  });
+
   it("keeps permanent 2D network rendering separate from transient previews", () => {
-    expect(source).toContain("ConduitPlanPermanent = React.memo");
-    expect(source).toContain("<ConduitPlanPermanent");
+    expect(planSource).toContain("ConduitPlanPermanent = React.memo");
+    expect(planSource).toContain("<ConduitPlanPermanent");
     expect(pascalSceneSource).toContain("EMPTY_CHASES");
     expect(pascalSceneSource).toContain("sceneIndex");
   });
@@ -106,5 +119,12 @@ describe("conduit workspace UI contract", () => {
     expect(pascalSceneSource).toContain("subtractWallChases");
     expect(threeDSource).toContain("onChaseFallback={reportChaseFallback}");
     expect(threeDSource).toContain("宿主浅槽切割失败");
+  });
+
+  it("renders a quiet non-interactive edge overlay for 3D building geometry", () => {
+    expect(pascalSceneSource).toContain("function MeshEdges");
+    expect(pascalSceneSource).toContain("const EDGE_OPACITY = .24");
+    expect(pascalSceneSource).toContain('raycast={() => null}');
+    expect(pascalSceneSource).toContain("<MeshEdges geometry={geometry}");
   });
 });

@@ -59,17 +59,21 @@ describe("simplified evaluation and layer controls", () => {
     expect(appSource).toContain("S1PathOverlay");
   });
 
-  it("keeps the reduced layer list and reuses both existing center capabilities", () => {
-    expect(appSource).toContain('centers: "家具中心"');
-    expect(appSource).not.toContain('boxes: "物理占地框"');
+  it("keeps evaluation layers separate while exposing construction drawing layers", () => {
+    expect(appSource).toContain('layerGroup("建筑图层"');
+    expect(appSource).toContain('layerGroup("管线图层"');
+    expect(appSource).toContain('constructionAnnotations: "点位名称与离地高度"');
+    expect(appSource).toContain('pointPositionDimensions: "点位定位尺寸"');
+    expect(appSource).toContain('aria-label="点位标注比例"');
+    expect(appSource).not.toContain('<summary>开发信息</summary>');
     expect(appSource).toContain('boxes: next, centers: next, axes: next');
     expect(appSource).toContain("评价辅助图层");
     expect(appSource).toContain("显示400毫米基本通行范围");
     expect(appSource).toContain("400毫米单人基本通行范围");
     expect(appSource).not.toContain("已连接路径");
     expect(appSource).not.toContain("路径中断");
-    expect(appSource).toContain('zones: "Zone"');
-    expect(appSource).not.toContain('slabs: "Slab（楼地面）"');
+    expect(appSource).toContain('zones: "空间名称"');
+    expect(appSource).toContain('slabs: "楼板"');
   });
 
   it("uses a compact designer visual system without changing report or radar data", () => {

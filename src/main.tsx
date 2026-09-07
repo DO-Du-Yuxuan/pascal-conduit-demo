@@ -5,6 +5,11 @@ import sampleText from "../sample-data/Bellevue demo.json?raw";
 import passingSampleText from "../sample-data/Bellevue passing demo.json?raw";
 import bellevueRequirementText from "../sample-data/requirements/Bellevue requirements demo.json?raw";
 import "./styles.css";
+import "./plan/plan.css";
+import { ExteriorDimensions } from "./plan/ExteriorDimensions";
+import { ConduitPlanOverlay } from "./plan/ConduitPlan";
+import { ConstructionAnnotations, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
+import { PointPositionDimensions } from "./plan/PointPositionDimensions";
 import "./evaluation.css";
 import { parseProject } from "./parser/parse";
 import { Diagnostic, NodeData, Parsed } from "./types";
@@ -29,8 +34,8 @@ import { hasValidShelfFootprint, resolveShelfData, resolveShelfPlanTransform, sh
 import { buildSpiralStairDestinationEntry, buildSpiralStairPlanGeometry, spiralStairCorners } from "./geometry/spiral-stair";
 import { buildSlabPlanGeometry } from "./geometry/slab";
 import { buildCurvedStairPlanGeometry, buildStraightStairPlanGeometry, stairCorners } from "./geometry/stairs";
-import { zoneColor, zoneLabelPoint, zonePoints } from "./geometry/zone";
-import { buildAlignedDimensionDisplay, buildExteriorDimensions, DimensionSegment, dimensionDisplayGeometry, dimensionOverlayBounds, EXTENSION_OVERSHOOT_M, INNER_CHAIN_OFFSET_M, OVERALL_CHAIN_OFFSET_M, uprightDimensionAngle } from "./geometry/exterior-dimensions";
+import { zoneLabelPoint, zonePoints } from "./geometry/zone";
+import { buildExteriorDimensions, DimensionSegment, dimensionOverlayBounds, uprightDimensionAngle } from "./geometry/exterior-dimensions";
 import { buildManualMeasurementGeometry, buildMeasurementSnapSegments, formatArea, formatMeasurement, ManualMeasurement, MeasurementMode, MeasurementSnap, MeasurementUnit, resolveMeasurementMode, snapMeasurementPoint } from "./geometry/manual-measurement";
 import { ALPHA_THRESHOLD, computeCropPlacement, floorplanImageCropDiagnostics, FloorplanImageCropCacheEntry, loadFloorplanImageCrop, peekFloorplanImageCrop, subscribeFloorplanImageCrop } from "./geometry/floorplan-image-crop";
 import { auditSceneCoverage } from "./coverage/auditSceneCoverage";
@@ -58,9 +63,7 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
-import { createEmptyOverlay, type BendArc, type ConduitOverlayDocument, type Vec3 } from "./domain/overlay";
-import { DEVICE_DEFAULTS } from "./domain/devices";
-import { planFittingDisplay } from "./domain/network-plan";
+import { createEmptyOverlay, type ConduitOverlayDocument } from "./domain/overlay";
 import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
 import { scoreS1FunctionalRelationships } from "./evaluation/s1-functional-relation-scoring";
@@ -89,6 +92,13 @@ type Visibility = {
   stairs: boolean;
   openings: boolean;
   dimensions: boolean;
+  devices: boolean;
+  conduitReceptacle: boolean;
+  conduitLighting: boolean;
+  conduitNetwork: boolean;
+  conduitSprinkler: boolean;
+  constructionAnnotations: boolean;
+  pointPositionDimensions: boolean;
 };
 type CanvasState = {
   id: number;
@@ -112,6 +122,13 @@ const visibilityDefault: Visibility = {
   stairs: true,
   openings: true,
   dimensions: true,
+  devices: true,
+  conduitReceptacle: true,
+  conduitLighting: true,
+  conduitNetwork: true,
+  conduitSprinkler: true,
+  constructionAnnotations: true,
+  pointPositionDimensions: true,
 };
 const emptyView: ViewBox = { minX: -5, minZ: -5, width: 10, height: 10 };
 const DEFAULT_CANVAS_ROTATION = 90;
@@ -139,6 +156,7 @@ function App() {
     [manualMeasurements, setManualMeasurements] = useState<ManualMeasurement[]>([]),
     [measurementMode, setMeasurementMode] = useState<MeasurementMode>("off"),
     [measurementUnit, setMeasurementUnit] = useState<MeasurementUnit>("millimeters"),
+    [pointAnnotationScale, setPointAnnotationScale] = useState(1),
     [imageCropRevision, setImageCropRevision] = useState(0),
     [evaluationReport, setEvaluationReport] = useState<EvaluationReport | null>(null),
     [s1Report, setS1Report] = useState<S1FunctionalRelationshipReport | null>(null),
@@ -670,27 +688,15 @@ function App() {
     window.addEventListener("keydown", onSceneHistoryShortcut, true);
     return () => window.removeEventListener("keydown", onSceneHistoryShortcut, true);
   }, []);
-  const layerControls = <details className="floating-layer-panel">
-    <summary>显示图层</summary>
-    <div className="visibility">
-      {Object.entries({
-        images: "家具模型",
-        centers: "家具中心",
-        names: "家具名称",
-        zones: "Zone",
-        dimensions: "外围尺寸",
-      }).map(([key, label]) => (
-        <label key={key}>
-          <input
-            type="checkbox"
-            checked={key === "centers" ? visibility.centers && visibility.boxes : visibility[key as keyof Visibility]}
-            onChange={() => toggleVisibility(key as keyof Visibility)}
-          />
-          {label}
-        </label>
-      ))}
-    </div>
+  const layerGroup = (title: string, entries: Partial<Record<keyof Visibility, string>>) => <details className="floating-layer-panel">
+    <summary>{title}</summary>
+    <div className="visibility">{Object.entries(entries).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={visibility[key as keyof Visibility]} onChange={() => toggleVisibility(key as keyof Visibility)} />{label}</label>)}</div>
   </details>;
+  const layerControls = <>
+    {layerGroup("建筑图层", { walls: "墙体", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
+    {layerGroup("管线图层", { conduitReceptacle: "插座管线", conduitLighting: "照明管线", conduitNetwork: "网络管线", conduitSprinkler: "消防管线", devices: "点位图块", constructionAnnotations: "点位名称与离地高度", pointPositionDimensions: "点位定位尺寸" })}
+    <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
+  </>;
   const reportPanels = <>
     <EvaluationPanel report={evaluationReport} nodes={nodes} roomAnalysis={roomRegionAnalysis} error={evaluationError} requirementError={requirementError} requirementFile={requirementFile} hasRequirements={Boolean(requirementHandoff)} focusMessage={evaluationFocusMessage} activeHighlight={activeEvaluationHighlight} selectedGroup={evaluationGroup} g2ProjectUse={g2ProjectUse} g2Jurisdiction={g2Jurisdiction} runState={evaluationRunState} disabled={!data || !Object.keys(nodes).length} onRun={() => runFoundationEvaluation(false)} onContinueFull={() => runFoundationEvaluation(true)} onGroupChange={changeEvaluationGroup} onG2ProjectUseChange={setG2ProjectUse} onG2JurisdictionChange={setG2Jurisdiction} onUseBellevueRequirements={useBellevueRequirements} onDisableRequirements={disableCustomerRequirements} onLoadRequirementFile={loadRequirementFile} onFocus={focusEvaluationTarget} onRegisterRule={(ruleId, element) => { evaluationRuleElements.current[ruleId] = element; }} />
     <S1Panel gate={evaluationReport ? evaluateS1Gate(evaluationReport.rules) : null} report={s1HpeReport} runState={s1RunState} error={s1Error} onRun={runS1Evaluation} onFocusHighFrequencyPath={focusS1HighFrequencyPath} onFocusActivityZoning={(measurement) => {
@@ -715,7 +721,6 @@ function App() {
         <div className="two-d-history-buttons"><button disabled={!sceneVisibility.undoStack.length} aria-label="撤销隐藏" onClick={() => setSceneVisibility(undoSceneVisibility)}>↶</button><button disabled={!sceneVisibility.redoStack.length} aria-label="重做隐藏" onClick={() => setSceneVisibility(redoSceneVisibility)}>↷</button></div>
       </section>
       {workspaceViewMode === "2d" && <button className="primary" onClick={addCanvas}>+ 添加画布</button>}
-      {import.meta.env.DEV && <details className="developer-tools"><summary>开发信息</summary><Stats nodes={nodes} /><Diagnostics diagnostics={diagnostics} /></details>}
     </>}
   </aside>;
   const visibleTwoDIds = new Set(visibleTwoDCanvasIds(canvases.map((canvas) => canvas.id), workspaceViewMode));
@@ -787,6 +792,7 @@ function App() {
                 s1PathPocProvider={s1PathPocProvider}
                 measurementMode={measurementMode}
                 measurementUnit={measurementUnit}
+                pointAnnotationScale={pointAnnotationScale}
                 manualMeasurements={manualMeasurements.filter((item) => item.levelId === (canvas.levelId || levels[0]?.id || ""))}
                 selectedManualId={selectedManualId}
                 onSelect={selectCanvasObject}
@@ -879,6 +885,7 @@ function CanvasPanel({
   onSelectDimension,
   measurementMode,
   measurementUnit,
+  pointAnnotationScale,
   manualMeasurements,
   selectedManualId,
   onCreateMeasurement,
@@ -922,6 +929,7 @@ function CanvasPanel({
   onSelectDimension: (dimension: DimensionSegment) => void;
   measurementMode: MeasurementMode;
   measurementUnit: MeasurementUnit;
+  pointAnnotationScale: number;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
   onCreateMeasurement: (measurement: Omit<ManualMeasurement, "id" | "createdAt">) => void;
@@ -1025,6 +1033,7 @@ function CanvasPanel({
         onSelectDimension={onSelectDimension}
         measurementMode={measurementMode}
         measurementUnit={measurementUnit}
+        pointAnnotationScale={pointAnnotationScale}
         manualMeasurements={manualMeasurements}
         selectedManualId={selectedManualId}
         onCreateMeasurement={onCreateMeasurement}
@@ -1033,35 +1042,6 @@ function CanvasPanel({
       />
     </article>
   );
-}
-function planArcPoints(arc: BendArc): Vec3[] {
-  const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]], center = arc.center, start = subtract(arc.start, center), radius = Math.hypot(...start), normalLength = Math.max(1e-9, Math.hypot(...arc.normal)), normal = arc.normal.map((value) => value / normalLength) as Vec3;
-  const tangent: Vec3 = [(normal[1] * start[2] - normal[2] * start[1]) / Math.max(1e-9, radius), (normal[2] * start[0] - normal[0] * start[2]) / Math.max(1e-9, radius), (normal[0] * start[1] - normal[1] * start[0]) / Math.max(1e-9, radius)];
-  return Array.from({ length: 17 }, (_, index) => { const angle = arc.sweepRadians * index / 16; return [center[0] + start[0] * Math.cos(angle) + tangent[0] * radius * Math.sin(angle), center[1] + start[1] * Math.cos(angle) + tangent[1] * radius * Math.sin(angle), center[2] + start[2] * Math.cos(angle) + tangent[2] * radius * Math.sin(angle)]; });
-}
-const ConduitPlanPermanent = React.memo(function ConduitPlanPermanent({ overlay, levelId, selectedId, onSelect }: { overlay: ConduitOverlayDocument; levelId: string; selectedId: string | null; onSelect: (id: string | null) => void }) {
-  const belongsToLevel = (attachment: { levelId: string | null } | undefined) => !attachment?.levelId || attachment.levelId === levelId;
-  return <>
-    {overlay.segments.filter((segment) => overlay.settings.visibleSystems[segment.system] && (belongsToLevel(segment.start.attachment) || belongsToLevel(segment.end.attachment))).map((segment) => <g key={segment.id} onClick={(event) => { event.stopPropagation(); onSelect(segment.id); }}><line x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={selectedId === segment.id ? "#f59e0b" : overlay.settings.colors[segment.system]} strokeWidth={Math.max(.025, segment.diameterMm / 1000)} strokeLinecap="round" />{Math.abs(segment.start.position[0] - segment.end.position[0]) < .001 && Math.abs(segment.start.position[2] - segment.end.position[2]) < .001 && <text x={segment.start.position[0] + .08} y={segment.start.position[2] - .08} fontSize=".22" fill="#334155">{segment.end.position[1] >= segment.start.position[1] ? "↑" : "↓"}</text>}</g>)}
-    {overlay.fittings.filter((fitting) => overlay.settings.visibleSystems[fitting.system] && belongsToLevel(fitting.position.attachment)).map((fitting) => { const display = planFittingDisplay(fitting), color = selectedId === fitting.id ? "#f59e0b" : overlay.settings.colors[fitting.system], width = Math.max(.025, fitting.diameterMm / 1000); if (display.kind === "arc") return <polyline key={fitting.id} points={planArcPoints(fitting.arc!).map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />; if (display.kind === "bridge") return <polyline key={fitting.id} points={display.points.map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray=".07 .045" onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }} />; if (display.kind === "connectors") return <g key={fitting.id} onClick={(event) => { event.stopPropagation(); onSelect(fitting.id); }}>{display.lines.map((line, index) => <line key={index} x1={line.start[0]} y1={line.start[2]} x2={line.end[0]} y2={line.end[2]} stroke={color} strokeWidth={width} strokeLinecap="round" />)}</g>; return null; })}
-    {overlay.junctionBoxes.filter((box) => overlay.settings.visibleSystems[box.system] && belongsToLevel(box.position.attachment)).map((box) => { const size = box.sizeMm[0] / 1000, signal = box.system === "network"; return <rect key={box.id} x={box.position.position[0] - size / 2} y={box.position.position[2] - size / 2} width={size} height={size} fill={selectedId === box.id ? "#f59e0b" : overlay.settings.colors[box.system]} stroke={signal ? "#94a3b8" : "none"} strokeWidth={signal ? ".012" : undefined} onClick={(event) => { event.stopPropagation(); onSelect(box.id); }} />; })}
-    {overlay.devices.filter((device) => device.systems.some((system) => overlay.settings.visibleSystems[system]) && belongsToLevel(device.position.attachment)).map((device) => { const [x, , z] = device.position.position, selected = selectedId === device.id, color = selected ? "#f59e0b" : overlay.settings.colors[device.systems[0]], size = Math.max(.08, Math.min(.34, device.sizeMm[0] / 1000)); if (device.deviceType === "strong-panel" || device.deviceType === "weak-panel") return <g key={device.id} onClick={(event) => { event.stopPropagation(); onSelect(device.id); }}><rect x={x - size / 2} y={z - size / 2} width={size} height={size} fill={color} stroke="#334155" strokeWidth=".018" /><text x={x} y={z + .045} textAnchor="middle" fontSize=".12" fill="#111827">{device.deviceType === "strong-panel" ? "强" : "弱"}</text></g>; if (device.deviceType === "luminaire") return <circle key={device.id} cx={x} cy={z} r={size / 2} fill="none" stroke={color} strokeWidth=".03" onClick={(event) => { event.stopPropagation(); onSelect(device.id); }} />; if (device.deviceType === "sprinkler-head") return <g key={device.id} onClick={(event) => { event.stopPropagation(); onSelect(device.id); }}><circle cx={x} cy={z} r={size / 3} fill={color} /><path d={`M ${x - size / 2} ${z} L ${x + size / 2} ${z} M ${x} ${z - size / 2} L ${x} ${z + size / 2}`} stroke={color} strokeWidth=".025" /></g>; if (device.deviceType === "fire-inlet") return <circle key={device.id} cx={x} cy={z} r={size / 2} fill={color} stroke="#166534" strokeWidth=".02" onClick={(event) => { event.stopPropagation(); onSelect(device.id); }} />; const label = device.deviceType === "socket" ? "插" : device.deviceType === "switch" ? "开" : "网"; return <g key={device.id} onClick={(event) => { event.stopPropagation(); onSelect(device.id); }}><rect x={x - size / 2} y={z - size / 2} width={size} height={size} rx=".015" fill={color} stroke={device.deviceType === "network-outlet" ? "#94a3b8" : "none"} strokeWidth=".012" /><text x={x} y={z + .035} textAnchor="middle" fontSize=".1" fill={device.deviceType === "network-outlet" ? "#334155" : "#fff"}>{label}</text></g>; })}
-    {overlay.penetrations.filter((feature) => belongsToLevel(feature.entry.attachment)).map((feature) => <path key={feature.id} d={`M ${feature.entry.position[0] - .08} ${feature.entry.position[2] - .08} L ${feature.entry.position[0] + .08} ${feature.entry.position[2] + .08} M ${feature.entry.position[0] + .08} ${feature.entry.position[2] - .08} L ${feature.entry.position[0] - .08} ${feature.entry.position[2] + .08}`} stroke="#d97706" strokeWidth=".025" />)}
-  </>;
-});
-function ConduitPlanOverlay({ overlay, levelId, selectedId, onSelect }: { overlay: ConduitOverlayDocument | null; levelId: string; selectedId: string | null; onSelect: (id: string | null) => void }) {
-  const sharedPreview = useOverlayStore((state) => state.preview);
-  if (!overlay) return null;
-  const preview = sharedPreview?.sourceSha === overlay.source.sha256 && (!sharedPreview.levelId || sharedPreview.levelId === levelId) ? sharedPreview : null;
-  return <g className="conduit-plan-overlay" aria-label="只读管线平面图">
-    <ConduitPlanPermanent overlay={overlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} />
-    {preview && <g className="conduit-plan-preview" pointerEvents="none" opacity=".78">
-      {(() => { const color = preview.plan?.canCommit === false ? "#ef4444" : overlay.settings.colors[preview.system], width = Math.max(.03, preview.diameterMm / 850); if (preview.plan) return <>{preview.plan.segments.map((segment) => <line key={segment.id} x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray=".12 .07" />)}{preview.plan.fittings.filter((fitting) => Boolean(fitting.arc)).map((fitting) => <polyline key={fitting.id} points={planArcPoints(fitting.arc!).map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" strokeDasharray=".12 .07" />)}{preview.plan.fittings.filter((fitting) => Boolean(fitting.bridge)).map((fitting) => <polyline key={fitting.id} points={[fitting.bridge!.entry, fitting.bridge!.crestStart, fitting.bridge!.crestEnd, fitting.bridge!.exit].map((point) => `${point[0]},${point[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray=".04 .03" />)}</>; if (preview.points.length >= 2) return <polyline points={preview.points.map((point) => `${point.position[0]},${point.position[2]}`).join(" ")} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeLinejoin="round" strokeDasharray=".12 .07" />; return null; })()}
-      {preview.points.length > 0 && <circle cx={preview.points[preview.points.length - 1].position[0]} cy={preview.points[preview.points.length - 1].position[2]} r=".055" fill={preview.plan?.canCommit === false ? "#ef4444" : overlay.settings.colors[preview.system]} />}
-      {preview.branchNode?.kind === "junction-box" && (() => { const size = preview.branchNode.sizeMm[0] / 1000, signal = preview.system === "network"; return <rect x={preview.branchNode.position[0] - size / 2} y={preview.branchNode.position[2] - size / 2} width={size} height={size} fill={overlay.settings.colors[preview.system]} stroke={signal ? "#94a3b8" : "none"} strokeWidth={signal ? ".012" : undefined} />; })()}
-      {preview.deviceNode && <g><circle cx={preview.deviceNode.position.position[0]} cy={preview.deviceNode.position.position[2]} r=".09" fill={preview.deviceNode.valid ? overlay.settings.colors[DEVICE_DEFAULTS[preview.deviceNode.deviceType].systems[0]] : "#ef4444"} opacity=".75" /><text x={preview.deviceNode.position.position[0] + .11} y={preview.deviceNode.position.position[2]} fontSize=".1" fill="#334155">{DEVICE_DEFAULTS[preview.deviceNode.deviceType].label}</text></g>}
-    </g>}
-  </g>;
 }
 
 function objectsOnLevel(nodes: Record<string, NodeData>, levelId: string) {
@@ -1112,7 +1092,7 @@ function computeViewBox(
   }
   for (const stair of stairEntriesOnLevel(nodes, levelId)) points.push(...spiralStairCorners(stair));
   if (includeDimensions && levelId) points.push(...dimensionOverlayBounds(buildExteriorDimensions(nodes, levelId)));
-  return zoomExtents(points, 1);
+  return zoomExtents(points, includeDimensions ? 2.5 : 1);
 }
 function Plan({
   nodes,
@@ -1151,6 +1131,7 @@ function Plan({
   onSelectDimension,
   measurementMode,
   measurementUnit,
+  pointAnnotationScale,
   manualMeasurements,
   selectedManualId,
   onCreateMeasurement,
@@ -1193,6 +1174,7 @@ function Plan({
   onSelectDimension: (dimension: DimensionSegment) => void;
   measurementMode: MeasurementMode;
   measurementUnit: MeasurementUnit;
+  pointAnnotationScale: number;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
   onCreateMeasurement: (measurement: Omit<ManualMeasurement, "id" | "createdAt">) => void;
@@ -1216,6 +1198,8 @@ function Plan({
     cx = viewBox.minX + viewBox.width / 2,
     cz = viewBox.minZ + viewBox.height / 2,
     vb = `${viewBox.minX} ${viewBox.minZ} ${viewBox.width} ${viewBox.height}`;
+  const systemVisibility = useMemo(() => ({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler }), [visibility.conduitReceptacle, visibility.conduitLighting, visibility.conduitNetwork, visibility.conduitSprinkler]);
+  const constructionPlan = useConstructionPlan({ nodes, overlay: conduitOverlay, levelId, hiddenNodeIds, unit: measurementUnit, rotation, viewBox, planRef, selectedId, exterior: exteriorDimensions, dimensionsVisible: visibility.dimensions, measurements: manualMeasurements, systemVisibility, devicesVisible: visibility.devices, annotationScale: pointAnnotationScale });
   viewBoxRef.current = viewBox;
   setViewBoxRef.current = setViewBox;
   const visibleEvaluationHighlights = activeEvaluationHighlight ? evaluationHighlights.filter((highlight) => highlight.ruleId === activeEvaluationHighlight.ruleId && highlight.targetIndex === activeEvaluationHighlight.targetIndex) : evaluationHighlights;
@@ -1375,7 +1359,7 @@ function Plan({
           y={viewBox.minZ}
           width={viewBox.width}
           height={viewBox.height}
-          fill="#fdfbf6"
+          fill="#fdfdfc"
         />
         <g ref={sceneRef} style={{ transform: `rotate(${rotation}deg)`, transformOrigin: `${cx}px ${cz}px`, transition: "transform 240ms cubic-bezier(.2,.8,.2,1)" }}>
           <g className={highlightsOnLevel.length ? "evaluation-scene-dimmed" : undefined}>
@@ -1427,7 +1411,9 @@ function Plan({
           ))}
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
-          <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} />
+          <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} annotationScale={pointAnnotationScale} />
+          {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} />}
+          {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} />}
           <ManualMeasurements measurements={manualMeasurements} preview={measurementMode !== "off" && measurementStart && measurementHover ? { mode: activeMeasurementMode, start: measurementStart, end: measurementHover } : null} unit={measurementUnit} viewRotation={rotation} selectedId={selectedManualId} onSelect={onSelectManual} onDelete={onDeleteManual} />
           {measurementMode !== "off" && measurementHover && <SnapIndicator snap={measurementHover} active={Boolean(measurementStart)} />}
           </g>
@@ -1449,6 +1435,7 @@ function Plan({
         </g>
       </svg>
       {measurementMode !== "off" && <div className="measure-hint">{measurementStart ? `${orthogonalLock ? activeMeasurementMode === "horizontal" ? "水平正交已开启" : "垂直正交已开启" : "自由对齐"} · 点击第二点 · Shift 切换正交 · Esc 退出` : `${orthogonalLock ? "正交已开启" : "正交已关闭"} · 点击第一点 · Shift 切换正交 · Esc 退出`}</div>}
+      {visibility.constructionAnnotations && <ConstructionNotices plan={constructionPlan} onFocus={(id, anchor) => { onSelect(id); if (anchor) setViewBox({ minX: anchor[0] - 3, minZ: anchor[1] - 3, width: 6, height: 6 }); }} />}
       <Compass rotation={rotation} />
       {highlightsOnLevel.length > 0 && <div className="evaluation-highlight-legend"><span><i className={highlightsOnLevel.some((highlight) => highlight.status === "measured") ? "measured" : "primary"} />{highlightsOnLevel.some((highlight) => highlight.status === "measured") ? "测量空间" : "确定问题"}</span>{highlightsOnLevel.some((highlight) => highlight.status === "unable_to_determine") && <span><i className="unresolved" />待核验对象</span>}{highlightsOnLevel.some((highlight) => highlight.emphasizedIds?.length) && <span><i className="private" />私密中间空间</span>}<span><i className="related" />关联对象</span><span><i className="muted" />其他对象</span>{activeEvaluationHighlight && <button onClick={onRestoreEvaluationOverview}>返回全部问题</button>}<button onClick={onClearEvaluationHighlight}>关闭高亮</button></div>}
       {showRoomRegions && <div className="room-region-legend"><span><i className="room" />Room Region（物理空间）</span><span><i className="zone" />Zone（功能区域）</span><span><i className="warning" />未匹配/部分匹配</span></div>}
@@ -1638,39 +1625,15 @@ function Compass({ rotation }: { rotation: number }) {
   );
 }
 function Polygon({ node, onSelect }: { node: NodeData; onSelect: (id: string) => void }) {
-  const polygon = zonePoints(node), color = zoneColor(node);
+  const polygon = zonePoints(node), color = "#888888";
   if (polygon.length < 3) return null;
   const points = polygon.map((point) => `${point.x},${point.z}`).join(" ");
-  return <polygon data-selectable points={points} fill={color} fillOpacity=".12" stroke={color} strokeOpacity=".32" strokeWidth=".03" onClick={() => onSelect(node.id)} />;
+  return <polygon data-selectable points={points} fill={color} fillOpacity=".015" stroke={color} strokeOpacity=".12" strokeWidth=".03" onClick={() => onSelect(node.id)} />;
 }
 function ZoneLabel({ node, viewRotation }: { node: NodeData; viewRotation: number }) {
-  const label = zoneLabelPoint(node), color = zoneColor(node);
+  const label = zoneLabelPoint(node), color = "#565656";
   if (!label) return null;
   return <text x={label.x} y={label.z} className="zone-label" fontSize=".22" fontWeight="700" textAnchor="middle" dominantBaseline="middle" style={{ fill: color, transform: `rotate(${-viewRotation}deg)`, transformOrigin: `${label.x}px ${label.z}px`, transition: "transform 240ms cubic-bezier(.2,.8,.2,1)" }} stroke="#ffffff" strokeWidth=".035" strokeOpacity=".9" paintOrder="stroke" pointerEvents="none">{node.name || "Zone"}</text>;
-}
-function ExteriorDimensions({ report, viewRotation, unit, onSelect }: { report: ReturnType<typeof buildExteriorDimensions>; viewRotation: number; unit: MeasurementUnit; onSelect: (dimension: DimensionSegment) => void }) {
-  const color = "#4b5563";
-  return <g className="exterior-dimensions">{buildAlignedDimensionDisplay(report).map((dimension) => {
-    const displayValue = formatMeasurement(dimension.valueMeters, unit), display = dimensionDisplayGeometry(report, dimension), offset = dimension.dimensionLayer === "inner-chain" ? INNER_CHAIN_OFFSET_M : OVERALL_CHAIN_OFFSET_M,
-      start: [number, number] = [display.faceStart[0] + dimension.outwardNormal[0] * offset, display.faceStart[1] + dimension.outwardNormal[1] * offset],
-      end: [number, number] = [display.faceEnd[0] + dimension.outwardNormal[0] * offset, display.faceEnd[1] + dimension.outwardNormal[1] * offset],
-      midpoint: [number, number] = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2],
-      textWidth = Math.max(.24, displayValue.length * .105), fitsInside = dimension.valueMeters > textWidth + .16,
-      label: [number, number] = fitsInside ? midpoint : [end[0] + dimension.direction[0] * (textWidth / 2 + .14), end[1] + dimension.direction[1] * (textWidth / 2 + .14)],
-      gapHalf = Math.min(textWidth / 2 + .05, dimension.valueMeters * .4),
-      beforeGap: [number, number] = [midpoint[0] - dimension.direction[0] * gapHalf, midpoint[1] - dimension.direction[1] * gapHalf],
-      afterGap: [number, number] = [midpoint[0] + dimension.direction[0] * gapHalf, midpoint[1] + dimension.direction[1] * gapHalf],
-      extensionStart: [number, number] = [start[0] + dimension.outwardNormal[0] * EXTENSION_OVERSHOOT_M, start[1] + dimension.outwardNormal[1] * EXTENSION_OVERSHOOT_M],
-      extensionEnd: [number, number] = [end[0] + dimension.outwardNormal[0] * EXTENSION_OVERSHOOT_M, end[1] + dimension.outwardNormal[1] * EXTENSION_OVERSHOOT_M],
-      tick: [number, number] = [(dimension.direction[0] + dimension.outwardNormal[0]) * .065, (dimension.direction[1] + dimension.outwardNormal[1]) * .065], angle = uprightDimensionAngle(dimension.direction, viewRotation);
-    return <g data-selectable key={dimension.id} onClick={() => onSelect(dimension)} style={{ cursor: "pointer" }}>
-      <line x1={display.edgeStart[0]} y1={display.edgeStart[1]} x2={extensionStart[0]} y2={extensionStart[1]} stroke={color} strokeWidth="1" vectorEffect="non-scaling-stroke" />
-      <line x1={display.edgeEnd[0]} y1={display.edgeEnd[1]} x2={extensionEnd[0]} y2={extensionEnd[1]} stroke={color} strokeWidth="1" vectorEffect="non-scaling-stroke" />
-      {fitsInside ? <><line x1={start[0]} y1={start[1]} x2={beforeGap[0]} y2={beforeGap[1]} stroke={color} strokeWidth="1" vectorEffect="non-scaling-stroke"/><line x1={afterGap[0]} y1={afterGap[1]} x2={end[0]} y2={end[1]} stroke={color} strokeWidth="1" vectorEffect="non-scaling-stroke"/></> : <line x1={start[0]} y1={start[1]} x2={label[0] + dimension.direction[0] * textWidth / 2} y2={label[1] + dimension.direction[1] * textWidth / 2} stroke={color} strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
-      {[start, end].map((point, index) => <line key={index} x1={point[0] - tick[0]} y1={point[1] - tick[1]} x2={point[0] + tick[0]} y2={point[1] + tick[1]} stroke={color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" />)}
-      <text x={label[0]} y={label[1]} transform={`rotate(${angle} ${label[0]} ${label[1]})`} textAnchor="middle" dominantBaseline="middle" fontFamily="DM Mono, monospace" fontSize=".18" fill={color} stroke="#f7f8f5" strokeWidth=".04" paintOrder="stroke">{displayValue}</text>
-    </g>;
-  })}</g>;
 }
 function ManualMeasurements({ measurements, preview, unit, viewRotation, selectedId, onSelect, onDelete }: { measurements: ManualMeasurement[]; preview: { mode: Exclude<MeasurementMode, "off">; start: MeasurementSnap; end: MeasurementSnap } | null; unit: MeasurementUnit; viewRotation: number; selectedId: string | null; onSelect: (id: string | null) => void; onDelete: (id: string) => void }) {
   return <g className="manual-measurements">
@@ -1698,7 +1661,7 @@ function SnapIndicator({ snap, active }: { snap: MeasurementSnap; active: boolea
 function Slab({ node, selected, onSelect }: { node: NodeData; selected: boolean; onSelect: (id: string) => void }) {
   const geometry = buildSlabPlanGeometry(node);
   if (!geometry) return null;
-  return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#e8eee8"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#b5c2b8"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
+  return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#fafaf9"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#d2d2cf"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
 }
 function Wall({
   node,
@@ -1721,9 +1684,9 @@ function Wall({
       <polygon
         data-selectable
         points={footprint.map((point) => `${point.x},${point.y}`).join(" ")}
-        fill={selected ? "#e75c3c" : "#303a3b"}
-        stroke="#202929"
-        strokeWidth=".018"
+        fill={selected ? "#e75c3c" : "#dededb"}
+        stroke="#454545"
+        strokeWidth="1.3"
         vectorEffect="non-scaling-stroke"
         onClick={() => onSelect(node.id)}
       />
@@ -1755,7 +1718,7 @@ function Shelf({ node, nodes, visibility, selected, markerId, onSelect }: { node
   return <g data-selectable transform={svgMatrixString(matrix)} onClick={() => onSelect(node.id)} className="shelf">
     {visibility.shelves && <><rect x={-data.width / 2} y={-data.depth / 2} width={data.width} height={data.depth} fill="#d6d3d1" stroke={selected ? "#e75c3c" : "#1f2937"} strokeWidth={selected ? ".045" : ".015"} opacity=".9" />
     {shelfDividerXs(data).map((x) => <line key={x} x1={x} x2={x} y1={-data.depth / 2 + data.thickness} y2={data.depth / 2 - data.thickness} stroke="#1f2937" strokeWidth=".012" opacity=".7" />)}</>}
-    {(visibility.boxes || selected) && <rect x={-data.width / 2} y={-data.depth / 2} width={data.width} height={data.depth} fill="none" stroke={selected ? "#e75c3c" : "#b88348"} strokeWidth={selected ? ".06" : ".025"} />}
+    {(visibility.boxes || selected) && <rect x={-data.width / 2} y={-data.depth / 2} width={data.width} height={data.depth} fill="none" stroke={selected ? "#e75c3c" : "#9b9b98"} strokeWidth={selected ? ".06" : ".025"} />}
     {visibility.centers && <><circle r=".04" fill="#e75c3c" /><line x2="0" y2={data.depth / 2} stroke="#e75c3c" strokeWidth=".025" markerEnd={`url(#${markerId})`} /></>}
   </g>;
 }
@@ -1776,7 +1739,7 @@ function Opening({
     depth = 0.12,
     angle = (transform.rotationY * 180) / Math.PI;
   if (node.type === "door") {
-    const color = selected ? "#e75c3c" : "#9b6736",
+    const color = selected ? "#e75c3c" : "#666666",
       doorType = node.doorType ?? "hinged",
       isDouble = doorType === "double" || doorType === "french",
       orientation = resolveDoorOperationOrientation(node),
@@ -1787,7 +1750,7 @@ function Opening({
       const radius = Math.abs(closedVectorX), closedTipX = hingeX + closedVectorX,
         openTipX = hingeX, openTipY = closedVectorX * Math.sin(signedQuarterTurn),
         sweepFlag = signedQuarterTurn >= 0 ? 1 : 0;
-      return <React.Fragment key={key}><line x1={hingeX} y1="0" x2={openTipX} y2={openTipY} stroke={color} strokeWidth={selected ? "2.4" : "1.7"} vectorEffect="non-scaling-stroke"/><path d={`M ${closedTipX} 0 A ${radius} ${radius} 0 0 ${sweepFlag} ${openTipX} ${openTipY}`} fill="none" stroke={color} strokeWidth={selected ? "1.6" : "1.1"} strokeDasharray="5 4" strokeLinecap="round" vectorEffect="non-scaling-stroke"/></React.Fragment>;
+      return <React.Fragment key={key}><line x1={hingeX} y1="0" x2={openTipX} y2={openTipY} stroke={color} strokeWidth={selected ? "2.4" : "1.1"} vectorEffect="non-scaling-stroke"/><path d={`M ${closedTipX} 0 A ${radius} ${radius} 0 0 ${sweepFlag} ${openTipX} ${openTipY}`} fill="none" stroke={color} strokeWidth={selected ? "1.6" : ".8"} strokeDasharray="5 4" strokeLinecap="round" vectorEffect="non-scaling-stroke"/></React.Fragment>;
     };
     return (
       <g
@@ -1822,10 +1785,10 @@ function Opening({
         width={width}
         height={depth}
         fill="#f7f8f5"
-        stroke={selected ? "#e75c3c" : "#287b8e"}
+        stroke={selected ? "#e75c3c" : "#666666"}
         strokeWidth={selected ? 0.045 : 0.025}
       />
-      <line x1={-width / 2} x2={width / 2} stroke="#65a9b8" strokeWidth=".025" />
+      <line x1={-width / 2} x2={width / 2} stroke="#888888" strokeWidth=".025" />
     </g>
   );
 }
@@ -1893,19 +1856,19 @@ function Furniture({
       transform={svgMatrixString(matrix)}
       onClick={() => onSelect(node.id)}
     >
-      {visibility.images && imageUrl && (
+      {visibility.images && imageUrl && cropEntry?.fallbackReason !== "image-load-failed" && (
         cropEntry && cropPlacement
           ? <svg x={-dimensions.width / 2 + cropPlacement.offsetX} y={-dimensions.depth / 2 + cropPlacement.offsetY} width={cropPlacement.drawWidth} height={cropPlacement.drawHeight} viewBox={`${cropEntry.cropX} ${cropEntry.cropY} ${cropEntry.cropWidth} ${cropEntry.cropHeight}`} preserveAspectRatio="none" overflow="hidden"><image href={imageUrl} x="0" y="0" width={cropEntry.naturalWidth} height={cropEntry.naturalHeight} preserveAspectRatio="xMidYMid meet" /></svg>
           : <image href={imageUrl} x={-dimensions.width / 2} y={-dimensions.depth / 2} width={dimensions.width} height={dimensions.depth} preserveAspectRatio="none" />
       )}
-      {(visibility.boxes || selected) && (
+      {(visibility.boxes || selected || (visibility.images && (!imageUrl || cropEntry?.isFallback))) && (
         <rect
           x={-dimensions.width / 2}
           y={-dimensions.depth / 2}
           width={dimensions.width}
           height={dimensions.depth}
           fill="none"
-          stroke={selected ? "#e75c3c" : "#b88348"}
+          stroke={selected ? "#e75c3c" : "#9b9b98"}
           strokeWidth={selected ? 0.06 : 0.025}
         />
       )}{" "}
@@ -1916,7 +1879,7 @@ function Furniture({
             y1={-dimensions.depth / 2}
             x2={dimensions.width / 2}
             y2={dimensions.depth / 2}
-            stroke="#b88348"
+            stroke="#a0a09d"
             strokeWidth=".025"
           />
           <line
@@ -1924,7 +1887,7 @@ function Furniture({
             y1={-dimensions.depth / 2}
             x2={-dimensions.width / 2}
             y2={dimensions.depth / 2}
-            stroke="#b88348"
+            stroke="#a0a09d"
             strokeWidth=".025"
           />
         </>

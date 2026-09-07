@@ -1,0 +1,11 @@
+/* Canvas-only presentation; deliberately no app, topbar or floating-tool rules. */
+.plan .furniture image{filter:grayscale(1);opacity:.42}
+.plan .furniture .item-label{fill:#777}
+.plan .construction-annotations{cursor:pointer}
+.plan .construction-notices{position:absolute;right:10px;bottom:28px;max-width:min(460px,60%);max-height:32%;overflow:auto;background:rgba(255,253,250,.96);border:1px solid #ded4c6;border-radius:6px;padding:6px 8px;color:#655e54;font:10px/1.5 system-ui;z-index:3}
+.plan .construction-notices small{font-size:10px;display:block}
+.plan .construction-notices summary{cursor:pointer;margin-top:3px}
+.plan .construction-notices ul{list-style:none;margin:4px 0;padding:0}
+.plan .construction-notices li+li{border-top:1px solid #eee4d7}
+.plan .construction-notices button{font:10px/1.5 system-ui;text-align:left;white-space:normal;overflow-wrap:anywhere;border:0;box-shadow:none;padding:5px;background:transparent;width:100%}
+.plan,.plan>svg{background:#fdfdfc}

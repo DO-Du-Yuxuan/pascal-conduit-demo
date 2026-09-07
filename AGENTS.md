@@ -17,3 +17,12 @@ Mandatory rules:
 - Run relevant tests and `npm run build`; shared changes require the full `npm test` suite.
 - Historical audit documents are snapshots. Current truth is executable code, tests, `docs/rule-implementation-status.json`, and the semantic contract.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked as local Markdown files under `.scratch/`. See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+This is a single-context repository. See `docs/agents/domain.md`.

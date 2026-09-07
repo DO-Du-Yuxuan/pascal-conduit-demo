@@ -259,5 +259,6 @@ button:disabled{box-shadow:none}
 .point-annotation-scale{display:grid!important;grid-template-columns:auto minmax(70px,1fr) 34px;gap:7px}.point-annotation-scale input{accent-color:#f36b00;min-width:0;width:100%}.point-annotation-scale output{font:10px 'DM Mono';text-align:right}
 .conduit-position-fields{background:#f7f1e8;border:1px solid #e5d8c7;border-radius:9px;display:flex;flex-direction:column;gap:6px;padding:7px}.conduit-position-fields label span{align-items:center;display:flex;gap:4px}.conduit-position-fields button{margin-top:2px}
 .conduit-dimension-label{background:rgba(255,253,250,.96);border:1px solid #f97316;border-radius:4px;color:#9a3412;display:block;font:10px 'DM Mono';padding:2px 5px;white-space:nowrap}
+.conduit-snap-label{background:rgba(240,253,244,.96);border:1px solid #22c55e;border-radius:4px;color:#166534;display:block;font:10px Manrope;padding:2px 5px;white-space:nowrap}
 @media(max-width:1100px){.three-d-toolbar{align-content:flex-start;max-height:156px;overflow:auto}.three-d-group{border-right:0}.three-d-layers{width:100%}}
 @media(max-width:850px){.three-d-canvas{min-height:58vh}.three-d-toolbar{max-height:190px}.workspace-view-toggle{order:-1}}

@@ -17,6 +17,8 @@ type Point = [number, number, number];
 const EMPTY_CHASES: SurfaceChase[] = [];
 const EMPTY_PENETRATIONS: Penetration[] = [];
 const EMPTY_OPENINGS: NodeData[] = [];
+const EDGE_COLOR = "#625a51";
+const EDGE_OPACITY = .24;
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const vector = (value: unknown): Point => Array.isArray(value) ? [numeric(value[0]), numeric(value[1]), numeric(value[2])] : [0, 0, 0];
@@ -44,6 +46,17 @@ const typeLayer = (type: string): keyof ThreeDLayerVisibility | null => {
   if (type === "zone") return "zones";
   return null;
 };
+
+/** A deliberately quiet outline that improves depth reading without becoming a wireframe. */
+function MeshEdges({ geometry, opacity = EDGE_OPACITY }: { geometry: any; opacity?: number }) {
+  return <lineSegments raycast={() => null} renderOrder={1}><edgesGeometry args={[geometry, 18]} /><lineBasicMaterial color={EDGE_COLOR} transparent opacity={opacity} depthWrite={false} /></lineSegments>;
+}
+
+function BoxEdges({ width, height, depth, opacity }: { width: number; height: number; depth: number; opacity?: number }) {
+  const geometry = useMemo(() => new BoxGeometry(width, height, depth), [width, height, depth]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
+  return <MeshEdges geometry={geometry} opacity={opacity} />;
+}
 
 function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; chases?: SurfaceChase[]; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
   const result = useMemo(() => {
@@ -74,15 +87,19 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
   return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
     <primitive object={geometry} attach="geometry" />
     <meshStandardMaterial color={selected ? "#fb923c" : color} transparent opacity={opacity} side={2} roughness={.88} />
+    <MeshEdges geometry={geometry} opacity={opacity < 1 ? EDGE_OPACITY * opacity : EDGE_OPACITY} />
   </mesh>;
 }
 
 function ItemProxy({ node, position, selected, onSelect }: { node: NodeData; position: Point; selected: boolean; onSelect: () => void }) {
   const [width, height, depth] = dimensions(node);
+  const geometry = useMemo(() => new BoxGeometry(Math.max(.05, width), Math.max(.05, height), Math.max(.05, depth)), [width, height, depth]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
   return <group position={position} rotation={[0, yaw(node), 0]} onClick={(event) => { event.stopPropagation(); onSelect(); }}>
     <mesh position={[0, Math.max(.03, height) / 2, 0]}>
-      <boxGeometry args={[Math.max(.05, width), Math.max(.05, height), Math.max(.05, depth)]} />
+      <primitive object={geometry} attach="geometry" />
       <meshStandardMaterial color={selected ? "#fb923c" : "#7c5c3b"} roughness={.72} />
+      <MeshEdges geometry={geometry} />
     </mesh>
   </group>;
 }
@@ -93,7 +110,7 @@ function WallPartMesh({ diagnosticKey, part, start, end, wallY, thickness, chase
   useEffect(() => { onChaseFallback?.(diagnosticKey, result.failed); return () => onChaseFallback?.(diagnosticKey, false); }, [diagnosticKey, result.failed, result.geometry, onChaseFallback]);
   useEffect(() => () => result.geometry.dispose(), [result.geometry]);
   const geometry = result.geometry;
-  return <mesh position={[part.x, part.y, 0]} onPointerMove={(event) => { if (isFrontmostSurfaceEvent(event)) onSurfaceMove?.(hit(event)); }} onClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}><primitive object={geometry} attach="geometry" /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={translucent} opacity={translucent ? .3 : 1} roughness={.92} /></mesh>;
+  return <mesh position={[part.x, part.y, 0]} onPointerMove={(event) => { if (isFrontmostSurfaceEvent(event)) onSurfaceMove?.(hit(event)); }} onClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); if (event.nativeEvent.detail < 2) onSurfaceHit?.(hit(event)); }} onDoubleClick={(event) => { if (event.nativeEvent.button !== 0 || !isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}><primitive object={geometry} attach="geometry" /><meshStandardMaterial color={selected ? "#fb923c" : "#d1c4b4"} transparent={translucent} opacity={translucent ? .3 : 1} roughness={.92} /><MeshEdges geometry={geometry} opacity={translucent ? .1 : EDGE_OPACITY} /></mesh>;
 }
 
 function Wall({ node, hostId, levelId, openings, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, y, selected, wallMode, onSelect, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback, curveT }: { node: NodeData; hostId: string; levelId: string | null; openings: NodeData[]; chases?: SurfaceChase[]; penetrations?: Penetration[]; y: number; selected: boolean; wallMode: ThreeDWallMode; onSelect: () => void; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void; curveT?: number }) {
@@ -160,9 +177,12 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
   if (!transform) return null;
   const width = Math.max(.2, numeric(node.width, .9)), height = Math.max(.2, numeric(node.height, 2)), thickness = Math.max(.04, numeric(node.depth, .08));
   const vertical = y + numeric(node.position?.[1], height / 2);
+  const geometry = useMemo(() => new BoxGeometry(width, height, thickness), [width, height, thickness]);
+  useEffect(() => () => geometry.dispose(), [geometry]);
   return <mesh position={[transform.x, vertical, transform.z]} rotation={[0, -transform.rotationY, 0]} onClick={(event) => { event.stopPropagation(); onSelect(); }}>
-    <boxGeometry args={[width, height, thickness]} />
+    <primitive object={geometry} attach="geometry" />
     <meshStandardMaterial color={selected ? "#fb923c" : node.type === "window" ? "#77bde8" : "#875e3a"} transparent opacity={node.type === "window" ? .55 : 1} roughness={.45} />
+    <MeshEdges geometry={geometry} opacity={node.type === "window" ? .13 : EDGE_OPACITY} />
   </mesh>;
 }
 
@@ -224,8 +244,8 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
         return <ItemProxy key={node.id} node={node} position={transform.status === "ok" ? [transform.x, y + grounded + position[1], transform.z] : [position[0], y + grounded + position[1], position[2]]} selected={selected} onSelect={select} />;
       }
       if (node.type === "door" || node.type === "window") return <Opening key={node.id} node={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />;
-      if (node.type === "stair" || node.type === "stair-segment") { const pos = vector(node.position), width = Math.max(.4, numeric(node.width, 1)), rise = Math.max(.25, numeric(node.totalRise, 2.8)), run = Math.max(.7, numeric(node.depth, numeric(node.run, 2.4))); return <mesh key={node.id} position={[pos[0], y + rise / 2, pos[2]]} rotation={[0, yaw(node), 0]} onClick={(event) => { event.stopPropagation(); select(); }}><boxGeometry args={[width, rise, run]} /><meshStandardMaterial color={selected ? "#fb923c" : "#a88767"} roughness={.8} /></mesh>; }
-      if (node.type === "roof-segment") { const parent = node.parentId ? scene.nodes[node.parentId] : undefined, pos = vector(node.position), parentPos = parent ? vector(parent.position) : [0, 0, 0], width = Math.max(1, numeric(node.width, 8)), depth = Math.max(1, numeric(node.depth, 6)); return <mesh key={node.id} position={[parentPos[0] + pos[0], y + parentPos[1] + pos[1] + .06, parentPos[2] + pos[2]]} rotation={[0, yaw(parent ?? node) + yaw(node), 0]} onClick={(event) => { event.stopPropagation(); select(); }}><boxGeometry args={[width, .12, depth]} /><meshStandardMaterial color={selected ? "#fb923c" : "#7f3f28"} roughness={.72} /></mesh>; }
+      if (node.type === "stair" || node.type === "stair-segment") { const pos = vector(node.position), width = Math.max(.4, numeric(node.width, 1)), rise = Math.max(.25, numeric(node.totalRise, 2.8)), run = Math.max(.7, numeric(node.depth, numeric(node.run, 2.4))); return <mesh key={node.id} position={[pos[0], y + rise / 2, pos[2]]} rotation={[0, yaw(node), 0]} onClick={(event) => { event.stopPropagation(); select(); }}><boxGeometry args={[width, rise, run]} /><meshStandardMaterial color={selected ? "#fb923c" : "#a88767"} roughness={.8} /><BoxEdges width={width} height={rise} depth={run} /></mesh>; }
+      if (node.type === "roof-segment") { const parent = node.parentId ? scene.nodes[node.parentId] : undefined, pos = vector(node.position), parentPos = parent ? vector(parent.position) : [0, 0, 0], width = Math.max(1, numeric(node.width, 8)), depth = Math.max(1, numeric(node.depth, 6)); return <mesh key={node.id} position={[parentPos[0] + pos[0], y + parentPos[1] + pos[1] + .06, parentPos[2] + pos[2]]} rotation={[0, yaw(parent ?? node) + yaw(node), 0]} onClick={(event) => { event.stopPropagation(); select(); }}><boxGeometry args={[width, .12, depth]} /><meshStandardMaterial color={selected ? "#fb923c" : "#7f3f28"} roughness={.72} /><BoxEdges width={width} height={.12} depth={depth} /></mesh>; }
       return null;
     })}
   </group>;

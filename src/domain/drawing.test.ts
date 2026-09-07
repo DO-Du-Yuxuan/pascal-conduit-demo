@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { beginPenetration, constrainToHostAxes, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint } from "./drawing";
+import { beginPenetration, constrainToHostAxes, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion } from "./drawing";
 import type { RoutePoint } from "./overlay";
 
 const wall = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] }, localPosition: position } });
@@ -33,6 +33,15 @@ describe("surface drawing preview", () => {
     expect(preview).toHaveLength(2);
     expect(preview[1].position).toEqual([2, 0, 0]);
     expect(confirmed).toHaveLength(1);
+  });
+
+  it("lets Enter finish at the last confirmed click instead of the live preview", () => {
+    const confirmed = [slab([0, 0, 0]), slab([2, 0, 0])];
+    const preview = slab([4, 0, 0]);
+
+    expect(routePointsForCompletion(confirmed, preview, "confirmed-only")).toEqual(confirmed);
+    expect(routePointsForCompletion(confirmed, preview, "include-preview")).toEqual([...confirmed, preview]);
+    expect(routePointsForCompletion([confirmed[0]], preview, "confirmed-only")).toHaveLength(1);
   });
 
   it("rejects unhosted cursor points outside explicit world-axis mode", () => {

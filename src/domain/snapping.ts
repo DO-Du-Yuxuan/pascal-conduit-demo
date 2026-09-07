@@ -25,9 +25,9 @@ export function resolveSnapCandidate(start: RoutePoint, candidates: readonly Sna
   }
   if (options.hostOrthogonal) {
     const basis = start.attachment?.basis;
-    if (!basis) return { kind: "snap", point: candidate.point, candidate };
-    const u = dot(delta, basis.u), v = dot(delta, basis.v), useU = Math.abs(u) >= Math.abs(v);
-    const projected = add(start.position, scale(useU ? basis.u : basis.v, useU ? u : v));
+    const directions: Vec3[] = basis ? [basis.u, basis.v] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+    const direction = directions.sort((left, right) => Math.abs(dot(delta, right)) - Math.abs(dot(delta, left)))[0];
+    const projected = add(start.position, scale(direction, dot(delta, direction)));
     return distance(projected, candidate.point.position) <= 1e-5 ? { kind: "snap", point: candidate.point, candidate } : { kind: "alignment", point: { position: projected, attachment: start.attachment }, candidate };
   }
   return { kind: "snap", point: candidate.point, candidate };

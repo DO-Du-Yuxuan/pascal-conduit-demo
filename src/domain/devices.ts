@@ -193,7 +193,7 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
   return { overlay: inheritedCircuit ? { ...workingOverlay, devices } : { ...workingOverlay, devices, circuits: [...workingOverlay.circuits, circuit] }, circuit, port };
 }
 
-export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, circuit: Circuit, startPort: NetworkPort, endDeviceId?: string): ConduitOverlayDocument {
+export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, circuit: Circuit, startPort: NetworkPort, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   if (!plan.canCommit || !plan.segments.length) return overlay;
   const activeCircuit = overlay.circuits.find((item) => item.id === circuit.id && item.status === "rooted" && item.system === plan.system);
   const startDevice = overlay.devices.find((device) => device.id === startPort.owner.id), storedStartPort = startDevice?.ports.find((port) => port.id === startPort.id);
@@ -203,7 +203,7 @@ export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: Planned
   segments[0].startPortId = startPort.id;
   let devices = overlay.devices.map((device) => device.id === startPort.owner.id ? { ...device, ports: device.ports.map((port) => port.id === startPort.id ? { ...port, connectedSegmentIds: [...new Set([...port.connectedSegmentIds, segments[0].id])] } : port) } : device);
   if (endDeviceId) {
-    const endDevice = devices.find((device) => device.id === endDeviceId), terminalOccupied = endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length > 0), endPort = terminalOccupied ? undefined : endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+    const endDevice = devices.find((device) => device.id === endDeviceId), terminalOccupied = endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length > 0), endPort = terminalOccupied ? undefined : endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0) ?? endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
     if (!endDevice || !endPort) return overlay;
     segments[segments.length - 1].endPortId = endPort.id;
     devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);
@@ -346,7 +346,7 @@ export function placeDeviceAtEndpoint(overlay: ConduitOverlayDocument, endpoint:
 }
 
 /** Connects a new planned route to a rooted, physically open conduit end. */
-export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: OpenRouteEndpoint, plan: PlannedRoute, endDeviceId?: string): ConduitOverlayDocument {
+export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: OpenRouteEndpoint, plan: PlannedRoute, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   const target = overlay.segments.find((segment) => segment.id === endpoint.segmentId), first = plan.segments[0];
   if (!target || !first || !plan.canCommit || target.system !== plan.system || target.circuitId !== endpoint.circuit.id) return overlay;
   const firstDirection = normalize(subtract(first.end.position, first.start.position)), sameDirection = dot(endpoint.direction, firstDirection) > .995;
@@ -360,7 +360,7 @@ export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: O
   const segments = plan.segments.map((segment, index) => index === 0 ? updatedFirst : segment);
   let devices = overlay.devices;
   if (endDeviceId) {
-    const endDevice = devices.find((device) => device.id === endDeviceId), endPort = endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+    const endDevice = devices.find((device) => device.id === endDeviceId), endPort = endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0) ?? endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
     if (!endDevice || !endPort) return overlay;
     segments[segments.length - 1] = { ...segments[segments.length - 1], endPortId: endPort.id };
     devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);

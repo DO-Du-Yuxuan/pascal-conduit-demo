@@ -123,6 +123,17 @@ describe("device point positioning transaction", () => {
     expect(result.overlay.devices[0].positioning?.planarWallIds).toEqual(["wall-x", "wall-z"]);
   });
 
+  it("ignores a nearer finite wall when the dimension ray misses its extent", () => {
+    const light = createReferencePlaneDevice("luminaire", [4, 2.7, 3], "L0", 2700);
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [light] };
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces: [
+      { id: "short-near", levelId: "L0", point: [3, 0, 0] as [number, number, number], normal: [1, 0, 0] as [number, number, number], start: [3, 0, 0] as [number, number, number], end: [3, 0, 1] as [number, number, number] },
+      { id: "right-hit", levelId: "L0", point: [7, 0, 0] as [number, number, number], normal: [1, 0, 0] as [number, number, number], start: [7, 0, 0] as [number, number, number], end: [7, 0, 6] as [number, number, number] },
+      { id: "bottom-hit", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number], start: [0, 0, 0] as [number, number, number], end: [8, 0, 0] as [number, number, number] },
+    ] };
+    expect(describeDevicePosition(overlay, light.id, context).planar?.map((item) => item.wallId).sort()).toEqual(["bottom-hit", "right-hit"]);
+  });
+
   it("rebuilds physical port positions when a device size changes", () => {
     const socket = createNetworkDevice("socket", wallPoint(2, 1));
     const overlay = { ...createEmptyOverlay("a", "sha"), devices: [socket] };
