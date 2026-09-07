@@ -196,7 +196,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       : planRoute(system, diameterMm, surfaceMode, points, constructionParameters, explicitPenetrations, { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
     if (!plan) throw new Error("目标分支管段不存在。");
     const ignoredDeviceIds = new Set([deviceRouteStart?.port.owner.id, ignoredDeviceId].filter((id): id is string => Boolean(id)));
-    return withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds);
+    return withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined);
   };
   const resolveEffectiveCursor = (raw: RoutePoint | null): RoutePoint | null => {
     if (!raw || !draft.length) return raw;

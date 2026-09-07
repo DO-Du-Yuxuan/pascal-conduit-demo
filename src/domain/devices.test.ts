@@ -61,6 +61,19 @@ describe("network devices and rooted circuits", () => {
     expect(inserted.devices[0].ports.flatMap((port) => port.connectedSegmentIds)).not.toContain(original.id);
   });
 
+  it("lets a clicked occupied 86-box hole start a route by shifting its existing conduit to the peer hole", () => {
+    const overlay = rooted("receptacle"), inserted = insertDeviceOnSegment(overlay, overlay.segments[0].id, "socket", [1, 1, 0]);
+    const socket = inserted.devices.find((device) => device.deviceType === "socket")!, occupied = socket.ports.find((port) => port.connectedSegmentIds.length > 0)!;
+    const peer = socket.ports.find((port) => port.face === occupied.face && port.id !== occupied.id && port.connectedSegmentIds.length === 0)!;
+    expect(portCanStart(inserted, socket, occupied, "receptacle")).toBe(true);
+    const started = startRouteFromDevice(inserted, socket.id, "receptacle", occupied.id);
+    const shifted = started.overlay.devices.find((device) => device.id === socket.id)!;
+    expect(started.port.id).toBe(occupied.id);
+    expect(shifted.ports.find((port) => port.id === occupied.id)?.connectedSegmentIds).toEqual([]);
+    expect(shifted.ports.find((port) => port.id === peer.id)?.connectedSegmentIds).toEqual(occupied.connectedSegmentIds);
+    expect(started.overlay.segments.some((segment) => segment.startPortId === peer.id || segment.endPortId === peer.id)).toBe(true);
+  });
+
   it("allows an inline socket on a rooted floor route while keeping manual placement wall-only", () => {
     const original = rooted("receptacle"), segment = original.segments[0], routed = { ...original, segments: [{ ...segment, start: point(0, 0, 0, "slab"), end: point(2, 0, 0, "slab") }] };
     const inserted = insertDeviceOnSegment(routed, segment.id, "socket", [1, 0, 0]);
@@ -76,7 +89,9 @@ describe("network devices and rooted circuits", () => {
     expect(socket.devices.find((device) => device.deviceType === "socket")?.ports.filter((port) => port.face === "left" || port.face === "right")).toHaveLength(4);
     const floatingBlue = { ...blue, segments: blue.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [0, 2, 2] as [number, number, number] } })) };
     const light = insertDeviceOnSegment(floatingBlue, floatingBlue.segments[0].id, "luminaire", [0, 2, 1]);
-    expect(light.devices.find((device) => device.deviceType === "luminaire")?.frame?.up).toEqual([0, 1, 0]);
+    const luminaire = light.devices.find((device) => device.deviceType === "luminaire")!;
+    expect(luminaire.frame?.up).toEqual([0, 1, 0]);
+    expect(luminaire.ports.every((port) => Math.abs(port.direction[1]) < 1e-8 && Math.abs(port.position.position[1] - luminaire.position.position[1]) < 1e-8)).toBe(true);
     const floatingWhite = { ...white, segments: white.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [2, 2, 0] as [number, number, number] } })) }, endpoints = openRouteEndpoints(floatingWhite);
     const outlet = placeDeviceAtEndpoint(floatingWhite, endpoints[0], "network-outlet");
     expect(outlet.devices.find((device) => device.deviceType === "network-outlet")?.ports.some((port) => port.connectedSegmentIds.length === 1)).toBe(true);

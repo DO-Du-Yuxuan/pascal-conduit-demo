@@ -36,6 +36,13 @@ describe("routing collision validation", () => {
     expect(withCollisionDiagnostics(committed, extension).canCommit).toBe(true);
   });
 
+  it("allows a new route to leave a rooted open end without ignoring the rest of its source conduit", () => {
+    const overlay = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(0, 0, 0), point(1, 0, 0)]));
+    const extension = planRoute("receptacle", 20, "surface", [point(1, 0, 0), point(1, 0, 1)]);
+    const checked = withCollisionDiagnostics(overlay, extension, undefined, undefined, { segmentId: overlay.segments[0].id, point: [1, 0, 0] });
+    expect(checked.canCommit).toBe(true);
+  });
+
   it("checks branch box clearance against other network objects", () => {
     const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(0, 0, 0), point(2, 0, 0)]));
     const other = commitPlannedRoute(base, planRoute("network", 20, "surface", [point(1, 0, -.2), point(1, 0, .2)]));

@@ -79,7 +79,11 @@ function boxPorts(id: string, position: RoutePoint, frame: DeviceFrame, sizeMm: 
 
 function luminairePorts(id: string, position: RoutePoint, frame: DeviceFrame, sizeMm: [number, number, number], system: RoutingSystem): NetworkPort[] {
   const radius = sizeMm[0] / 2000;
-  return [frame.right, scale(frame.right, -1), frame.up, scale(frame.up, -1)].map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
+  // A luminaire is always a horizontal disk.  Its service holes belong to
+  // that disk plane (world X/Z), never to the disk normal/world Y.
+  const horizontalRight = normalize([frame.right[0], 0, frame.right[2]]);
+  const horizontalForward = normalize(cross([0, 1, 0], horizontalRight));
+  return [horizontalRight, scale(horizontalRight, -1), horizontalForward, scale(horizontalForward, -1)].map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
 }
 
 function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount } = {}): NetworkDevice {
@@ -103,29 +107,70 @@ export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: 
   return { ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, position, name)] };
 }
 
+const isReassignableBox = (device: NetworkDevice) => device.deviceType === "socket" || device.deviceType === "switch";
+const reassignablePeer = (device: NetworkDevice, port: NetworkPort, system: RoutingSystem): NetworkPort | undefined => isReassignableBox(device) && port.face ? device.ports.find((candidate) => candidate.id !== port.id && candidate.system === system && candidate.face === port.face && candidate.connectedSegmentIds.length === 0) : undefined;
+
 export function portCanStart(overlay: ConduitOverlayDocument, device: NetworkDevice, port: NetworkPort, system: RoutingSystem): boolean {
-  if (port.role === "sink" || port.system !== system || port.connectedSegmentIds.length > 0) return false;
+  if (port.role === "sink" || port.system !== system || port.connectedSegmentIds.length > 0 && !reassignablePeer(device, port, system)) return false;
   if (isSourceDevice(device)) return deviceSupportsSystem(device, system);
   const deviceSegments = device.ports.flatMap((candidate) => candidate.connectedSegmentIds);
   return overlay.circuits.some((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id)));
 }
 
+/** Frees a clicked occupied 86-box hole by moving its existing connection to the other hole on the same side. */
+function releaseBoxPortForRoute(overlay: ConduitOverlayDocument, device: NetworkDevice, port: NetworkPort, system: RoutingSystem): { overlay: ConduitOverlayDocument; releasedPort: NetworkPort } | null {
+  if (!port.connectedSegmentIds.length) return { overlay, releasedPort: port };
+  const peer = reassignablePeer(device, port, system);
+  if (!peer) return null;
+  const movedIds = new Set(port.connectedSegmentIds);
+  const samePoint = (left: Vec3, right: Vec3) => Math.hypot(...left.map((value, axis) => value - right[axis])) < 1e-7;
+  const rewritePoint = (point: RoutePoint) => samePoint(point.position, port.position.position) ? structuredClone(peer.position) : point;
+  const segments = overlay.segments.map((segment) => {
+    if (!movedIds.has(segment.id)) return segment;
+    return {
+      ...segment,
+      start: segment.startPortId === port.id ? structuredClone(peer.position) : segment.start,
+      end: segment.endPortId === port.id ? structuredClone(peer.position) : segment.end,
+      startPortId: segment.startPortId === port.id ? peer.id : segment.startPortId,
+      endPortId: segment.endPortId === port.id ? peer.id : segment.endPortId,
+    };
+  });
+  const devices = overlay.devices.map((item) => item.id !== device.id ? item : {
+    ...item,
+    ports: item.ports.map((candidate) => candidate.id === port.id
+      ? { ...candidate, connectedSegmentIds: [] }
+      : candidate.id === peer.id ? { ...candidate, connectedSegmentIds: [...new Set([...candidate.connectedSegmentIds, ...port.connectedSegmentIds])] } : candidate),
+  });
+  const surfaceChases = overlay.surfaceChases.map((chase) => !movedIds.has(chase.routeElementId) || chase.path.kind !== "line" ? chase : { ...chase, path: { kind: "line" as const, start: rewritePoint(chase.path.start), end: rewritePoint(chase.path.end) } });
+  const next = { ...overlay, segments, devices, surfaceChases };
+  const releasedPort = next.devices.find((item) => item.id === device.id)?.ports.find((candidate) => candidate.id === port.id);
+  return releasedPort ? { overlay: next, releasedPort } : null;
+}
+
 export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: string, system: RoutingSystem, requestedPortId?: string): { overlay: ConduitOverlayDocument; circuit: Circuit; port: NetworkPort } {
-  const device = overlay.devices.find((item) => item.id === deviceId);
+  let workingOverlay = overlay;
+  let device = workingOverlay.devices.find((item) => item.id === deviceId);
   if (!device || !deviceSupportsSystem(device, system)) throw new Error("设备与当前线路系统不兼容。");
-  const existing = requestedPortId ? device.ports.find((port) => port.id === requestedPortId && portCanStart(overlay, device, port, system)) : device.ports.find((port) => portCanStart(overlay, device, port, system));
+  const requested = requestedPortId ? device.ports.find((port) => port.id === requestedPortId) : undefined;
+  if (requested?.connectedSegmentIds.length) {
+    const released = releaseBoxPortForRoute(workingOverlay, device, requested, system);
+    if (released) { workingOverlay = released.overlay; device = workingOverlay.devices.find((item) => item.id === deviceId)!; }
+  }
+  const existing = requestedPortId
+    ? device.ports.find((port) => port.id === requestedPortId && portCanStart(workingOverlay, device, port, system))
+    : device.ports.find((port) => port.connectedSegmentIds.length === 0 && portCanStart(workingOverlay, device, port, system)) ?? device.ports.find((port) => portCanStart(workingOverlay, device, port, system));
   let port = existing;
-  let devices = overlay.devices;
+  let devices = workingOverlay.devices;
   if (!port && isSourceDevice(device) && !requestedPortId) {
     port = devicePort(device.id, device.ports.length, sourcePortPosition(device.position, device.ports.length), device.orientation, system, "source");
-    devices = overlay.devices.map((item) => item.id === device.id ? { ...item, ports: [...item.ports, port!] } : item);
+    devices = workingOverlay.devices.map((item) => item.id === device.id ? { ...item, ports: [...item.ports, port!] } : item);
   }
   if (!port) throw new Error("该设备没有可用的输出端口。");
   const deviceSegments = device.ports.flatMap((candidate) => candidate.connectedSegmentIds);
-  const inheritedCircuit = !isSourceDevice(device) ? overlay.circuits.find((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id))) : undefined;
+  const inheritedCircuit = !isSourceDevice(device) ? workingOverlay.circuits.find((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id))) : undefined;
   if (!isSourceDevice(device) && !inheritedCircuit) throw new Error("设备尚未接入合法来源。");
   const circuit: Circuit = inheritedCircuit ?? { id: nextId("circuit"), system, sourceDeviceId: device.id, rootPortId: port.id, segmentIds: [], status: "rooted", createdAt: new Date().toISOString() };
-  return { overlay: inheritedCircuit ? { ...overlay, devices } : { ...overlay, devices, circuits: [...overlay.circuits, circuit] }, circuit, port };
+  return { overlay: inheritedCircuit ? { ...workingOverlay, devices } : { ...workingOverlay, devices, circuits: [...workingOverlay.circuits, circuit] }, circuit, port };
 }
 
 export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, circuit: Circuit, startPort: NetworkPort, endDeviceId?: string): ConduitOverlayDocument {

@@ -102,7 +102,9 @@ function spatialIndex(primitives: Primitive[], cellSize = 1) {
 }
 
 /** Exact narrow phase over a lightweight primitive list; no meshes or CSG. */
-export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds: ReadonlySet<string> = new Set()): RouteDiagnostic[] {
+export type AllowedEndpointContact = { segmentId: string; point: Vec3 };
+
+export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds: ReadonlySet<string> = new Set(), allowedEndpointContact?: AllowedEndpointContact): RouteDiagnostic[] {
   const diagnostics = [...plan.diagnostics], proposed = primitivesForPlan(plan), { candidatesFor } = collisionIndexFor(overlay), tolerance = .001;
   const linked = new Set(plan.fittings.flatMap((fitting) => fitting.segmentIds.flatMap((first) => fitting.segmentIds.filter((second) => first < second).map((second) => `${first}|${second}`))));
   for (const candidate of proposed) for (const obstacle of candidatesFor(candidate)) {
@@ -113,6 +115,13 @@ export function validatePlannedRoute(overlay: ConduitOverlayDocument, plan: Plan
     ) continue;
     if (candidate.portIds?.some((id) => obstacle.portIds?.includes(id))) continue;
     const hit = closestSegmentPoints(candidate, obstacle);
+    const allowed = allowedEndpointContact;
+    const isAllowedEndpointContact = Boolean(allowed)
+      && allowed!.segmentId === obstacle.segmentId
+      && samePoint(hit.point, allowed!.point)
+      && [candidate.a, candidate.b].some((point) => samePoint(point, allowed!.point))
+      && [obstacle.a, obstacle.b].some((point) => samePoint(point, allowed!.point));
+    if (isAllowedEndpointContact) continue;
     if (hit.distance < candidate.radius + obstacle.radius + tolerance) diagnostics.push({ code: "route_collision", message: `预览管线与 ${obstacle.id} 发生实体交叉。`, objectIds: [obstacle.id], point: hit.point });
   }
   for (let first = 0; first < proposed.length; first += 1) for (let second = first + 1; second < proposed.length; second += 1) {
@@ -169,9 +178,9 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): P
 
 function clonePoint(point: RoutePoint): RoutePoint { return { position: [...point.position] as Vec3, attachment: point.attachment ? structuredClone(point.attachment) : undefined }; }
 
-export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>): PlannedRoute {
+export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>, allowedEndpointContact?: AllowedEndpointContact): PlannedRoute {
   let bridged = plan, next = bridgeCandidate(overlay, bridged), count = 0;
   while (next && count < 8) { bridged = next; next = bridgeCandidate(overlay, bridged); count += 1; }
-  const diagnostics = validatePlannedRoute(overlay, bridged, ignoredSegmentId, ignoredObjectIds);
+  const diagnostics = validatePlannedRoute(overlay, bridged, ignoredSegmentId, ignoredObjectIds, allowedEndpointContact);
   return { ...bridged, diagnostics, canCommit: diagnostics.length === 0 };
 }
