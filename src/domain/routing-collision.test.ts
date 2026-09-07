@@ -65,6 +65,16 @@ describe("routing collision validation", () => {
     expect(bridge?.bridge?.crestStart[1]).toBeGreaterThan(0);
   });
 
+  it("raises every red, blue and white cross-system floor combination", () => {
+    for (const existingSystem of ["receptacle", "lighting", "network"] as const) for (const newSystem of ["receptacle", "lighting", "network"] as const) {
+      if (existingSystem === newSystem) continue;
+      const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute(existingSystem, 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
+      const preview = withCollisionDiagnostics(base, planRoute(newSystem, 20, "surface", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
+      expect(preview.canCommit, `${existingSystem} -> ${newSystem}`).toBe(true);
+      expect(preview.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(true);
+    }
+  });
+
   it("does not bridge a sprinkler crossing or parallel floor overlap", () => {
     const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
     const sprinkler = withCollisionDiagnostics(base, planRoute("sprinkler", 50, "suspended", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));

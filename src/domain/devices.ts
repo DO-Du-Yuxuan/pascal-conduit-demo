@@ -123,26 +123,28 @@ function releaseBoxPortForRoute(overlay: ConduitOverlayDocument, device: Network
   const peer = reassignablePeer(device, port, system);
   if (!peer) return null;
   const movedIds = new Set(port.connectedSegmentIds);
-  const samePoint = (left: Vec3, right: Vec3) => Math.hypot(...left.map((value, axis) => value - right[axis])) < 1e-7;
-  const rewritePoint = (point: RoutePoint) => samePoint(point.position, port.position.position) ? structuredClone(peer.position) : point;
+  // Keep the already-built conduit exactly where it is.  Shift the box until
+  // its peer hole occupies the old hole's world coordinate, then release the
+  // clicked hole for the new route.
+  const shift = subtract(port.position.position, peer.position.position);
+  const translatePoint = (point: RoutePoint): RoutePoint => ({ position: add(point.position, shift), attachment: point.attachment ? structuredClone(point.attachment) : undefined });
   const segments = overlay.segments.map((segment) => {
     if (!movedIds.has(segment.id)) return segment;
     return {
       ...segment,
-      start: segment.startPortId === port.id ? structuredClone(peer.position) : segment.start,
-      end: segment.endPortId === port.id ? structuredClone(peer.position) : segment.end,
       startPortId: segment.startPortId === port.id ? peer.id : segment.startPortId,
       endPortId: segment.endPortId === port.id ? peer.id : segment.endPortId,
     };
   });
   const devices = overlay.devices.map((item) => item.id !== device.id ? item : {
     ...item,
+    position: translatePoint(item.position),
     ports: item.ports.map((candidate) => candidate.id === port.id
-      ? { ...candidate, connectedSegmentIds: [] }
-      : candidate.id === peer.id ? { ...candidate, connectedSegmentIds: [...new Set([...candidate.connectedSegmentIds, ...port.connectedSegmentIds])] } : candidate),
+      ? { ...candidate, position: translatePoint(candidate.position), connectedSegmentIds: [] }
+      : candidate.id === peer.id ? { ...candidate, position: translatePoint(candidate.position), connectedSegmentIds: [...new Set([...candidate.connectedSegmentIds, ...port.connectedSegmentIds])] }
+        : { ...candidate, position: translatePoint(candidate.position) }),
   });
-  const surfaceChases = overlay.surfaceChases.map((chase) => !movedIds.has(chase.routeElementId) || chase.path.kind !== "line" ? chase : { ...chase, path: { kind: "line" as const, start: rewritePoint(chase.path.start), end: rewritePoint(chase.path.end) } });
-  const next = { ...overlay, segments, devices, surfaceChases };
+  const next = { ...overlay, segments, devices };
   const releasedPort = next.devices.find((item) => item.id === device.id)?.ports.find((candidate) => candidate.id === port.id);
   return releasedPort ? { overlay: next, releasedPort } : null;
 }
@@ -253,9 +255,27 @@ export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId
     return { ...branched, devices: [...branched.devices, { ...device, ports: [port] }] };
   }
   const direction = normalize(delta);
-  const device = buildNetworkDevice(deviceType, point, undefined, false, { tangent: direction, mount });
+  const provisional = buildNetworkDevice(deviceType, point, undefined, false, { tangent: direction, mount });
+  const pickProvisionalPort = (wanted: Vec3, reserved = new Set<string>()) => [...provisional.ports].filter((port) => !reserved.has(port.id)).sort((a, b) => dot(b.direction, wanted) - dot(a.direction, wanted))[0];
+  const provisionalLeft = pickProvisionalPort(scale(direction, -1));
+  const provisionalRight = provisionalLeft && isReassignableBox(provisional)
+    ? provisional.ports.filter((port) => port.id !== provisionalLeft.id && port.slot === provisionalLeft.slot).sort((a, b) => dot(b.direction, direction) - dot(a.direction, direction))[0]
+    : pickProvisionalPort(direction, new Set(provisionalLeft ? [provisionalLeft.id] : []));
+  if (!provisionalLeft || !provisionalRight) return overlay;
+  // Centre the box so its selected edge holes lie on the existing centreline.
+  // The conduit stays straight; only the box slides sideways to meet it.
+  const perpendicular = (port: NetworkPort) => {
+    const offset = subtract(port.position.position, point.position);
+    return subtract(offset, scale(direction, dot(offset, direction)));
+  };
+  const averagePerpendicular = scale(add(perpendicular(provisionalLeft), perpendicular(provisionalRight)), .5);
+  const centeredPoint: RoutePoint = isReassignableBox(provisional) ? { position: subtract(point.position, averagePerpendicular), attachment: point.attachment ? structuredClone(point.attachment) : undefined } : point;
+  const device = buildNetworkDevice(deviceType, centeredPoint, undefined, false, { tangent: direction, mount });
   const pickPort = (wanted: Vec3, reserved = new Set<string>()) => [...device.ports].filter((port) => !reserved.has(port.id)).sort((a, b) => dot(b.direction, wanted) - dot(a.direction, wanted))[0];
-  const leftPort = pickPort(scale(direction, -1)), rightPort = pickPort(direction, new Set(leftPort ? [leftPort.id] : []));
+  const leftPort = device.ports.find((port) => port.face === provisionalLeft.face && port.slot === provisionalLeft.slot)
+    ?? pickPort(scale(direction, -1));
+  const rightPort = device.ports.find((port) => port.id !== leftPort?.id && port.face === provisionalRight.face && port.slot === provisionalRight.slot)
+    ?? pickPort(direction, new Set(leftPort ? [leftPort.id] : []));
   if (!leftPort || !rightPort) return overlay;
   const left: RouteSegment = { ...segment, id: nextId("split"), end: clonePoint(leftPort.position), endPortId: undefined }, right: RouteSegment = { ...segment, id: nextId("split"), start: clonePoint(rightPort.position), startPortId: undefined };
   const ports = [

@@ -1,4 +1,5 @@
-import type { BendArc, ConduitOverlayDocument, HostAttachment, JunctionBox, NetworkPort, Penetration, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SurfaceChase, SurfaceMode, Vec3 } from "./overlay";
+import type { BendArc, Circuit, ConduitOverlayDocument, HostAttachment, JunctionBox, NetworkPort, Penetration, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SurfaceChase, SurfaceMode, Vec3 } from "./overlay";
+import { boxFrame, eightBoxPorts, sameFaceFreePeer } from "./box-ports";
 
 let sequence = 0;
 const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
@@ -18,6 +19,7 @@ const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): Route
 const segmentType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-segment" as const : "conduit-segment" as const;
 const fittingType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-fitting" as const : "conduit-fitting" as const;
 const isElectrical = (system: RoutingSystem) => system !== "sprinkler";
+const selectPortDirection = (ports: NetworkPort[], direction: Vec3, used = new Set<string>()) => ports.filter((port) => !used.has(port.id)).sort((left, right) => dot(right.direction, direction) - dot(left.direction, direction))[0];
 
 export type RouteDiagnostic = { code: "bend_clearance" | "route_collision" | "self_collision" | "branch_clearance"; message: string; objectIds?: string[]; point?: Vec3 };
 export type PenetrationRequest = { host: HostAttachment; entry: RoutePoint; exit: RoutePoint; direction: Vec3 };
@@ -132,6 +134,67 @@ export function commitPlannedRoute(overlay: ConduitOverlayDocument, plan: Planne
   return { ...overlay, segments: [...overlay.segments, ...plan.segments], fittings: [...overlay.fittings, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations] };
 }
 
+export type JunctionBoxRouteStart = { overlay: ConduitOverlayDocument; box: JunctionBox; port: NetworkPort; circuit: Circuit };
+
+const boxHasRootedCircuit = (overlay: ConduitOverlayDocument, box: JunctionBox) => overlay.circuits.find((circuit) => circuit.status === "rooted" && circuit.system === box.system && circuit.segmentIds.some((id) => box.segmentIds.includes(id)));
+
+export function junctionBoxPortCanStart(overlay: ConduitOverlayDocument, box: JunctionBox, port: NetworkPort) {
+  if (port.system !== box.system || !boxHasRootedCircuit(overlay, box)) return false;
+  return port.connectedSegmentIds.length === 0 || Boolean(sameFaceFreePeer(box.ports, port, box.system));
+}
+
+/** Moves the 86 box, never its existing conduit, when an occupied hole is reused. */
+function releaseJunctionBoxPort(overlay: ConduitOverlayDocument, box: JunctionBox, port: NetworkPort): { overlay: ConduitOverlayDocument; port: NetworkPort } | null {
+  if (!port.connectedSegmentIds.length) return { overlay, port };
+  const peer = sameFaceFreePeer(box.ports, port, box.system);
+  if (!peer) return null;
+  const shift = subtract(port.position.position, peer.position.position), moved = new Set(port.connectedSegmentIds);
+  const shiftPoint = (point: RoutePoint): RoutePoint => ({ position: add(point.position, shift), attachment: point.attachment ? copyPoint(point).attachment : undefined });
+  const boxes = overlay.junctionBoxes.map((item) => item.id !== box.id ? item : {
+    ...item,
+    position: shiftPoint(item.position),
+    ports: item.ports.map((candidate) => candidate.id === port.id
+      ? { ...candidate, position: shiftPoint(candidate.position), connectedSegmentIds: [] }
+      : candidate.id === peer.id ? { ...candidate, position: shiftPoint(candidate.position), connectedSegmentIds: [...new Set([...candidate.connectedSegmentIds, ...port.connectedSegmentIds])] }
+        : { ...candidate, position: shiftPoint(candidate.position) }),
+  });
+  const segments = overlay.segments.map((segment) => !moved.has(segment.id) ? segment : {
+    ...segment,
+    startPortId: segment.startPortId === port.id ? peer.id : segment.startPortId,
+    endPortId: segment.endPortId === port.id ? peer.id : segment.endPortId,
+  });
+  const next = { ...overlay, junctionBoxes: boxes, segments }, released = boxes.find((item) => item.id === box.id)?.ports.find((candidate) => candidate.id === port.id);
+  return released ? { overlay: next, port: released } : null;
+}
+
+export function startRouteFromJunctionBox(overlay: ConduitOverlayDocument, boxId: string, requestedPortId: string): JunctionBoxRouteStart {
+  let workingOverlay = overlay;
+  let box = workingOverlay.junctionBoxes.find((item) => item.id === boxId);
+  if (!box) throw new Error("86底盒不存在。");
+  const requested = box.ports.find((port) => port.id === requestedPortId);
+  if (!requested || !junctionBoxPortCanStart(workingOverlay, box, requested)) throw new Error("该底盒孔位不可用。");
+  if (requested.connectedSegmentIds.length) {
+    const released = releaseJunctionBoxPort(workingOverlay, box, requested);
+    if (!released) throw new Error("同侧没有空闲孔位。");
+    workingOverlay = released.overlay; box = workingOverlay.junctionBoxes.find((item) => item.id === boxId)!;
+  }
+  const port = box.ports.find((candidate) => candidate.id === requestedPortId)!;
+  const circuit = boxHasRootedCircuit(workingOverlay, box);
+  if (!circuit || port.connectedSegmentIds.length) throw new Error("底盒未接入合法来源或孔位不可用。");
+  return { overlay: workingOverlay, box, port, circuit };
+}
+
+export function commitJunctionBoxRoute(overlay: ConduitOverlayDocument, start: JunctionBoxRouteStart, plan: PlannedRoute): ConduitOverlayDocument {
+  if (!plan.canCommit || !plan.segments.length || plan.system !== start.box.system) return overlay;
+  const box = overlay.junctionBoxes.find((item) => item.id === start.box.id), circuit = overlay.circuits.find((item) => item.id === start.circuit.id && item.status === "rooted");
+  const storedPort = box?.ports.find((port) => port.id === start.port.id);
+  if (!box || !circuit || !storedPort || storedPort.connectedSegmentIds.length) return overlay;
+  const segments = plan.segments.map((segment) => ({ ...segment, circuitId: circuit.id, legacyUnrooted: false }));
+  segments[0].startPortId = storedPort.id;
+  const boxes = overlay.junctionBoxes.map((item) => item.id !== box.id ? item : { ...item, segmentIds: [...new Set([...item.segmentIds, ...segments.map((segment) => segment.id)])], ports: item.ports.map((port) => port.id === storedPort.id ? { ...port, connectedSegmentIds: [...port.connectedSegmentIds, segments[0].id], segmentId: segments[0].id } : port) });
+  return { ...overlay, junctionBoxes: boxes, segments: [...overlay.segments, ...segments], fittings: [...overlay.fittings, ...plan.fittings], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((item) => item.id === circuit.id ? { ...item, segmentIds: [...new Set([...item.segmentIds, ...segments.map((segment) => segment.id)])] } : item) };
+}
+
 /** Legacy helper retained for callers; the editor uses the full branch route. */
 export function branchAtSegment(overlay: ConduitOverlayDocument, segmentId: string, point: RoutePoint, branchEnd: RoutePoint): ConduitOverlayDocument {
   return commitBranchRoute(overlay, segmentId, [point, branchEnd], defaultConstructionParameters(overlay.segments.find((item) => item.id === segmentId)?.diameterMm ?? 20));
@@ -142,8 +205,8 @@ export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentI
   const target = overlay.segments.find((segment) => segment.id === segmentId);
   if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return null;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
-  const halfSize = electrical ? overlay.settings.junctionBoxSizeMm[0] / 2000 : target.diameterMm / 1000;
-  const branchPortPoint = { ...copyPoint(center), position: add(center.position, scale(branchDirection, halfSize)) };
+  const previewPorts = electrical ? eightBoxPorts("junction-box", "branch-preview", center, boxFrame(center, mainDirection), overlay.settings.junctionBoxSizeMm, target.system, "branch") : [];
+  const branchPortPoint = electrical ? copyPoint(selectPortDirection(previewPorts, branchDirection)?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(branchDirection, target.diameterMm / 1000)) };
   return planRoute(target.system, target.diameterMm, target.system === "sprinkler" ? "suspended" : "surface", [branchPortPoint, ...branchPoints.slice(1)], parameters, explicitPenetrations, { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
 }
 
@@ -152,18 +215,31 @@ export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: st
   if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return overlay;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
   const halfSize = electrical ? overlay.settings.junctionBoxSizeMm[0] / 2000 : target.diameterMm / 1000;
-  const leftPoint = { ...copyPoint(center), position: add(center.position, scale(mainDirection, -halfSize)) }, rightPoint = { ...copyPoint(center), position: add(center.position, scale(mainDirection, halfSize)) }, branchPortPoint = { ...copyPoint(center), position: add(center.position, scale(branchDirection, halfSize)) };
+  const nodeId = nextId(electrical ? "box86" : "tee"), ownerKind = electrical ? "junction-box" as const : "fitting" as const;
+  const frame = electrical ? boxFrame(center, mainDirection) : undefined;
+  const boxPorts = electrical ? eightBoxPorts("junction-box", nodeId, center, frame!, overlay.settings.junctionBoxSizeMm, target.system, "branch") : [];
+  const leftBoxPort = electrical ? selectPortDirection(boxPorts, scale(mainDirection, -1)) : undefined;
+  const rightBoxPort = electrical ? boxPorts.filter((port) => port.id !== leftBoxPort?.id && port.slot === leftBoxPort?.slot).sort((left, right) => dot(right.direction, mainDirection) - dot(left.direction, mainDirection))[0] : undefined;
+  const branchBoxPort = electrical ? selectPortDirection(boxPorts, branchDirection, new Set([leftBoxPort?.id, rightBoxPort?.id].filter((id): id is string => Boolean(id)))) : undefined;
+  const leftPoint = electrical ? copyPoint(leftBoxPort?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(mainDirection, -halfSize)) };
+  const rightPoint = electrical ? copyPoint(rightBoxPort?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(mainDirection, halfSize)) };
+  const branchPortPoint = electrical ? copyPoint(branchBoxPort?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(branchDirection, halfSize)) };
   const first: RouteSegment = { ...target, id: nextId("split"), end: leftPoint, endPortId: undefined }, second: RouteSegment = { ...target, id: nextId("split"), start: rightPoint, startPortId: undefined };
   const route = plannedRoute ?? planBranchContinuation(overlay, segmentId, branchPoints, parameters, explicitPenetrations);
   if (!route || !route.canCommit || !route.segments[0]) return overlay;
-  const branchFirst = route.segments[0], nodeId = nextId(electrical ? "box86" : "tee"), ownerKind = electrical ? "junction-box" as const : "fitting" as const, nodePorts = [port(nodeId, 0, leftPoint, scale(mainDirection, -1), first.id, target.system, ownerKind), port(nodeId, 1, rightPoint, mainDirection, second.id, target.system, ownerKind), port(nodeId, 2, branchPortPoint, branchDirection, branchFirst.id, target.system, ownerKind)];
-  bindPort(first, false, nodePorts[0]); bindPort(second, true, nodePorts[1]); bindPort(branchFirst, true, nodePorts[2]);
+  const branchFirst = route.segments[0], nodePorts = electrical
+    ? boxPorts.map((value) => value.id === leftBoxPort?.id ? { ...value, connectedSegmentIds: [first.id], segmentId: first.id } : value.id === rightBoxPort?.id ? { ...value, connectedSegmentIds: [second.id], segmentId: second.id } : value.id === branchBoxPort?.id ? { ...value, connectedSegmentIds: [branchFirst.id], segmentId: branchFirst.id } : value)
+    : [port(nodeId, 0, leftPoint, scale(mainDirection, -1), first.id, target.system, ownerKind), port(nodeId, 1, rightPoint, mainDirection, second.id, target.system, ownerKind), port(nodeId, 2, branchPortPoint, branchDirection, branchFirst.id, target.system, ownerKind)];
+  const leftNodePort = electrical ? nodePorts.find((value) => value.id === leftBoxPort?.id)! : nodePorts[0];
+  const rightNodePort = electrical ? nodePorts.find((value) => value.id === rightBoxPort?.id)! : nodePorts[1];
+  const branchNodePort = electrical ? nodePorts.find((value) => value.id === branchBoxPort?.id)! : nodePorts[2];
+  bindPort(first, false, leftNodePort); bindPort(second, true, rightNodePort); bindPort(branchFirst, true, branchNodePort);
   const replacementForPort = (position: RoutePoint) => length(subtract(position.position, target.start.position)) <= length(subtract(position.position, target.end.position)) ? first.id : second.id;
   const remapFitting = (fitting: RouteFitting): RouteFitting => ({ ...fitting, segmentIds: fitting.segmentIds.map((id) => id === segmentId ? replacementForPort(fitting.position) : id), ports: fitting.ports.map((value) => value.segmentId === segmentId ? { ...value, segmentId: replacementForPort(value.position), connectedSegmentIds: value.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(value.position) : id) } : value) });
   const retainedFittings = overlay.fittings.map(remapFitting);
   const fittings: RouteFitting[] = electrical ? retainedFittings : [...retainedFittings, { id: nodeId, type: "sprinkler-fitting", fitting: "tee", system: target.system, diameterMm: target.diameterMm, position: copyPoint(center), segmentIds: [first.id, second.id, branchFirst.id], ports: nodePorts }];
   const remappedBoxes = overlay.junctionBoxes.map((box) => ({ ...box, segmentIds: box.segmentIds.map((id) => id === segmentId ? replacementForPort(box.position) : id), ports: box.ports.map((value) => value.segmentId === segmentId ? { ...value, segmentId: replacementForPort(value.position), connectedSegmentIds: value.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(value.position) : id) } : value) }));
-  const junctionBoxes: JunctionBox[] = electrical ? [...remappedBoxes, { id: nodeId, type: "junction-box", system: target.system as Exclude<RoutingSystem, "sprinkler">, position: copyPoint(center), sizeMm: [...overlay.settings.junctionBoxSizeMm], segmentIds: [first.id, second.id, branchFirst.id], ports: nodePorts }] : remappedBoxes;
+  const junctionBoxes: JunctionBox[] = electrical ? [...remappedBoxes, { id: nodeId, type: "junction-box", system: target.system as Exclude<RoutingSystem, "sprinkler">, position: copyPoint(center), sizeMm: [...overlay.settings.junctionBoxSizeMm], frame, segmentIds: [first.id, second.id, branchFirst.id], ports: nodePorts }] : remappedBoxes;
   const splitChases = overlay.surfaceChases.flatMap((chase) => chase.routeElementId !== segmentId || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: nextId("chase"), routeElementId: first.id, path: { kind: "line" as const, start: chase.path.start, end: copyPoint(leftPoint) } }, { ...chase, id: nextId("chase"), routeElementId: second.id, path: { kind: "line" as const, start: copyPoint(rightPoint), end: chase.path.end } }]);
   const penetrations = overlay.penetrations.map((penetration) => penetration.segmentId !== segmentId ? penetration : ({ ...penetration, segmentId: length(subtract(penetration.entry.position, target.start.position)) <= length(subtract(center.position, target.start.position)) ? first.id : second.id }));
   const routedSegments = [first, second, ...route.segments].map((segment) => ({ ...segment, circuitId: target.circuitId, legacyUnrooted: target.legacyUnrooted }));

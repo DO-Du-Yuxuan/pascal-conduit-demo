@@ -66,6 +66,16 @@ describe("Conduit overlay", () => {
     expect(device.ports.every((port) => port.face && port.slot !== undefined)).toBe(true);
   });
 
+  it("migrates an older three-port branch box to the interactive eight-hole model", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("legacy.json", "sha")));
+    raw.schemaVersion = "2.0";
+    raw.junctionBoxes = [{ id: "box-old", type: "junction-box", system: "receptacle", position: point(0, 1, 0), sizeMm: [86, 86, 50], segmentIds: ["line"], ports: [{ id: "box-old:port:0", position: point(0, 1, 0), direction: [0, 1, 0], role: "branch", system: "receptacle", connectedSegmentIds: ["line"], segmentId: "line" }] }];
+    const box = parseOverlay(raw).junctionBoxes[0];
+    expect(box.ports).toHaveLength(8);
+    expect(box.ports.find((port) => port.id === "box-old:port:0")).toMatchObject({ connectedSegmentIds: ["line"], face: "top" });
+    expect(box.frame).toBeDefined();
+  });
+
   it("makes explicit segments, sweep and straight-plus-arc wall chases", () => {
     resetRoutingIdsForTests();
     const source = [point(0, 1, 0), point(1, 1, 0), point(1, 1, 1)], before = JSON.stringify(source);
@@ -114,10 +124,10 @@ describe("Conduit overlay", () => {
   it("uses the same physical box port for branch preview and commit", () => {
     const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(2, 1, 0)]));
     const branchPoints = [point(1, 1, 0), point(1, 1, 1)], preview = planBranchContinuation(routed, routed.segments[0].id, branchPoints, { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 })!;
-    const committed = commitBranchRoute(routed, routed.segments[0].id, branchPoints, { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), box = committed.junctionBoxes[0], branch = committed.segments.find((segment) => segment.startPortId === box.ports[2].id)!;
-    expect(preview.segments[0].start.position).toEqual([1, 1, .043]);
+    const committed = commitBranchRoute(routed, routed.segments[0].id, branchPoints, { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), box = committed.junctionBoxes[0], branchPort = box.ports.find((port) => port.connectedSegmentIds.length && port.position.position.every((value, axis) => Math.abs(value - preview.segments[0].start.position[axis]) < 1e-7))!, branch = committed.segments.find((segment) => segment.startPortId === branchPort.id)!;
+    expect(preview.segments[0].start.position).toEqual(branchPort.position.position);
     expect(branch.start.position).toEqual(preview.segments[0].start.position);
-    expect(branch.start.position).toEqual(box.ports[2].position.position);
+    expect(branch.start.position).toEqual(branchPort.position.position);
   });
 
   it("uses the same unified sweep rule while continuing an electrical branch", () => {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { boxFrame, eightBoxPorts } from "./box-ports";
 
 export type Vec3 = [number, number, number];
 
@@ -36,7 +37,7 @@ export type BendArc = { start: Vec3; end: Vec3; center: Vec3; normal: Vec3; swee
 export type RouteSegment = { id: string; type: "conduit-segment" | "sprinkler-segment"; system: RoutingSystem; diameterMm: number; start: RoutePoint; end: RoutePoint; startPortId?: string; endPortId?: string; circuitId?: string; legacyUnrooted?: boolean; createdAt: string };
 export type BridgeBend = { obstacleSegmentId: string; entry: Vec3; crestStart: Vec3; crestEnd: Vec3; exit: Vec3; riseMm: number; clearanceMm: number };
 export type RouteFitting = { id: string; type: "conduit-fitting" | "sprinkler-fitting"; fitting: "elbow" | "tee" | "coupling" | "bridge-bend"; bendStyle?: "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc; bridge?: BridgeBend; system: RoutingSystem; diameterMm: number; position: RoutePoint; segmentIds: string[]; ports: NetworkPort[] };
-export type JunctionBox = { id: string; type: "junction-box"; system: Exclude<RoutingSystem, "sprinkler">; position: RoutePoint; sizeMm: [number, number, number]; segmentIds: string[]; ports: NetworkPort[] };
+export type JunctionBox = { id: string; type: "junction-box"; system: Exclude<RoutingSystem, "sprinkler">; position: RoutePoint; sizeMm: [number, number, number]; frame?: DeviceFrame; segmentIds: string[]; ports: NetworkPort[] };
 export const DEVICE_TYPES = ["strong-panel", "weak-panel", "fire-inlet", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head"] as const;
 export type NetworkDeviceType = typeof DEVICE_TYPES[number];
 export type NetworkDevice = { id: string; type: "network-device"; deviceType: NetworkDeviceType; name: string; position: RoutePoint; sizeMm: [number, number, number]; orientation: Vec3; frame?: DeviceFrame; mount?: DeviceMount; systems: RoutingSystem[]; ports: NetworkPort[]; createdAt: string };
@@ -90,7 +91,7 @@ const arcSchema = z.object({ start: vec3Schema, end: vec3Schema, center: vec3Sch
 const segmentSchema = z.object({ id: z.string(), type: z.enum(["conduit-segment", "sprinkler-segment"]), system: inputSystemSchema, diameterMm: z.number().positive(), start: pointSchema, end: pointSchema, startPortId: z.string().optional(), endPortId: z.string().optional(), circuitId: z.string().optional(), legacyUnrooted: z.boolean().optional(), createdAt: z.string() });
 const bridgeSchema = z.object({ obstacleSegmentId: z.string(), entry: vec3Schema, crestStart: vec3Schema, crestEnd: vec3Schema, exit: vec3Schema, riseMm: z.number().positive(), clearanceMm: z.number().positive() });
 const fittingSchema = z.object({ id: z.string(), type: z.enum(["conduit-fitting", "sprinkler-fitting"]), fitting: z.enum(["elbow", "tee", "coupling", "bridge-bend"]), bendStyle: z.enum(["sweep", "right-angle", "standard"]).optional(), radiusMm: z.number().positive().optional(), arc: arcSchema.optional(), bridge: bridgeSchema.optional(), system: inputSystemSchema, diameterMm: z.number().positive(), position: pointSchema, segmentIds: z.array(z.string()), ports: z.array(portSchema).optional() });
-const junctionBoxSchema = z.object({ id: z.string(), type: z.literal("junction-box"), system: inputSystemSchema, position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), segmentIds: z.array(z.string()), ports: z.array(portSchema) });
+const junctionBoxSchema = z.object({ id: z.string(), type: z.literal("junction-box"), system: inputSystemSchema, position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), frame: deviceFrameSchema.optional(), segmentIds: z.array(z.string()), ports: z.array(portSchema) });
 const deviceSchema = z.object({ id: z.string(), type: z.literal("network-device"), deviceType: z.enum(DEVICE_TYPES), name: z.string(), position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), orientation: vec3Schema, frame: deviceFrameSchema.optional(), mount: deviceMountSchema.optional(), systems: z.array(inputSystemSchema), ports: z.array(portSchema), createdAt: z.string() });
 const circuitSchema = z.object({ id: z.string(), system: inputSystemSchema, sourceDeviceId: z.string().nullable(), rootPortId: z.string().nullable(), segmentIds: z.array(z.string()), status: z.enum(["rooted", "legacy-unrooted", "broken"]), createdAt: z.string() });
 const wallChaseSchema = z.object({ id: z.string(), type: z.literal("wall-chase"), wallId: z.string(), segmentId: z.string(), start: pointSchema, end: pointSchema, widthMm: z.number().positive(), depthMm: z.number().positive() });
@@ -165,7 +166,17 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   }
   const junctionBoxes: JunctionBox[] = (parsed.junctionBoxes ?? []).map((box) => {
     const system = migrateSystem(box.system as RoutingSystem | LegacyRoutingSystem);
-    return { ...box, system: system as Exclude<RoutingSystem, "sprinkler">, ports: box.ports.map((value) => normalizePort(value, { kind: "junction-box", id: box.id }, system, value.segmentId)) };
+    const ports = box.ports.map((value) => normalizePort(value, { kind: "junction-box", id: box.id }, system, value.segmentId));
+    const frame = box.frame ?? boxFrame(box.position, ports[0]?.direction);
+    if (ports.length >= 8) return { ...box, system: system as Exclude<RoutingSystem, "sprinkler">, frame, ports };
+    const templates = eightBoxPorts("junction-box", box.id, box.position, frame, box.sizeMm, system, "branch"), unused = new Set(templates.map((template) => template.id));
+    const migrated: NetworkPort[] = ports.map((port) => {
+      const target = templates.filter((template) => unused.has(template.id)).sort((left, right) => dotVec(right.direction, port.direction) - dotVec(left.direction, port.direction))[0] ?? templates[0];
+      unused.delete(target.id);
+      return { ...port, face: target.face, slot: target.slot, direction: target.direction, position: target.position };
+    });
+    for (const template of templates) if (unused.has(template.id)) migrated.push(template);
+    return { ...box, system: system as Exclude<RoutingSystem, "sprinkler">, frame, ports: migrated };
   });
   const devices: NetworkDevice[] = (parsed.devices ?? []).map((device) => {
     const systems = device.systems.map((system) => migrateSystem(system as RoutingSystem | LegacyRoutingSystem));

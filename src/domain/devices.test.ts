@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, insertDeviceOnSegment, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
-import { commitBranchRoute, deleteNetworkObject, planRoute } from "./routing";
+import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 
 const point = (x: number, y: number, z: number, hostKind: HostKind = "wall"): RoutePoint => ({ position: [x, y, z], attachment: { hostId: `${hostKind}-a`, hostKind, surface: hostKind === "wall" ? "interior" : "top", normal: hostKind === "wall" ? [0, 0, 1] : [0, 1, 0], levelId: "L0" } });
 function rooted(system: RoutingSystem) {
@@ -57,6 +57,7 @@ describe("network devices and rooted circuits", () => {
     expect(socket.ports).toHaveLength(8);
     expect(new Set(inserted.segments.flatMap((segment) => [segment.startPortId, segment.endPortId]).filter((id): id is string => Boolean(id?.startsWith(socket.id))))).toHaveLength(2);
     expect(inserted.segments.some((segment) => segment.start.position[0] < 1 && segment.end.position[0] > 1)).toBe(false);
+    expect(inserted.segments.every((segment) => [segment.start, segment.end].every((point) => Math.abs(point.position[1] - 1) < 1e-8 && Math.abs(point.position[2]) < 1e-8))).toBe(true);
     expect(portCanStart(inserted, socket, socket.ports[2], "receptacle")).toBe(true);
     expect(inserted.devices[0].ports.flatMap((port) => port.connectedSegmentIds)).not.toContain(original.id);
   });
@@ -65,6 +66,7 @@ describe("network devices and rooted circuits", () => {
     const overlay = rooted("receptacle"), inserted = insertDeviceOnSegment(overlay, overlay.segments[0].id, "socket", [1, 1, 0]);
     const socket = inserted.devices.find((device) => device.deviceType === "socket")!, occupied = socket.ports.find((port) => port.connectedSegmentIds.length > 0)!;
     const peer = socket.ports.find((port) => port.face === occupied.face && port.id !== occupied.id && port.connectedSegmentIds.length === 0)!;
+    const originalSegments = inserted.segments.map((segment) => ({ id: segment.id, start: [...segment.start.position], end: [...segment.end.position] }));
     expect(portCanStart(inserted, socket, occupied, "receptacle")).toBe(true);
     const started = startRouteFromDevice(inserted, socket.id, "receptacle", occupied.id);
     const shifted = started.overlay.devices.find((device) => device.id === socket.id)!;
@@ -72,6 +74,22 @@ describe("network devices and rooted circuits", () => {
     expect(shifted.ports.find((port) => port.id === occupied.id)?.connectedSegmentIds).toEqual([]);
     expect(shifted.ports.find((port) => port.id === peer.id)?.connectedSegmentIds).toEqual(occupied.connectedSegmentIds);
     expect(started.overlay.segments.some((segment) => segment.startPortId === peer.id || segment.endPortId === peer.id)).toBe(true);
+    expect(started.overlay.segments.map((segment) => ({ id: segment.id, start: [...segment.start.position], end: [...segment.end.position] }))).toEqual(originalSegments);
+    expect(shifted.position.position).not.toEqual(socket.position.position);
+  });
+
+  it("uses the same eight-hole continuation model for a red or blue branch 86 box", () => {
+    const base = rooted("receptacle"), branched = commitBranchRoute(base, base.segments[0].id, [point(1, 1, 0), point(1, 1, 1)], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 });
+    const box = branched.junctionBoxes[0], occupied = box.ports.find((port) => port.connectedSegmentIds.length > 0)!;
+    expect(box.ports).toHaveLength(8);
+    expect(junctionBoxPortCanStart(branched, box, occupied)).toBe(true);
+    const before = branched.segments.map((segment) => ({ id: segment.id, start: [...segment.start.position], end: [...segment.end.position] }));
+    const started = startRouteFromJunctionBox(branched, box.id, occupied.id);
+    expect(started.port.id).toBe(occupied.id);
+    expect(started.overlay.segments.map((segment) => ({ id: segment.id, start: [...segment.start.position], end: [...segment.end.position] }))).toEqual(before);
+    const continuation = planRoute("receptacle", 20, "surface", [started.port.position, point(1, 2, 1)]);
+    const committed = commitJunctionBoxRoute(started.overlay, started, continuation);
+    expect(committed.segments.length).toBeGreaterThan(started.overlay.segments.length);
   });
 
   it("allows an inline socket on a rooted floor route while keeping manual placement wall-only", () => {
