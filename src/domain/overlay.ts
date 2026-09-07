@@ -26,16 +26,20 @@ export type HostAttachment = {
   wallSide?: "interior" | "exterior";
 };
 export type RoutePoint = { position: Vec3; attachment?: HostAttachment };
+/** A device may live on a read-only building surface or ride a conduit in free space. */
+export type DeviceMount = { kind: "host"; attachment: HostAttachment } | { kind: "segment"; segmentId: string; t: number; tangent: Vec3; circuitId?: string };
+export type DeviceFrame = { front: Vec3; up: Vec3; right: Vec3 };
 export type NetworkOwnerKind = "device" | "fitting" | "junction-box";
 export type NetworkPortRole = "source" | "bidirectional" | "sink" | "branch";
-export type NetworkPort = { id: string; owner: { kind: NetworkOwnerKind; id: string }; position: RoutePoint; direction: Vec3; role: NetworkPortRole; system: RoutingSystem; connectedSegmentIds: string[]; segmentId?: string; connectedPortId?: string };
+export type NetworkPort = { id: string; owner: { kind: NetworkOwnerKind; id: string }; position: RoutePoint; direction: Vec3; role: NetworkPortRole; system: RoutingSystem; connectedSegmentIds: string[]; segmentId?: string; connectedPortId?: string; face?: "top" | "bottom" | "left" | "right"; slot?: 0 | 1; flow?: "in" | "out" | "unknown" };
 export type BendArc = { start: Vec3; end: Vec3; center: Vec3; normal: Vec3; sweepRadians: number };
 export type RouteSegment = { id: string; type: "conduit-segment" | "sprinkler-segment"; system: RoutingSystem; diameterMm: number; start: RoutePoint; end: RoutePoint; startPortId?: string; endPortId?: string; circuitId?: string; legacyUnrooted?: boolean; createdAt: string };
-export type RouteFitting = { id: string; type: "conduit-fitting" | "sprinkler-fitting"; fitting: "elbow" | "tee" | "coupling"; bendStyle?: "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc; system: RoutingSystem; diameterMm: number; position: RoutePoint; segmentIds: string[]; ports: NetworkPort[] };
+export type BridgeBend = { obstacleSegmentId: string; entry: Vec3; crestStart: Vec3; crestEnd: Vec3; exit: Vec3; riseMm: number; clearanceMm: number };
+export type RouteFitting = { id: string; type: "conduit-fitting" | "sprinkler-fitting"; fitting: "elbow" | "tee" | "coupling" | "bridge-bend"; bendStyle?: "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc; bridge?: BridgeBend; system: RoutingSystem; diameterMm: number; position: RoutePoint; segmentIds: string[]; ports: NetworkPort[] };
 export type JunctionBox = { id: string; type: "junction-box"; system: Exclude<RoutingSystem, "sprinkler">; position: RoutePoint; sizeMm: [number, number, number]; segmentIds: string[]; ports: NetworkPort[] };
 export const DEVICE_TYPES = ["strong-panel", "weak-panel", "fire-inlet", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head"] as const;
 export type NetworkDeviceType = typeof DEVICE_TYPES[number];
-export type NetworkDevice = { id: string; type: "network-device"; deviceType: NetworkDeviceType; name: string; position: RoutePoint; sizeMm: [number, number, number]; orientation: Vec3; systems: RoutingSystem[]; ports: NetworkPort[]; createdAt: string };
+export type NetworkDevice = { id: string; type: "network-device"; deviceType: NetworkDeviceType; name: string; position: RoutePoint; sizeMm: [number, number, number]; orientation: Vec3; frame?: DeviceFrame; mount?: DeviceMount; systems: RoutingSystem[]; ports: NetworkPort[]; createdAt: string };
 export type Circuit = { id: string; system: RoutingSystem; sourceDeviceId: string | null; rootPortId: string | null; segmentIds: string[]; status: "rooted" | "legacy-unrooted" | "broken"; createdAt: string };
 export type WallChase = { id: string; type: "wall-chase"; wallId: string; segmentId: string; start: RoutePoint; end: RoutePoint; widthMm: number; depthMm: number };
 export type SurfaceChasePath = { kind: "line"; start: RoutePoint; end: RoutePoint } | { kind: "arc"; arc: BendArc };
@@ -43,7 +47,7 @@ export type SurfaceChase = { id: string; type: "surface-chase"; hostId: string; 
 export type Penetration = { id: string; type: "penetration"; hostId: string; hostKind: HostKind; segmentId: string; entry: RoutePoint; exit: RoutePoint; direction: Vec3; diameterMm: number; derived?: boolean };
 
 export type ConduitOverlayDocument = {
-  schemaVersion: "2.0";
+  schemaVersion: "2.1";
   source: { fileName: string; sha256: string };
   settings: { colors: Record<RoutingSystem, string>; visibleSystems: Record<RoutingSystem, boolean>; bendRadiusMm: number; stockLengthMm: number; junctionBoxSizeMm: [number, number, number] };
   segments: RouteSegment[];
@@ -66,29 +70,70 @@ export const SYSTEM_DEFAULTS: Record<RoutingSystem, { label: string; color: stri
 
 export const migrateSystem = (system: RoutingSystem | LegacyRoutingSystem): RoutingSystem => ({ power: "receptacle", "low-voltage": "lighting", signal: "network", sprinkler: "sprinkler", receptacle: "receptacle", lighting: "lighting", network: "network" } as const)[system];
 
+const normalizeVec = (value: Vec3): Vec3 => {
+  const length = Math.hypot(...value);
+  return length < 1e-9 ? [0, 1, 0] : value.map((item) => item / length) as Vec3;
+};
+const addVec = (a: Vec3, b: Vec3): Vec3 => a.map((value, axis) => value + b[axis]) as Vec3;
+const scaleVec = (value: Vec3, amount: number): Vec3 => value.map((item) => item * amount) as Vec3;
+const dotVec = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const crossVec = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+
 const vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const attachmentSchema = z.object({ hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), surface: z.string(), normal: vec3Schema, levelId: z.string().nullable(), localPosition: vec3Schema.optional(), basis: z.object({ u: vec3Schema, v: vec3Schema }).optional(), curveT: z.number().min(0).max(1).optional(), wallSide: z.enum(["interior", "exterior"]).optional() });
 const pointSchema = z.object({ position: vec3Schema, attachment: attachmentSchema.optional() });
 const inputSystemSchema = z.enum([...SYSTEMS, ...LEGACY_SYSTEMS] as [string, ...string[]]);
-const portSchema = z.object({ id: z.string(), owner: z.object({ kind: z.enum(["device", "fitting", "junction-box"]), id: z.string() }).optional(), position: pointSchema, direction: vec3Schema, role: z.enum(["source", "bidirectional", "sink", "branch"]).optional(), system: inputSystemSchema.optional(), connectedSegmentIds: z.array(z.string()).optional(), segmentId: z.string().optional(), connectedPortId: z.string().optional() });
+const deviceMountSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("host"), attachment: attachmentSchema }), z.object({ kind: z.literal("segment"), segmentId: z.string(), t: z.number().min(0).max(1), tangent: vec3Schema, circuitId: z.string().optional() })]);
+const deviceFrameSchema = z.object({ front: vec3Schema, up: vec3Schema, right: vec3Schema });
+const portSchema = z.object({ id: z.string(), owner: z.object({ kind: z.enum(["device", "fitting", "junction-box"]), id: z.string() }).optional(), position: pointSchema, direction: vec3Schema, role: z.enum(["source", "bidirectional", "sink", "branch"]).optional(), system: inputSystemSchema.optional(), connectedSegmentIds: z.array(z.string()).optional(), segmentId: z.string().optional(), connectedPortId: z.string().optional(), face: z.enum(["top", "bottom", "left", "right"]).optional(), slot: z.union([z.literal(0), z.literal(1)]).optional(), flow: z.enum(["in", "out", "unknown"]).optional() });
 const arcSchema = z.object({ start: vec3Schema, end: vec3Schema, center: vec3Schema, normal: vec3Schema, sweepRadians: z.number() });
 const segmentSchema = z.object({ id: z.string(), type: z.enum(["conduit-segment", "sprinkler-segment"]), system: inputSystemSchema, diameterMm: z.number().positive(), start: pointSchema, end: pointSchema, startPortId: z.string().optional(), endPortId: z.string().optional(), circuitId: z.string().optional(), legacyUnrooted: z.boolean().optional(), createdAt: z.string() });
-const fittingSchema = z.object({ id: z.string(), type: z.enum(["conduit-fitting", "sprinkler-fitting"]), fitting: z.enum(["elbow", "tee", "coupling"]), bendStyle: z.enum(["sweep", "right-angle", "standard"]).optional(), radiusMm: z.number().positive().optional(), arc: arcSchema.optional(), system: inputSystemSchema, diameterMm: z.number().positive(), position: pointSchema, segmentIds: z.array(z.string()), ports: z.array(portSchema).optional() });
+const bridgeSchema = z.object({ obstacleSegmentId: z.string(), entry: vec3Schema, crestStart: vec3Schema, crestEnd: vec3Schema, exit: vec3Schema, riseMm: z.number().positive(), clearanceMm: z.number().positive() });
+const fittingSchema = z.object({ id: z.string(), type: z.enum(["conduit-fitting", "sprinkler-fitting"]), fitting: z.enum(["elbow", "tee", "coupling", "bridge-bend"]), bendStyle: z.enum(["sweep", "right-angle", "standard"]).optional(), radiusMm: z.number().positive().optional(), arc: arcSchema.optional(), bridge: bridgeSchema.optional(), system: inputSystemSchema, diameterMm: z.number().positive(), position: pointSchema, segmentIds: z.array(z.string()), ports: z.array(portSchema).optional() });
 const junctionBoxSchema = z.object({ id: z.string(), type: z.literal("junction-box"), system: inputSystemSchema, position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), segmentIds: z.array(z.string()), ports: z.array(portSchema) });
-const deviceSchema = z.object({ id: z.string(), type: z.literal("network-device"), deviceType: z.enum(DEVICE_TYPES), name: z.string(), position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), orientation: vec3Schema, systems: z.array(inputSystemSchema), ports: z.array(portSchema), createdAt: z.string() });
+const deviceSchema = z.object({ id: z.string(), type: z.literal("network-device"), deviceType: z.enum(DEVICE_TYPES), name: z.string(), position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), orientation: vec3Schema, frame: deviceFrameSchema.optional(), mount: deviceMountSchema.optional(), systems: z.array(inputSystemSchema), ports: z.array(portSchema), createdAt: z.string() });
 const circuitSchema = z.object({ id: z.string(), system: inputSystemSchema, sourceDeviceId: z.string().nullable(), rootPortId: z.string().nullable(), segmentIds: z.array(z.string()), status: z.enum(["rooted", "legacy-unrooted", "broken"]), createdAt: z.string() });
 const wallChaseSchema = z.object({ id: z.string(), type: z.literal("wall-chase"), wallId: z.string(), segmentId: z.string(), start: pointSchema, end: pointSchema, widthMm: z.number().positive(), depthMm: z.number().positive() });
 const surfaceChaseSchema = z.object({ id: z.string(), type: z.literal("surface-chase"), hostId: z.string(), hostKind: z.enum(["wall", "slab"]), surfaceNormal: vec3Schema, routeElementId: z.string(), path: z.discriminatedUnion("kind", [z.object({ kind: z.literal("line"), start: pointSchema, end: pointSchema }), z.object({ kind: z.literal("arc"), arc: arcSchema })]), widthMm: z.number().positive(), depthMm: z.number().positive() });
 const penetrationSchema = z.object({ id: z.string(), type: z.literal("penetration"), hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), segmentId: z.string(), point: pointSchema.optional(), entry: pointSchema.optional(), exit: pointSchema.optional(), direction: vec3Schema.optional(), diameterMm: z.number().positive(), derived: z.boolean().optional() }).refine((feature) => Boolean(feature.entry || feature.point), { message: "穿孔必须包含入口点或旧版 point。" });
-const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1", "1.2", "2.0"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(z.string(), z.string()), visibleSystems: z.record(z.string(), z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), devices: z.array(deviceSchema).optional(), circuits: z.array(circuitSchema).optional(), wallChases: z.array(wallChaseSchema).optional(), surfaceChases: z.array(surfaceChaseSchema).optional(), penetrations: z.array(penetrationSchema) });
+const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1", "1.2", "2.0", "2.1"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(z.string(), z.string()), visibleSystems: z.record(z.string(), z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), devices: z.array(deviceSchema).optional(), circuits: z.array(circuitSchema).optional(), wallChases: z.array(wallChaseSchema).optional(), surfaceChases: z.array(surfaceChaseSchema).optional(), penetrations: z.array(penetrationSchema) });
+
+type ParsedDevice = z.infer<typeof deviceSchema>;
+
+/** Converts pre-2.1 centre ports to the eight physical holes without changing their IDs. */
+function migrateBoxPorts(device: ParsedDevice, frame: DeviceFrame, ports: NetworkPort[], sourceVersion: string): NetworkPort[] {
+  if (sourceVersion === "2.1" || !["socket", "switch", "network-outlet"].includes(device.deviceType) || ports.some((port) => port.face)) return ports;
+  const width = device.sizeMm[0] / 1000, height = device.sizeMm[1] / 1000;
+  const faces: Array<{ face: NonNullable<NetworkPort["face"]>; direction: Vec3; lateral: Vec3; extent: number }> = [
+    { face: "top", direction: frame.up, lateral: frame.right, extent: height / 2 },
+    { face: "bottom", direction: scaleVec(frame.up, -1), lateral: frame.right, extent: height / 2 },
+    { face: "left", direction: scaleVec(frame.right, -1), lateral: frame.up, extent: width / 2 },
+    { face: "right", direction: frame.right, lateral: frame.up, extent: width / 2 },
+  ];
+  const templates = faces.flatMap((entry, faceIndex) => ([0, 1] as const).map((slot) => {
+    const across = (slot === 0 ? -.22 : .22) * (entry.face === "top" || entry.face === "bottom" ? width : height);
+    return { face: entry.face, slot, direction: entry.direction, position: addVec(addVec(device.position.position, scaleVec(entry.direction, entry.extent)), scaleVec(entry.lateral, across)), index: faceIndex * 2 + slot };
+  }));
+  const unused = new Set(templates.map((template) => template.index));
+  const migrated = ports.map((port) => {
+    const chosen = templates.filter((template) => unused.has(template.index)).sort((a, b) => dotVec(b.direction, port.direction) - dotVec(a.direction, port.direction))[0] ?? templates[0];
+    unused.delete(chosen.index);
+    return { ...port, face: chosen.face, slot: chosen.slot, direction: chosen.direction, position: { position: chosen.position, attachment: port.position.attachment ?? device.position.attachment } };
+  });
+  const defaultSystem = migrated[0]?.system ?? migrateSystem(device.systems[0] as RoutingSystem | LegacyRoutingSystem);
+  for (const template of templates) if (unused.has(template.index)) {
+    migrated.push({ id: `${device.id}:port:migrated:${template.index}`, owner: { kind: "device", id: device.id }, position: { position: template.position, attachment: device.position.attachment }, direction: template.direction, role: device.deviceType === "network-outlet" ? "sink" : "bidirectional", system: defaultSystem, connectedSegmentIds: [], face: template.face, slot: template.slot, flow: "unknown" });
+  }
+  return migrated;
+}
 
 export function createEmptyOverlay(fileName: string, sha256: string): ConduitOverlayDocument {
-  return { schemaVersion: "2.0", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], surfaceChases: [], penetrations: [] };
+  return { schemaVersion: "2.1", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], surfaceChases: [], penetrations: [] };
 }
 
 export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   const parsed = overlaySchema.parse(raw);
-  const legacy = parsed.schemaVersion !== "2.0";
+  const legacy = parsed.schemaVersion !== "2.0" && parsed.schemaVersion !== "2.1";
   const segments: RouteSegment[] = parsed.segments.map((segment) => ({ ...segment, system: migrateSystem(segment.system as RoutingSystem | LegacyRoutingSystem), circuitId: segment.circuitId, legacyUnrooted: segment.legacyUnrooted ?? legacy }));
   const normalizePort = (value: z.infer<typeof portSchema>, owner: NetworkPort["owner"], system: RoutingSystem, segmentId?: string): NetworkPort => ({
     ...value,
@@ -124,7 +169,12 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   });
   const devices: NetworkDevice[] = (parsed.devices ?? []).map((device) => {
     const systems = device.systems.map((system) => migrateSystem(system as RoutingSystem | LegacyRoutingSystem));
-    return { ...device, systems, ports: device.ports.map((value) => normalizePort(value, { kind: "device", id: device.id }, value.system ? migrateSystem(value.system as RoutingSystem | LegacyRoutingSystem) : systems[0] ?? "receptacle", value.segmentId)) };
+    const front = normalizeVec(device.frame?.front ?? device.orientation);
+    const candidateUp: Vec3 = device.frame?.up ?? (Math.abs(front[1]) < .9 ? [0, 1, 0] : [1, 0, 0]);
+    const up = normalizeVec(candidateUp.map((value, axis) => value - front[axis] * dotVec(candidateUp, front)) as Vec3);
+    const right = normalizeVec(device.frame?.right ?? crossVec(up, front));
+    const normalizedPorts = device.ports.map((value) => normalizePort(value, { kind: "device", id: device.id }, value.system ? migrateSystem(value.system as RoutingSystem | LegacyRoutingSystem) : systems[0] ?? "receptacle", value.segmentId));
+    return { ...device, systems, frame: { front, up, right }, mount: device.mount ?? (device.position.attachment ? { kind: "host", attachment: device.position.attachment } : undefined), ports: migrateBoxPorts(device, { front, up, right }, normalizedPorts, parsed.schemaVersion) };
   });
   const circuits: Circuit[] = (parsed.circuits ?? []).map((circuit) => ({ ...circuit, system: migrateSystem(circuit.system as RoutingSystem | LegacyRoutingSystem) }));
   if (legacy && segments.length) {
@@ -144,7 +194,7 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   });
   const colors = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.colors[system] ?? parsed.settings.colors[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>;
   const visibleSystems = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.visibleSystems?.[system] ?? parsed.settings.visibleSystems?.[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? true])) as Record<RoutingSystem, boolean>;
-  return { schemaVersion: "2.0", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, settings: { colors, visibleSystems, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
+  return { schemaVersion: "2.1", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, settings: { colors, visibleSystems, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
 }
 
 /**

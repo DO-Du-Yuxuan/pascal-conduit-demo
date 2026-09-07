@@ -147,14 +147,14 @@ export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentI
   return planRoute(target.system, target.diameterMm, target.system === "sprinkler" ? "suspended" : "surface", [branchPortPoint, ...branchPoints.slice(1)], parameters, explicitPenetrations, { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
 }
 
-export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = []): ConduitOverlayDocument {
+export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], plannedRoute?: PlannedRoute): ConduitOverlayDocument {
   const target = overlay.segments.find((segment) => segment.id === segmentId);
   if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return overlay;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
   const halfSize = electrical ? overlay.settings.junctionBoxSizeMm[0] / 2000 : target.diameterMm / 1000;
   const leftPoint = { ...copyPoint(center), position: add(center.position, scale(mainDirection, -halfSize)) }, rightPoint = { ...copyPoint(center), position: add(center.position, scale(mainDirection, halfSize)) }, branchPortPoint = { ...copyPoint(center), position: add(center.position, scale(branchDirection, halfSize)) };
   const first: RouteSegment = { ...target, id: nextId("split"), end: leftPoint, endPortId: undefined }, second: RouteSegment = { ...target, id: nextId("split"), start: rightPoint, startPortId: undefined };
-  const route = planBranchContinuation(overlay, segmentId, branchPoints, parameters, explicitPenetrations);
+  const route = plannedRoute ?? planBranchContinuation(overlay, segmentId, branchPoints, parameters, explicitPenetrations);
   if (!route || !route.canCommit || !route.segments[0]) return overlay;
   const branchFirst = route.segments[0], nodeId = nextId(electrical ? "box86" : "tee"), ownerKind = electrical ? "junction-box" as const : "fitting" as const, nodePorts = [port(nodeId, 0, leftPoint, scale(mainDirection, -1), first.id, target.system, ownerKind), port(nodeId, 1, rightPoint, mainDirection, second.id, target.system, ownerKind), port(nodeId, 2, branchPortPoint, branchDirection, branchFirst.id, target.system, ownerKind)];
   bindPort(first, false, nodePorts[0]); bindPort(second, true, nodePorts[1]); bindPort(branchFirst, true, nodePorts[2]);

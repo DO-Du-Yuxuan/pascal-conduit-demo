@@ -48,4 +48,22 @@ describe("routing collision validation", () => {
     const preview = planRoute("sprinkler", 50, "suspended", [point(0, 3, 2), point(10, 3, 2)]);
     expect(withCollisionDiagnostics(overlay, preview).canCommit).toBe(true);
   });
+
+  it("raises a newly planned electrical floor crossing with a double-45 bridge", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
+    const preview = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
+    const bridge = preview.fittings.find((fitting) => fitting.fitting === "bridge-bend");
+    expect(preview.canCommit).toBe(true);
+    expect(bridge?.bridge).toMatchObject({ obstacleSegmentId: base.segments[0].id, clearanceMm: 10 });
+    expect(bridge?.bridge?.crestStart[1]).toBeGreaterThan(0);
+  });
+
+  it("does not bridge a sprinkler crossing or parallel floor overlap", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
+    const sprinkler = withCollisionDiagnostics(base, planRoute("sprinkler", 50, "suspended", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
+    const parallel = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(-.8, 0, 0, "floor-a"), point(.8, 0, 0, "floor-a")]));
+    expect(sprinkler.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
+    expect(parallel.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
+    expect(parallel.canCommit).toBe(false);
+  });
 });

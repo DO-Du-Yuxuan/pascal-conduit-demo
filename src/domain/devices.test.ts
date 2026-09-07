@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, createNetworkDevice, deviceDiagnostics, insertDeviceOnSegment, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, insertDeviceOnSegment, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, deleteNetworkObject, planRoute } from "./routing";
 
@@ -54,8 +54,8 @@ describe("network devices and rooted circuits", () => {
     const overlay = rooted("receptacle"), original = overlay.segments[0];
     const inserted = insertDeviceOnSegment(overlay, original.id, "socket", [1, 1, 0]), socket = inserted.devices.find((device) => device.deviceType === "socket")!;
     expect(inserted.segments).toHaveLength(2);
-    expect(socket.ports).toHaveLength(3);
-    expect(new Set(inserted.segments.flatMap((segment) => [segment.startPortId, segment.endPortId]).filter((id): id is string => Boolean(id?.startsWith(socket.id))))).toEqual(new Set(socket.ports.slice(0, 2).map((port) => port.id)));
+    expect(socket.ports).toHaveLength(8);
+    expect(new Set(inserted.segments.flatMap((segment) => [segment.startPortId, segment.endPortId]).filter((id): id is string => Boolean(id?.startsWith(socket.id))))).toHaveLength(2);
     expect(inserted.segments.some((segment) => segment.start.position[0] < 1 && segment.end.position[0] > 1)).toBe(false);
     expect(portCanStart(inserted, socket, socket.ports[2], "receptacle")).toBe(true);
     expect(inserted.devices[0].ports.flatMap((port) => port.connectedSegmentIds)).not.toContain(original.id);
@@ -66,6 +66,29 @@ describe("network devices and rooted circuits", () => {
     const inserted = insertDeviceOnSegment(routed, segment.id, "socket", [1, 0, 0]);
     expect(inserted.devices.some((device) => device.deviceType === "socket" && device.position.attachment?.hostKind === "slab")).toBe(true);
     expect(() => createNetworkDevice("socket", point(1, 0, 0, "slab"))).toThrow();
+  });
+
+  it("supports floating point devices, stable 86-box holes and a terminal network outlet on an open end", () => {
+    const red = rooted("receptacle"), blue = rooted("lighting"), white = rooted("network");
+    const floatingRed = { ...red, segments: red.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [2, 2, 0] as [number, number, number] } })) };
+    const socket = insertDeviceOnSegment(floatingRed, floatingRed.segments[0].id, "socket", [1, 2, 0]);
+    expect(socket.devices.find((device) => device.deviceType === "socket")?.mount).toMatchObject({ kind: "segment" });
+    expect(socket.devices.find((device) => device.deviceType === "socket")?.ports.filter((port) => port.face === "left" || port.face === "right")).toHaveLength(4);
+    const floatingBlue = { ...blue, segments: blue.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [0, 2, 2] as [number, number, number] } })) };
+    const light = insertDeviceOnSegment(floatingBlue, floatingBlue.segments[0].id, "luminaire", [0, 2, 1]);
+    expect(light.devices.find((device) => device.deviceType === "luminaire")?.frame?.up).toEqual([0, 1, 0]);
+    const floatingWhite = { ...white, segments: white.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [2, 2, 0] as [number, number, number] } })) }, endpoints = openRouteEndpoints(floatingWhite);
+    const outlet = placeDeviceAtEndpoint(floatingWhite, endpoints[0], "network-outlet");
+    expect(outlet.devices.find((device) => device.deviceType === "network-outlet")?.ports.some((port) => port.connectedSegmentIds.length === 1)).toBe(true);
+    expect(openRouteEndpoints(outlet).some((endpoint) => endpoint.segmentId === endpoints[0].segmentId && endpoint.end === endpoints[0].end)).toBe(false);
+  });
+
+  it("continues a rooted route from an open conduit end without a device", () => {
+    const base = rooted("receptacle"), endpoint = openRouteEndpoints(base)[0]!;
+    const plan = planRoute(endpoint.system, 20, "surface", [endpoint.point, point(3, 1, 1)]);
+    const extended = commitEndpointRoute(base, endpoint, plan);
+    expect(extended.segments.length).toBeGreaterThan(base.segments.length);
+    expect(extended.fittings.some((fitting) => fitting.segmentIds.includes(endpoint.segmentId))).toBe(true);
   });
 
   it("connects to a terminal device and continues the same circuit from a socket", () => {
@@ -102,6 +125,19 @@ describe("network devices and rooted circuits", () => {
     expect(inserted.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "tee", system: "sprinkler" })]));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.ports[0].connectedSegmentIds).toHaveLength(1);
+  });
+
+  it("inserts a sprinkler head on a floating segment after a standard elbow", () => {
+    let overlay = rooted("sprinkler");
+    const circuit = overlay.circuits[0], first = overlay.segments[0];
+    overlay = { ...overlay, segments: [{ ...first, start: { position: [0, 2, 0] }, end: { position: [1, 2, 0] }, circuitId: circuit.id }] };
+    const extension = planRoute("sprinkler", 50, "suspended", [{ position: [1, 2, 0] }, { position: [1, 2, 1] }]);
+    const endpoint = openRouteEndpoints(overlay).find((candidate) => candidate.end === "end")!;
+    overlay = commitEndpointRoute(overlay, endpoint, extension);
+    const afterElbow = overlay.segments.find((segment) => segment.id !== first.id && Math.abs(segment.end.position[2] - 1) < .01)!;
+    const withHead = insertDeviceOnSegment(overlay, afterElbow.id, "sprinkler-head", [1, 2, .5]);
+    expect(withHead.devices.some((device) => device.deviceType === "sprinkler-head")).toBe(true);
+    expect(withHead.fittings.filter((fitting) => fitting.fitting === "tee").length).toBeGreaterThan(0);
   });
 
   it("deletes a source, its circuit and connected network atomically", () => {

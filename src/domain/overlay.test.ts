@@ -22,7 +22,7 @@ describe("Conduit overlay", () => {
     delete legacy.surfaceChases; legacy.wallChases = [{ id: "legacy-chase", type: "wall-chase", wallId: "wall-a", segmentId: "pipe", start: point(0, 1, 0), end: point(1, 1, 0), widthMm: 30, depthMm: 25 }];
     legacy.penetrations = [{ id: "legacy-hole", type: "penetration", hostId: "wall-a", hostKind: "wall", segmentId: "pipe", point: point(.5, 1, 0), diameterMm: 30 }];
     const migratedLegacy = parseOverlay(legacy);
-    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.0", junctionBoxes: [], devices: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
+    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.1", junctionBoxes: [], devices: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
     expect(migratedLegacy.surfaceChases[0]).toMatchObject({ type: "surface-chase", hostId: "wall-a", hostKind: "wall", path: { kind: "line" } });
     expect(migratedLegacy.penetrations[0]).toMatchObject({ entry: { position: [.5, 1, 0] }, exit: { position: [.5, 1, 0] }, direction: [0, 0, 1], derived: true });
     expect(parseOverlay(JSON.parse(JSON.stringify(migratedLegacy)))).toEqual(migratedLegacy);
@@ -49,6 +49,21 @@ describe("Conduit overlay", () => {
     expect(migrated.segments.map((segment) => segment.system)).toEqual(["receptacle", "lighting", "network"]);
     expect(migrated.segments.every((segment) => segment.legacyUnrooted)).toBe(true);
     expect(migrated.circuits.map((circuit) => circuit.status)).toEqual(["legacy-unrooted", "legacy-unrooted", "legacy-unrooted"]);
+  });
+
+  it("migrates pre-2.1 86 box centre ports to edge holes without changing connection IDs", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("legacy.json", "sha")));
+    raw.schemaVersion = "2.0";
+    raw.devices = [{
+      id: "socket-old", type: "network-device", deviceType: "socket", name: "旧插座", position: point(0, 1, 0), sizeMm: [86, 86, 50], orientation: [0, 0, 1], systems: ["receptacle"],
+      ports: [{ id: "socket-old:port:0", position: point(0, 1, 0), direction: [0, 1, 0], role: "bidirectional", system: "receptacle", connectedSegmentIds: ["line"] }], createdAt: "old",
+    }];
+    const migrated = parseOverlay(raw), device = migrated.devices[0];
+    expect(device.ports).toHaveLength(8);
+    const retained = device.ports.find((port) => port.id === "socket-old:port:0");
+    expect(retained).toMatchObject({ connectedSegmentIds: ["line"], face: "top", slot: 0 });
+    expect(retained?.position.position[1]).toBeCloseTo(1.043);
+    expect(device.ports.every((port) => port.face && port.slot !== undefined)).toBe(true);
   });
 
   it("makes explicit segments, sweep and straight-plus-arc wall chases", () => {

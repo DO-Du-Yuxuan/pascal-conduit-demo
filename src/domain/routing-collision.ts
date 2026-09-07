@@ -1,4 +1,4 @@
-import type { BendArc, ConduitOverlayDocument, RouteSegment, Vec3 } from "./overlay";
+import type { BendArc, ConduitOverlayDocument, NetworkPort, RouteFitting, RoutePoint, RouteSegment, Vec3 } from "./overlay";
 import type { PlannedRoute, RouteDiagnostic } from "./routing";
 
 type Primitive = { id: string; a: Vec3; b: Vec3; radius: number; segmentId?: string; relatedSegmentIds?: string[]; portIds?: string[] };
@@ -47,6 +47,9 @@ function primitivesForPlan(plan: PlannedRoute): Primitive[] {
     if (fitting.arc) {
       const points = arcPoints(fitting.arc);
       for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
+    } else if (fitting.bridge) {
+      const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
+      for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
     } else result.push({ id: fitting.id, a: fitting.position.position, b: fitting.position.position, radius: fitting.diameterMm / 1800, relatedSegmentIds: fitting.segmentIds });
   }
   return result;
@@ -57,6 +60,9 @@ function primitivesForOverlay(overlay: ConduitOverlayDocument, ignoredSegmentId?
   for (const fitting of overlay.fittings) if (!fitting.segmentIds.includes(ignoredSegmentId ?? "")) {
     if (fitting.arc) {
       const points = arcPoints(fitting.arc);
+      for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
+    } else if (fitting.bridge) {
+      const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
       for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
     } else result.push({ id: fitting.id, a: fitting.position.position, b: fitting.position.position, radius: fitting.diameterMm / 1800, relatedSegmentIds: fitting.segmentIds });
   }
@@ -126,7 +132,46 @@ export function validateBranchCandidate(overlay: ConduitOverlayDocument, ignored
   });
 }
 
+const electrical = (system: RouteSegment["system"]) => system === "receptacle" || system === "lighting" || system === "network";
+const isGroundSegment = (segment: RouteSegment) => Boolean(segment.start.attachment && segment.end.attachment && segment.start.attachment.hostKind === "slab" && segment.end.attachment.hostKind === "slab" && segment.start.attachment.hostId === segment.end.attachment.hostId && segment.start.attachment.surface === "top" && segment.end.attachment.surface === "top");
+const sameGround = (first: RouteSegment, second: RouteSegment) => isGroundSegment(first) && isGroundSegment(second) && first.start.attachment!.hostId === second.start.attachment!.hostId;
+const pointAt = (segment: RouteSegment, factor: number): RoutePoint => ({ position: add(segment.start.position, scale(subtract(segment.end.position, segment.start.position), factor)), attachment: segment.start.attachment ? structuredClone(segment.start.attachment) : undefined });
+const segmentLength = (segment: RouteSegment) => length(subtract(segment.end.position, segment.start.position));
+
+/** Replaces a newly planned straight floor crossing with a raised double-45 bridge. */
+function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): PlannedRoute | null {
+  for (const proposed of plan.segments) {
+    if (!electrical(proposed.system) || !isGroundSegment(proposed) || plan.fittings.some((fitting) => fitting.segmentIds.includes(proposed.id))) continue;
+    const direction = normalize(subtract(proposed.end.position, proposed.start.position)), proposedLength = segmentLength(proposed);
+    for (const obstacle of overlay.segments) {
+      if (!electrical(obstacle.system) || !sameGround(proposed, obstacle)) continue;
+      const obstacleDirection = normalize(subtract(obstacle.end.position, obstacle.start.position));
+      if (Math.abs(dot(direction, obstacleDirection)) > .98) continue;
+      const first = segmentPrimitive(proposed), second = segmentPrimitive(obstacle), hit = closestSegmentPoints(first, second);
+      if (hit.distance > first.radius + second.radius + .001) continue;
+      const along = dot(subtract(hit.point, proposed.start.position), direction), rise = first.radius + second.radius + .01, topHalf = second.radius + .01, required = rise + topHalf + .02;
+      if (along < required || proposedLength - along < required) continue;
+      const entry = add(hit.point, scale(direction, -(rise + topHalf))), crestStart = add(add(hit.point, scale(direction, -topHalf)), [0, rise, 0]), crestEnd = add(add(hit.point, scale(direction, topHalf)), [0, rise, 0]), exit = add(hit.point, scale(direction, rise + topHalf));
+      const entryFactor = Math.max(0, Math.min(1, dot(subtract(entry, proposed.start.position), direction) / proposedLength)), exitFactor = Math.max(0, Math.min(1, dot(subtract(exit, proposed.start.position), direction) / proposedLength));
+      const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor) }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor) };
+      const bridgeId = `${proposed.id}:bridge`, bridgePorts: NetworkPort[] = [
+        { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system: proposed.system, connectedSegmentIds: [before.id], segmentId: before.id },
+        { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
+      ];
+      before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
+      const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: 200, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: [...hit.point] as Vec3, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacle.id, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
+      const surfaceChases = plan.surfaceChases.flatMap((chase) => chase.routeElementId !== proposed.id || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: `${chase.id}:bridge-a`, routeElementId: before.id, path: { kind: "line" as const, start: clonePoint(before.start), end: clonePoint(before.end) } }, { ...chase, id: `${chase.id}:bridge-b`, routeElementId: after.id, path: { kind: "line" as const, start: clonePoint(after.start), end: clonePoint(after.end) } }]);
+      return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...plan.fittings, fitting], surfaceChases };
+    }
+  }
+  return null;
+}
+
+function clonePoint(point: RoutePoint): RoutePoint { return { position: [...point.position] as Vec3, attachment: point.attachment ? structuredClone(point.attachment) : undefined }; }
+
 export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>): PlannedRoute {
-  const diagnostics = validatePlannedRoute(overlay, plan, ignoredSegmentId, ignoredObjectIds);
-  return { ...plan, diagnostics, canCommit: diagnostics.length === 0 };
+  let bridged = plan, next = bridgeCandidate(overlay, bridged), count = 0;
+  while (next && count < 8) { bridged = next; next = bridgeCandidate(overlay, bridged); count += 1; }
+  const diagnostics = validatePlannedRoute(overlay, bridged, ignoredSegmentId, ignoredObjectIds);
+  return { ...bridged, diagnostics, canCommit: diagnostics.length === 0 };
 }
