@@ -51,7 +51,7 @@ describe('2D point annotations', () => {
     overlay.devices=[light];
     const context=createPlanContext(nodes,overlay);
     expect(context.deviceLevel(light)).toBe('l0');
-    expect(buildPlanAnnotations(nodes,overlay,'l0','millimeters',context).annotations).toHaveLength(1);
+    expect(buildPlanAnnotations(nodes,overlay,'l0','millimeters',context).annotations).toHaveLength(0);
   });
 
   it('uses the actual model level value for basement and skipped floors', () => {

@@ -10,6 +10,8 @@ import { ExteriorDimensions } from "./plan/ExteriorDimensions";
 import { ConduitPlanOverlay } from "./plan/ConduitPlan";
 import { ConstructionAnnotations, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
 import { PointPositionDimensions } from "./plan/PointPositionDimensions";
+import { ConstructionLegend } from "./plan/ConstructionLegend";
+import { allConstructionDrawingsSelected, setAllConstructionDrawings } from "./plan/construction-drawings";
 import "./evaluation.css";
 import { parseProject } from "./parser/parse";
 import { Diagnostic, NodeData, Parsed } from "./types";
@@ -124,9 +126,9 @@ const visibilityDefault: Visibility = {
   dimensions: true,
   devices: true,
   conduitReceptacle: true,
-  conduitLighting: true,
-  conduitNetwork: true,
-  conduitSprinkler: true,
+  conduitLighting: false,
+  conduitNetwork: false,
+  conduitSprinkler: false,
   constructionAnnotations: true,
   pointPositionDimensions: true,
 };
@@ -688,13 +690,13 @@ function App() {
     window.addEventListener("keydown", onSceneHistoryShortcut, true);
     return () => window.removeEventListener("keydown", onSceneHistoryShortcut, true);
   }, []);
-  const layerGroup = (title: string, entries: Partial<Record<keyof Visibility, string>>) => <details className="floating-layer-panel">
+  const layerGroup = (title: string, entries: Partial<Record<keyof Visibility, string>>, footer?: React.ReactNode) => <details className="floating-layer-panel">
     <summary>{title}</summary>
-    <div className="visibility">{Object.entries(entries).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={visibility[key as keyof Visibility]} onChange={() => toggleVisibility(key as keyof Visibility)} />{label}</label>)}</div>
+    <div className="visibility">{Object.entries(entries).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={visibility[key as keyof Visibility]} onChange={() => toggleVisibility(key as keyof Visibility)} />{label}</label>)}{footer}</div>
   </details>;
   const layerControls = <>
     {layerGroup("建筑图层", { walls: "墙体", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
-    {layerGroup("管线图层", { conduitReceptacle: "插座管线", conduitLighting: "照明管线", conduitNetwork: "网络管线", conduitSprinkler: "消防管线", devices: "点位图块", constructionAnnotations: "点位名称与离地高度", pointPositionDimensions: "点位定位尺寸" })}
+    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
   const reportPanels = <>
@@ -1434,6 +1436,7 @@ function Plan({
           {showConnectivity && connectivityGraph && <ConnectivityOverlay graph={connectivityGraph} nodes={nodes} levelId={levelId} />}
         </g>
       </svg>
+      <ConstructionLegend sections={constructionPlan.installationSchedule} annotationScale={pointAnnotationScale} />
       {measurementMode !== "off" && <div className="measure-hint">{measurementStart ? `${orthogonalLock ? activeMeasurementMode === "horizontal" ? "水平正交已开启" : "垂直正交已开启" : "自由对齐"} · 点击第二点 · Shift 切换正交 · Esc 退出` : `${orthogonalLock ? "正交已开启" : "正交已关闭"} · 点击第一点 · Shift 切换正交 · Esc 退出`}</div>}
       {visibility.constructionAnnotations && <ConstructionNotices plan={constructionPlan} onFocus={(id, anchor) => { onSelect(id); if (anchor) setViewBox({ minX: anchor[0] - 3, minZ: anchor[1] - 3, width: 6, height: 6 }); }} />}
       <Compass rotation={rotation} />

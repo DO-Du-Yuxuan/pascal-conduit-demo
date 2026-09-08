@@ -7,6 +7,7 @@ import {createEmptyOverlay,type ConduitOverlayDocument,type NetworkDevice} from 
 import {createPlanContext} from './model';
 import {ConduitPlanOverlay,devicePlanRotation} from './ConduitPlan';
 import {ConstructionAnnotations,ConstructionNotices,useConstructionPlan} from './ConstructionAnnotations';
+import {ConstructionLegend} from './ConstructionLegend';
 import {buildExteriorDimensions} from '../geometry/exterior-dimensions';
 import {useOverlayStore} from '../domain/store';
 const nodes={l:{id:'l',type:'level',level:0},w:{id:'w',type:'wall',parentId:'l',start:[0,0],end:[4,0],thickness:.2}} as unknown as Record<string,NodeData>;
@@ -71,5 +72,14 @@ describe('construction plan rendering integration',()=>{
   expect(Number(rule?.getAttribute('x1'))).toBeGreaterThan(0);
   const points=callout?.querySelector('polyline')?.getAttribute('points')?.trim().split(/\s+/).map(point=>point.split(',').map(Number));
   expect(points?.[points.length-1]?.[0]).toBeCloseTo(points?.[points.length-2]?.[0] ?? NaN);
+ });
+ it('renders ceiling-device installation information in the drawing schedule',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const sections=[{system:'lighting' as const,label:'灯具施工图',rows:[{deviceType:'luminaire' as const,name:'筒灯',mounting:'安装参考面',height:'1500 mm',quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
+  act(()=>root.render(<ConstructionLegend sections={sections} annotationScale={1}/>));
+  expect(div.querySelector('[aria-label="点位图例及安装高度表"]')).not.toBeNull();
+  expect(div.querySelector('[aria-label="筒灯图块"]')).not.toBeNull();
+  expect(div.querySelector('[data-schedule-row]')?.getAttribute('title')).toContain('依据：explicit');
+  expect(div.textContent).toContain('筒灯');expect(div.textContent).toContain('H=1500 mm');expect(div.textContent).toContain('×2');
  });
 });

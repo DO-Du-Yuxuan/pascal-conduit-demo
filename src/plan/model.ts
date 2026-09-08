@@ -84,7 +84,8 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
   for (const d of overlay.devices.filter(context.deviceVisible)) {
     const level = context.deviceLevel(d);
     if (!level) { notices.push({ sourceId: d.id, levelId: null, text: '楼层归属不明，未绘制设备' }); continue; }
-    if (level === levelId) devices.push(d);
+    const attachment = d.position.attachment ?? (d.mount?.kind === 'host' ? d.mount.attachment : undefined);
+    if (level === levelId && attachment?.hostKind === 'wall') devices.push(d);
   }
   const terminal = (d:NetworkDevice)=>!DEVICE_DEFAULTS[d.deviceType].source;
   const remaining=new Set(devices.map(d=>d.id));
@@ -103,7 +104,7 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     if (!context.systemVisibility[box.system] || context.hidden.has(box.id) || context.hostHidden(box.position.attachment)) continue;
     const level = context.linkedLevel(box.segmentIds, box.position.attachment);
     if (!level) notices.push({ sourceId: box.id, levelId: null, text: '楼层归属不明，未绘制检修盒' });
-    else if (level === levelId) annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${length(box.position.position[1]-modelLevelBase(nodes,level))}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height:length(box.position.position[1]-modelLevelBase(nodes,level))}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
+    else if (level === levelId && box.position.attachment?.hostKind === 'wall') annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${length(box.position.position[1]-modelLevelBase(nodes,level))}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height:length(box.position.position[1]-modelLevelBase(nodes,level))}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
   }
   return { annotations, notices };
 }

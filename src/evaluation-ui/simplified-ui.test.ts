@@ -61,9 +61,14 @@ describe("simplified evaluation and layer controls", () => {
 
   it("keeps evaluation layers separate while exposing construction drawing layers", () => {
     expect(appSource).toContain('layerGroup("建筑图层"');
-    expect(appSource).toContain('layerGroup("管线图层"');
-    expect(appSource).toContain('constructionAnnotations: "点位名称与离地高度"');
-    expect(appSource).toContain('pointPositionDimensions: "点位定位尺寸"');
+    expect(appSource).toContain('layerGroup("施工图层"');
+    expect(appSource).toContain('conduitReceptacle: "插座施工图"');
+    expect(appSource).toContain('conduitLighting: "灯具施工图"');
+    expect(appSource).toContain('conduitNetwork: "弱电施工图"');
+    expect(appSource).toContain('conduitSprinkler: "消防施工图"');
+    expect(appSource).toContain('aria-label="全部施工图"');
+    expect(appSource).not.toContain('constructionAnnotations: "点位名称与离地高度"');
+    expect(appSource).not.toContain('pointPositionDimensions: "点位定位尺寸"');
     expect(appSource).toContain('aria-label="点位标注比例"');
     expect(appSource).not.toContain('<summary>开发信息</summary>');
     expect(appSource).toContain('boxes: next, centers: next, axes: next');
