@@ -52,6 +52,8 @@ describe('construction plan rendering integration',()=>{
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];const context=createPlanContext(nodes,overlay);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('scale(0.018)');
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} deviceVariants={{d:'A'}}/></svg>));
+  expect(div.querySelector('[data-device-variant="A"]')?.textContent).toBe('A');
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0} annotationScale={2}/></svg>));
   expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('scale(0.036)');
  });
@@ -75,7 +77,7 @@ describe('construction plan rendering integration',()=>{
  });
  it('renders ceiling-device installation information in the drawing schedule',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
-  const sections=[{system:'lighting' as const,label:'灯具施工图',rows:[{deviceType:'luminaire' as const,name:'筒灯',mounting:'安装参考面',height:'1500 mm',quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
+  const sections=[{system:'lighting' as const,label:'灯具施工图',rows:[{deviceType:'luminaire' as const,name:'筒灯',mounting:'安装参考面',height:'1500 mm',heightMeters:1.5,quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
   act(()=>root.render(<ConstructionLegend sections={sections} annotationScale={1}/>));
   expect(div.querySelector('[aria-label="点位图例及安装高度表"]')).not.toBeNull();
   expect(div.querySelector('[aria-label="筒灯图块"]')).not.toBeNull();

@@ -5,7 +5,7 @@ import type { ViewBox } from '../geometry/transform';
 import type { ManualMeasurement, MeasurementUnit } from '../geometry/manual-measurement';
 import type { ExteriorDimensionReport } from '../geometry/exterior-dimensions';
 import { buildPlanAnnotations, buildPointPositionDimensions, createPlanContext, type Point } from './model';
-import { buildInstallationSchedule } from './construction-drawings';
+import { buildInstallationSchedule, installationVariantByDeviceId } from './construction-drawings';
 import { annotationRuleSide, layoutExteriorAnnotations, rotatePoint } from './layout';
 import { useOverlayStore } from '../domain/store';
 
@@ -27,8 +27,9 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
   const report=useMemo(()=>overlay && context && devicesVisible !== false ? buildPlanAnnotations(nodes,overlay,levelId,unit,context) : {annotations:[],notices:[]},[nodes,overlay,levelId,unit,context,devicesVisible]);
   const positionDimensions=useMemo(()=>overlay&&context&&devicesVisible!==false?buildPointPositionDimensions(nodes,overlay,levelId,context):[],[nodes,overlay,levelId,context,devicesVisible]);
   const installationSchedule=useMemo(()=>overlay&&context&&devicesVisible!==false?buildInstallationSchedule(nodes,overlay,levelId,unit,context):[],[nodes,overlay,levelId,unit,context,devicesVisible]);
+  const deviceVariants=useMemo(()=>installationVariantByDeviceId(installationSchedule),[installationSchedule]);
   const layout=useMemo(()=>layoutExteriorAnnotations(report.annotations,exterior,annotationScale),[report.annotations,exterior,annotationScale]);
-  return {context,scale,report,layout,positionDimensions,installationSchedule,annotationScale};
+  return {context,scale,report,layout,positionDimensions,installationSchedule,deviceVariants,annotationScale};
 }
 export type ConstructionPlan = ReturnType<typeof useConstructionPlan>;
 export function ConstructionAnnotations({plan,rotation,onSelect}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void}) {
