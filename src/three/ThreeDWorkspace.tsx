@@ -504,7 +504,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         </div>
         {!panelCollapsed && <>
           <nav className="conduit-tool-grid" aria-label="编辑工具">
-            {(["select", "draw", "branch", "point", "delete"] as Tool[]).map((item) => <button key={item} title={({ select: "选择对象", draw: "绘制管线", branch: "从已有管段拉出分支", point: "放置设备点位", delete: "删除管网对象" } as const)[item]} className={tool === item ? `active tool-${item}` : `tool-${item}`} onClick={() => chooseTool(item)}>{({ select: "选择", draw: "画管", branch: "分支", point: "点位", delete: "删除" } as const)[item]}</button>)}
+            {(["select", "draw", "branch", "point", "delete"] as Tool[]).map((item) => <button key={item} title={({ select: "选择对象", draw: "绘制管线", branch: "从已有管段拉出分支", point: "放置设备点位", delete: "删除管网对象" } as const)[item]} className={tool === item ? `active tool-${item}` : `tool-${item}`} onClick={() => item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)}>{({ select: "选择", draw: "画管", branch: "分支", point: "点位", delete: "删除" } as const)[item]}</button>)}
           </nav>
 
           {(tool === "draw" || tool === "branch") && <section className="conduit-context-section">

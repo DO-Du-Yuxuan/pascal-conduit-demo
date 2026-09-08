@@ -56,4 +56,8 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain('if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") {');
     expect(workspace).toContain("deleteSelectedObjects();");
   });
+
+  it("deletes the current selection when the Delete toolbar button is clicked", () => {
+    expect(workspace).toContain('item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)');
+  });
 });
