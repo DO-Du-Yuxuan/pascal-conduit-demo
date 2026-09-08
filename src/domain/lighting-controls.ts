@@ -5,6 +5,17 @@ export type LightingControlResult = { status: "committed"; overlay: ConduitOverl
 export type LightingControlCreateResult = { status: "committed"; overlay: ConduitOverlayDocument; group: LightingControlGroup } | { status: "rejected"; overlay: ConduitOverlayDocument; reason: LightingControlRejection };
 
 const unique = (ids: readonly string[]) => [...new Set(ids)];
+
+/** Each persisted control group represents one independently operated switch gang. */
+export function switchGangCount(overlay: Pick<ConduitOverlayDocument, "lightingControlGroups">, switchDeviceId: string): number | null {
+  const count = overlay.lightingControlGroups.filter((group) => group.switchDeviceId === switchDeviceId).length;
+  return count > 0 ? count : null;
+}
+
+export function switchGangLabel(count: number): string {
+  const names: Record<number, string> = { 1: "单开开关", 2: "双开开关", 3: "三开开关", 4: "四开开关" };
+  return names[count] ?? `${count}开开关`;
+}
 const nextGroupId = (overlay: ConduitOverlayDocument) => {
   const used = new Set(overlay.lightingControlGroups.map((group) => group.id));
   let sequence = overlay.lightingControlGroups.length + 1;

@@ -1,13 +1,17 @@
 import React from 'react';
 import type { NetworkDeviceType } from '../domain/overlay';
 /** Local units are screen pixels; callers anchor this to real model geometry. */
-export function DeviceSymbol({ type }: { type: NetworkDeviceType | 'junction-box' }) {
+export function DeviceSymbol({ type, switchGangs }: { type: NetworkDeviceType | 'junction-box'; switchGangs?: number | null }) {
   switch (type) {
     case 'strong-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-6 4L6-4M-6-4L6 4"/></>;
     case 'weak-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-5 0H5"/></>;
     case 'junction-box': return <><rect x="-7" y="-7" width="14" height="14"/><path d="M-3-3L3 3M3-3L-3 3"/></>;
     case 'socket': return <><path d="M-8 3 A8 8 0 0 1 8 3 Z"/><path d="M-3-1V-5M3-1V-5M0 3V7"/></>;
-    case 'switch': return <><circle r="4"/><path d="M3-3L8-8M8-8H12"/></>;
+    case 'switch': {
+      const gangs = Math.max(1, Math.min(6, switchGangs ?? 1));
+      const offsets = Array.from({ length: gangs }, (_, index) => (index - (gangs - 1) / 2) * 3);
+      return <><circle r="4"/>{offsets.map((offset, index) => <path key={index} d={`M3 ${offset - 1}L8 ${offset - 6}H12`}/>)}</>;
+    }
     case 'luminaire': return <><circle r="8"/><path d="M-5.5-5.5L5.5 5.5M5.5-5.5L-5.5 5.5"/></>;
     case 'network-outlet': return <><rect x="-7" y="-6" width="14" height="12"/><path d="M-4-2H4V2H2V4H-2V2H-4Z"/></>;
     case 'sprinkler-head': return <><circle r="6"/><path d="M-9 0H9M0-9V9"/></>;

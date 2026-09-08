@@ -3,6 +3,7 @@ import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegmen
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
 import { DEVICE_DEFAULTS } from '../domain/devices';
+import { switchGangCount, switchGangLabel } from '../domain/lighting-controls';
 
 export type Point = [number, number];
 export type PlanAnnotation = {
@@ -27,6 +28,12 @@ export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Rec
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
+export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDocument): string {
+  const source = device.name.trim();
+  if (device.deviceType !== 'switch' || (source && source !== DEVICE_DEFAULTS.switch.label)) return source || DEVICE_DEFAULTS[device.deviceType].label;
+  const gangs = switchGangCount(overlay, device.id);
+  return gangs ? switchGangLabel(gangs) : DEVICE_DEFAULTS.switch.label;
+}
 export function createPlanContext(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, hidden: ReadonlySet<string> = new Set(), systemVisibility: Readonly<Record<RoutingSystem, boolean>> = overlay.settings.visibleSystems) {
   const scene = parseBuilding({ nodes });
   const hostLevel = (a?: HostAttachment): string | null => {
@@ -99,7 +106,7 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     const planPoints=group.map(d=>point2(d.position.position)),planSpread=Math.max(...planPoints.flatMap((p,i)=>planPoints.map(q=>Math.hypot(p[0]-q[0],p[1]-q[1])))),heightSpread=Math.max(...group.map(d=>d.position.position[1]))-Math.min(...group.map(d=>d.position.position[1])),arrangement:PlanAnnotation['arrangement']=group.length===1?'single':planSpread<=.15&&heightSpread>.15?'vertical':'horizontal';
     const wall=nodes[(group[0].position.attachment??(group[0].mount?.kind==='host'?group[0].mount.attachment:undefined))?.hostId??''];const direction:Array<number>=wall?.type==='wall'&&Array.isArray(wall.start)&&Array.isArray(wall.end)?[wall.end[0]-wall.start[0],wall.end[1]-wall.start[1]]:[1,0];
     group.sort((a,b)=>arrangement==='vertical'?b.position.position[1]-a.position.position[1]:(a.position.position[0]*direction[0]+a.position.position[2]*direction[1])-(b.position.position[0]*direction[0]+b.position.position[2]*direction[1]));
-    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:d.name.trim()||DEVICE_DEFAULTS[d.deviceType].label,count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(deviceInstallationHeightMeters(d,nodes,levelId))}));
+    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:devicePlanLabel(d,overlay),count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(deviceInstallationHeightMeters(d,nodes,levelId))}));
     const rows=arrangement==='horizontal'?rawRows.reduce<typeof rawRows>((all,row)=>{const found=all.find(item=>item.label===row.label&&item.height===row.height);if(found){found.count++;found.sourceIds.push(...row.sourceIds);found.position=undefined;}else all.push(row);return all;},[]):rawRows;
     const anchor:[number,number]=[planPoints.reduce((s,p)=>s+p[0],0)/planPoints.length,planPoints.reduce((s,p)=>s+p[1],0)/planPoints.length],text=rows.map(row=>`${row.label}${row.count>1?` × ${row.count}`:''}${row.position?` ${row.position}`:''}\nH=${row.height}`).join('\n');
     annotations.push({id:`group:${group.map(d=>d.id).sort().join(':')}`,sourceId:group[0].id,relatedIds:group.map(d=>d.id),levelId,anchor,kind:'height',text,arrangement,rows,measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});

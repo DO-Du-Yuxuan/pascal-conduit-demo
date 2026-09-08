@@ -31,6 +31,14 @@ describe('construction plan rendering integration',()=>{
   expect(div.querySelector('[data-conduit-segment]')).toBeNull();
   expect(div.querySelector('[data-lighting-control-line]')?.textContent).toBe('');
  });
+ it('renders one switch blade for each persisted control group',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]};overlay.devices=[wallSwitch];
+  overlay.lightingControlGroups=[{id:'a',switchDeviceId:'switch',luminaireDeviceIds:['light-a'],createdAt:''},{id:'b',switchDeviceId:'switch',luminaireDeviceIds:['light-b'],createdAt:''}];
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  const symbol=div.querySelector('[data-device-symbol="switch"]');expect(symbol?.getAttribute('data-switch-gangs')).toBe('2');expect(symbol?.querySelectorAll('path')).toHaveLength(2);
+ });
  it('orients wall devices from their host normal while ceiling devices stay screen-upright',()=>{
   const wallDevice={...device,position:{...device.position,attachment:{...device.position.attachment!,normal:[1,0,0] as [number,number,number]}}};
   const light={...device,deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,1.5,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:1500}};

@@ -18,6 +18,18 @@ describe('2D point annotations', () => {
     expect(report.annotations[0].text).not.toMatch(/管径|上行|下行|墙端|模型层基准/);
   });
 
+  it('derives switch gang text from persisted independent control groups', () => {
+    const overlay = createEmptyOverlay('a', 'sha'), wallSwitch = { ...device('switch'), deviceType: 'switch' as const, name: '开关', systems: ['lighting' as const] };
+    overlay.devices = [wallSwitch];
+    overlay.lightingControlGroups = [
+      { id: 'a', switchDeviceId: wallSwitch.id, luminaireDeviceIds: ['light-a'], createdAt: '' },
+      { id: 'b', switchDeviceId: wallSwitch.id, luminaireDeviceIds: ['light-b'], createdAt: '' },
+    ];
+    expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0].text).toBe('双开开关\nH=257 mm');
+    wallSwitch.name = '玄关总控';
+    expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0].text).toBe('玄关总控\nH=257 mm');
+  });
+
   it('keeps editable names through movement and formats model-derived heights', () => {
     const overlay = createEmptyOverlay('a', 'sha'), original = device(); overlay.devices = [original, device('other')];
     original.name='五孔墙身插座';const before = JSON.stringify(overlay);
