@@ -128,6 +128,14 @@ export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: 
 const isReassignableBox = (device: NetworkDevice) => device.deviceType === "socket" || device.deviceType === "switch";
 const reassignablePeer = (device: NetworkDevice, port: NetworkPort, system: RoutingSystem): NetworkPort | undefined => isReassignableBox(device) && port.face ? device.ports.find((candidate) => candidate.id !== port.id && candidate.system === system && candidate.face === port.face && candidate.connectedSegmentIds.length === 0) : undefined;
 
+export function deviceTargetPorts(device: NetworkDevice, system: RoutingSystem): NetworkPort[] {
+  return device.ports.filter((port) => port.system === system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+}
+
+export function nearestDeviceTargetPort(device: NetworkDevice, system: RoutingSystem, pointer: Vec3): NetworkPort | undefined {
+  return deviceTargetPorts(device, system).sort((left, right) => Math.hypot(...subtract(left.position.position, pointer)) - Math.hypot(...subtract(right.position.position, pointer)) || left.id.localeCompare(right.id))[0];
+}
+
 export function portCanStart(overlay: ConduitOverlayDocument, device: NetworkDevice, port: NetworkPort, system: RoutingSystem): boolean {
   if (port.role === "sink" || port.system !== system || port.connectedSegmentIds.length > 0 && !reassignablePeer(device, port, system)) return false;
   if (isSourceDevice(device)) return deviceSupportsSystem(device, system);

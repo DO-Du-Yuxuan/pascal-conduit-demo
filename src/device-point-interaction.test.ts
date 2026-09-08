@@ -29,16 +29,25 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain('if (tool === "select") { selectWhileBrowsing(null); return; }');
   });
 
-  it("finishes an orthogonal route at the target port while keeping an unreachable axis lock constrained", () => {
-    expect(workspace).toContain('if (worldAxis && targetResolution.kind === "alignment")');
-    expect(workspace).toContain('targetResolution.kind === "alignment" && targetResolution.point ? [targetResolution.point, target] : [target]');
-    expect(workspace).toContain('setStatus("目标端口不在当前锁定轴上；已确认辅助对齐点，请切换轴后继续。")');
-    expect(workspace).not.toContain("confirmTargetAlignment(endPort.position");
+  it("confirms device alignment without connecting until the route truly reaches the port", () => {
+    expect(workspace).toContain('if (targetResolution.kind === "confirm-alignment")');
+    expect(workspace).toContain('setStatus("已确认设备端口辅助对齐点；管道尚未连接设备，请继续逐点绘制。")');
+    expect(workspace).toContain('if (targetResolution.kind !== "connect") return null;');
+    expect(workspace).not.toContain('[targetResolution.point, target]');
   });
 
   it("uses the physical click position to choose the target device port", () => {
     expect(workspace).toContain("targetPoint?: [number, number, number]");
     expect(scene).toContain("onStartDeviceRoute(device, undefined, [event.point.x, event.point.y, event.point.z])");
+  });
+
+  it("reveals open destination ports and replaces the large cursor ball with a target reticle", () => {
+    expect(scene).toContain("deviceTargetPorts(device, activeRouteSystem)");
+    expect(scene).toContain("target:device-port:");
+    expect(scene).toContain('name="target-reticle"');
+    expect(scene).toContain("!targetingDevice &&");
+    expect(scene).toContain("连接后结束");
+    expect(workspace).toContain("activeTargetPortId");
   });
 
   it("wires L, D, and Delete shortcuts without interfering with text entry", () => {

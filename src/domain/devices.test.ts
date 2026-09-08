@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, insertDeviceOnSegment, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
@@ -15,6 +15,19 @@ function rooted(system: RoutingSystem) {
 }
 
 describe("network devices and rooted circuits", () => {
+  it("offers compatible open physical ports and selects the one nearest the pointer", () => {
+    const socket = createNetworkDevice("socket", point(0, 1, 0));
+    const occupiedId = socket.ports[0].id;
+    const withOccupiedPort = { ...socket, ports: socket.ports.map((port) => port.id === occupiedId ? { ...port, connectedSegmentIds: ["existing"] } : port) };
+    const targets = deviceTargetPorts(withOccupiedPort, "receptacle");
+    const expected = targets[3];
+
+    expect(targets).toHaveLength(7);
+    expect(targets.some((port) => port.id === occupiedId)).toBe(false);
+    expect(deviceTargetPorts(withOccupiedPort, "lighting")).toEqual([]);
+    expect(nearestDeviceTargetPort(withOccupiedPort, "receptacle", expected.position.position)?.id).toBe(expected.id);
+  });
+
   it("keeps a bridge bend when a routed endpoint connects to a target device port", () => {
     let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", point(-2, 0, 0));
     overlay = placeNetworkDevice(overlay, "socket", point(2, 0, 1));
