@@ -60,4 +60,8 @@ describe("device point interaction wiring", () => {
   it("deletes the current selection when the Delete toolbar button is clicked", () => {
     expect(workspace).toContain('item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)');
   });
+
+  it("refreshes the keyboard Delete handler when the selection changes", () => {
+    expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
+  });
 });

@@ -234,7 +234,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       }
     };
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor]);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds]);
 
   const commit = (next: ConduitOverlayDocument) => { setUndoStack((history) => [...history, overlay]); setRedoStack([]); setOverlay(next); setOverlayDirty(true); };
   const deleteSelectedObjects = () => {
