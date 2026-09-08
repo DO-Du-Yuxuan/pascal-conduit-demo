@@ -20,6 +20,17 @@ function Harness({overlay}:{overlay:ConduitOverlayDocument}) {
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
+ it('keeps switch control relations visible when the conduit layer is hidden',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]},light={...device,id:'light',deviceType:'luminaire' as const,name:'灯具',systems:['lighting' as const],position:{position:[3,2.7,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};
+  overlay.devices=[wallSwitch,light];overlay.lightingControlGroups=[{id:'control',switchDeviceId:'switch',luminaireDeviceIds:['light'],createdAt:''}];
+  overlay.segments=[{id:'pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:wallSwitch.position,end:light.position,createdAt:''}];
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} conduitsVisible={false}/></svg>));
+  expect(div.querySelector('[data-lighting-control-line]')).not.toBeNull();
+  expect(div.querySelector('[data-conduit-segment]')).toBeNull();
+  expect(div.querySelector('[data-lighting-control-line]')?.textContent).toBe('');
+ });
  it('orients wall devices from their host normal while ceiling devices stay screen-upright',()=>{
   const wallDevice={...device,position:{...device.position,attachment:{...device.position.attachment!,normal:[1,0,0] as [number,number,number]}}};
   const light={...device,deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,1.5,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:1500}};
@@ -31,9 +42,9 @@ describe('construction plan rendering integration',()=>{
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];const before=JSON.stringify(overlay);
   act(()=>root.render(<Harness overlay={overlay}/>));
   expect(div.querySelectorAll('[data-device-symbol="socket"]')).toHaveLength(1);
-  expect(div.textContent).toContain('300 mm');
+  expect(div.textContent).toContain('257 mm');
   const moved={...overlay,devices:[{...device,position:{...device.position,position:[2,.6,.1] as [number,number,number]}}]};
-  act(()=>root.render(<Harness overlay={moved}/>));expect(div.textContent).toContain('600 mm');expect(div.textContent).not.toContain('300 mm');
+  act(()=>root.render(<Harness overlay={moved}/>));expect(div.textContent).toContain('557 mm');expect(div.textContent).not.toContain('257 mm');
   act(()=>root.render(<Harness overlay={{...overlay,devices:[]}}/>));expect(div.querySelectorAll('[data-device-symbol]')).toHaveLength(0);
   expect(JSON.stringify(overlay)).toBe(before);
  });

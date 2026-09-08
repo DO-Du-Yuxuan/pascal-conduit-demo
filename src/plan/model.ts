@@ -14,12 +14,16 @@ export type PlanAnnotation = {
 export type PlanAnnotationRow = { sourceIds: string[]; editableSourceId: string; label: string; count: number; position?: string; height: string };
 export type PlanNotice = { sourceId: string; text: string; levelId: string | null; anchor?: Point };
 export type PointPositionDimension = { id:string; sourceId:string; levelId:string; wallId:string; reference:Point; center:Point; referenceWitness:Point; centerWitness:Point; direction:Point; normal:Point; lane:number; valueMeters:number; referenceKind:'opening-edge'|'wall-end'|'wall-face'|'device-center'; relatedIds:string[]; measurementBasis:'derived'; confidence:'high'|'limited'; assumptions:string[] };
-export const MODEL_DATUM_NOTE = '离地高度按当前 3D 模型楼层基准计算，施工前仍需按完成面复核。';
+export const MODEL_DATUM_NOTE = '墙面点位标高按设备下边缘相对当前 3D 模型楼层基准计算，与 3D“下边缘离地”一致；施工前仍需按完成面复核。';
 /** Matches PascalScenePreview's numeric(level.level) * 3.2, including basements
  * and non-consecutive levels. Never substitute the sorted array index. */
 export function modelLevelBase(nodes: Record<string, NodeData>, levelId: string): number {
   const value = nodes[levelId]?.level;
   return (typeof value === 'number' && Number.isFinite(value) ? value : 0) * 3.2;
+}
+export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
+  if (device.mount?.kind === 'reference-plane') return device.mount.elevationMm / 1000;
+  return device.position.position[1] - device.sizeMm[1] / 2000 - modelLevelBase(nodes, levelId);
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
@@ -95,7 +99,7 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     const planPoints=group.map(d=>point2(d.position.position)),planSpread=Math.max(...planPoints.flatMap((p,i)=>planPoints.map(q=>Math.hypot(p[0]-q[0],p[1]-q[1])))),heightSpread=Math.max(...group.map(d=>d.position.position[1]))-Math.min(...group.map(d=>d.position.position[1])),arrangement:PlanAnnotation['arrangement']=group.length===1?'single':planSpread<=.15&&heightSpread>.15?'vertical':'horizontal';
     const wall=nodes[(group[0].position.attachment??(group[0].mount?.kind==='host'?group[0].mount.attachment:undefined))?.hostId??''];const direction:Array<number>=wall?.type==='wall'&&Array.isArray(wall.start)&&Array.isArray(wall.end)?[wall.end[0]-wall.start[0],wall.end[1]-wall.start[1]]:[1,0];
     group.sort((a,b)=>arrangement==='vertical'?b.position.position[1]-a.position.position[1]:(a.position.position[0]*direction[0]+a.position.position[2]*direction[1])-(b.position.position[0]*direction[0]+b.position.position[2]*direction[1]));
-    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:d.name.trim()||DEVICE_DEFAULTS[d.deviceType].label,count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(d.position.position[1]-modelLevelBase(nodes,levelId))}));
+    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:d.name.trim()||DEVICE_DEFAULTS[d.deviceType].label,count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(deviceInstallationHeightMeters(d,nodes,levelId))}));
     const rows=arrangement==='horizontal'?rawRows.reduce<typeof rawRows>((all,row)=>{const found=all.find(item=>item.label===row.label&&item.height===row.height);if(found){found.count++;found.sourceIds.push(...row.sourceIds);found.position=undefined;}else all.push(row);return all;},[]):rawRows;
     const anchor:[number,number]=[planPoints.reduce((s,p)=>s+p[0],0)/planPoints.length,planPoints.reduce((s,p)=>s+p[1],0)/planPoints.length],text=rows.map(row=>`${row.label}${row.count>1?` × ${row.count}`:''}${row.position?` ${row.position}`:''}\nH=${row.height}`).join('\n');
     annotations.push({id:`group:${group.map(d=>d.id).sort().join(':')}`,sourceId:group[0].id,relatedIds:group.map(d=>d.id),levelId,anchor,kind:'height',text,arrangement,rows,measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
@@ -104,7 +108,7 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     if (!context.systemVisibility[box.system] || context.hidden.has(box.id) || context.hostHidden(box.position.attachment)) continue;
     const level = context.linkedLevel(box.segmentIds, box.position.attachment);
     if (!level) notices.push({ sourceId: box.id, levelId: null, text: '楼层归属不明，未绘制检修盒' });
-    else if (level === levelId && box.position.attachment?.hostKind === 'wall') annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${length(box.position.position[1]-modelLevelBase(nodes,level))}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height:length(box.position.position[1]-modelLevelBase(nodes,level))}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
+    else if (level === levelId && box.position.attachment?.hostKind === 'wall') { const height=length(box.position.position[1]-box.sizeMm[1]/2000-modelLevelBase(nodes,level)); annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${height}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]}); }
   }
   return { annotations, notices };
 }

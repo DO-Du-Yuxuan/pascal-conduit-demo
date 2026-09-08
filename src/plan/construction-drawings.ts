@@ -2,7 +2,7 @@ import type { NodeData } from '../types';
 import type { ConduitOverlayDocument, NetworkDevice, RoutingSystem } from '../domain/overlay';
 import { DEVICE_DEFAULTS } from '../domain/devices';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
-import { modelLevelBase, type PlanContext } from './model';
+import { deviceInstallationHeightMeters, type PlanContext } from './model';
 
 export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean>;
 export const CONSTRUCTION_DRAWING_LABELS: Record<RoutingSystem, string> = {
@@ -26,14 +26,14 @@ export function buildInstallationSchedule(nodes: Record<string, NodeData>, overl
     const system = device.systems.find(candidate => context.systemVisibility[candidate]);
     if (!system) continue;
     const mounting = device.mount?.kind === 'reference-plane' ? '安装参考面' : device.position.attachment?.hostKind === 'ceiling' ? '天花' : device.position.attachment?.hostKind === 'slab' ? '楼板' : '悬空';
-    const heightMeters = device.mount?.kind === 'reference-plane' ? device.mount.elevationMm / 1000 : device.position.position[1] - modelLevelBase(nodes, levelId);
+    const heightMeters = deviceInstallationHeightMeters(device, nodes, levelId);
     const height = `${formatMeasurement(heightMeters, unit)}${suffix}`;
     const name = device.name.trim() || DEVICE_DEFAULTS[device.deviceType].label;
     const systemRows = rows.get(system) ?? new Map<string, InstallationScheduleRow>();
     const key = `${device.deviceType}|${name}|${mounting}|${height}`;
     const current = systemRows.get(key);
     if (current) { current.quantity += 1; current.sourceIds.push(device.id); }
-    else systemRows.set(key, { deviceType: device.deviceType, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '高度来自设备明确保存的楼层安装参考面。' : '高度按设备中心相对当前 3D 模型楼层基准计算，施工前需按完成面复核。'] });
+    else systemRows.set(key, { deviceType: device.deviceType, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '高度来自设备明确保存的楼层安装参考面，与 3D“完成地标高”一致。' : '高度按设备下边缘相对当前 3D 模型楼层基准计算，与 3D“下边缘离地”一致；施工前需按完成面复核。'] });
     rows.set(system, systemRows);
   }
   return CONSTRUCTION_DRAWING_SYSTEMS.flatMap(system => {

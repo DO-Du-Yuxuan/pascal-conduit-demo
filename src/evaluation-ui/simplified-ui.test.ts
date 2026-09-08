@@ -67,6 +67,7 @@ describe("simplified evaluation and layer controls", () => {
     expect(appSource).toContain('conduitNetwork: "弱电施工图"');
     expect(appSource).toContain('conduitSprinkler: "消防施工图"');
     expect(appSource).toContain('aria-label="全部施工图"');
+    expect(appSource).toContain('conduits: "管道"');
     expect(appSource).not.toContain('constructionAnnotations: "点位名称与离地高度"');
     expect(appSource).not.toContain('pointPositionDimensions: "点位定位尺寸"');
     expect(appSource).toContain('aria-label="点位标注比例"');

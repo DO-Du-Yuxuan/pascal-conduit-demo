@@ -13,8 +13,8 @@ describe('2D point annotations', () => {
     const overlay = createEmptyOverlay('a', 'sha'); overlay.devices = [device()];
     const report = buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters');
     expect(report.annotations).toHaveLength(1);
-    expect(report.annotations[0].text).toBe('插座\nH=300 mm');
-    expect(report.annotations[0].rows[0]).toMatchObject({label:'插座',height:'300 mm'});
+    expect(report.annotations[0].text).toBe('插座\nH=257 mm');
+    expect(report.annotations[0].rows[0]).toMatchObject({label:'插座',height:'257 mm'});
     expect(report.annotations[0].text).not.toMatch(/管径|上行|下行|墙端|模型层基准/);
   });
 
@@ -23,7 +23,7 @@ describe('2D point annotations', () => {
     original.name='五孔墙身插座';const before = JSON.stringify(overlay);
     const moved = { ...overlay, devices: [{ ...original, position: { ...original.position, position: [2, .6, .1] as [number, number, number] } }] };
     const report = buildPlanAnnotations(nodes, moved, 'l0', 'millimeters');
-    expect(report.annotations[0].text).toBe('五孔墙身插座\nH=600 mm');
+    expect(report.annotations[0].text).toBe('五孔墙身插座\nH=557 mm');
     expect(buildPlanAnnotations(nodes, moved, 'l0', 'feet-inches').annotations[0].text).not.toContain('mm');
     expect(buildPlanAnnotations(nodes, { ...overlay, devices: [] }, 'l0', 'millimeters').annotations).toEqual([]);
     expect(JSON.stringify(overlay)).toBe(before);
@@ -57,9 +57,9 @@ describe('2D point annotations', () => {
   it('uses the actual model level value for basement and skipped floors', () => {
     const overlay = createEmptyOverlay('a', 'sha'), altered = { ...nodes, l0: { ...nodes.l0, level: -1 }, l1: { ...nodes.l1, level: 3 } };
     const point = device(); point.position.position = [1, -2.9, .1]; overlay.devices = [point];
-    expect(buildPlanAnnotations(altered, overlay, 'l0', 'millimeters').annotations[0].text).toContain('H=300 mm');
+    expect(buildPlanAnnotations(altered, overlay, 'l0', 'millimeters').annotations[0].text).toContain('H=257 mm');
     point.position = { position: [1, 9.9, .1], attachment: host('w1', 'l1') };
-    expect(buildPlanAnnotations(altered, overlay, 'l1', 'millimeters').annotations[0].text).toContain('H=300 mm');
+    expect(buildPlanAnnotations(altered, overlay, 'l1', 'millimeters').annotations[0].text).toContain('H=257 mm');
   });
 
   it('groups 150 mm same-wall gangs and derives horizontal or vertical positions',()=>{
