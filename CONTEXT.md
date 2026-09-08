@@ -43,3 +43,15 @@ _Avoid_: Height override, point number
 **Callout rule column**:
 The shared visual alignment position for the separate short vertical rules of point annotations on one building side. A point annotation uses an outward secondary column only when its text would collide with another annotation, and later non-colliding annotations return to the primary column. The short rules remain disconnected.
 _Avoid_: Continuous callout line, permanent alternating lane
+
+**Lighting control group**:
+A logical relationship in which one set of luminaires is operated together as one control channel on a switch device point. A switch device point may own multiple groups, but in the MVP each luminaire belongs to at most one group and therefore one switch. A group can be defined before conduit is drawn and must not be inferred from conduit geometry, circuit membership, or level placement. Moving a member preserves the group; deleting its switch dissolves the switch's groups, deleting a luminaire removes that member, and an empty group does not persist.
+_Avoid_: Lighting circuit, conduit branch, selected luminaires
+
+**Switch gang count**:
+The number of distinct lighting control groups assigned to one switch device point. It is derived from the assigned groups rather than entered before binding; the number of luminaires inside a group does not increase the gang count.
+_Avoid_: Luminaire count, lighting circuit count, preset switch size
+
+**Switch device point**:
+A device point representing one complete switch faceplate. Its control groups determine its gang count, while the physical left-to-right position of those controls is outside the MVP model.
+_Avoid_: Switch button, control channel, preset gang device

@@ -19,6 +19,24 @@ const axisVector = (axis: WorldAxis): Vec3 => axis === "x" ? [1, 0, 0] : axis ==
 const ARRIVAL_EPSILON_METERS = 1e-5;
 const HOST_NORMAL_OFFSET_TOLERANCE_METERS = .002;
 
+export function projectRoutePointToDirection(start: RoutePoint, target: RoutePoint, direction: Vec3): RoutePoint {
+  const delta = subtract(target.position, start.position);
+  return { ...target, position: add(start.position, scale(direction, dot(delta, direction))) };
+}
+
+export function resolveOrthogonalDirection(start: RoutePoint, intent: RoutePoint, previous: Vec3 | null = null, switchRatio = 1.5): Vec3 {
+  const basis = start.attachment?.basis;
+  const directions: Vec3[] = basis ? [basis.u, basis.v] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+  const delta = subtract(intent.position, start.position);
+  const scores = directions.map((direction) => Math.abs(dot(delta, direction)));
+  let strongest = 0;
+  for (let index = 1; index < scores.length; index += 1) if (scores[index] > scores[strongest]) strongest = index;
+  if (!previous) return directions[strongest];
+  const previousIndex = directions.findIndex((direction) => Math.abs(dot(direction, previous)) >= .999);
+  if (previousIndex < 0 || previousIndex === strongest) return directions[strongest];
+  return scores[strongest] > scores[previousIndex] * switchRatio ? directions[strongest] : directions[previousIndex];
+}
+
 function reachesSameHostPlane(start: RoutePoint, projected: Vec3, target: RoutePoint): boolean {
   const startHost = start.attachment, targetHost = target.attachment;
   if (!startHost || !targetHost || startHost.hostId !== targetHost.hostId || startHost.hostKind !== targetHost.hostKind || startHost.surface !== targetHost.surface || startHost.levelId !== targetHost.levelId) return false;
@@ -29,7 +47,7 @@ function reachesSameHostPlane(start: RoutePoint, projected: Vec3, target: RouteP
   return Boolean(normal) && Math.hypot(dot(residual, basis.u), dot(residual, basis.v)) <= ARRIVAL_EPSILON_METERS && Math.abs(dot(residual, normal!)) <= HOST_NORMAL_OFFSET_TOLERANCE_METERS;
 }
 
-export function resolveSnapCandidate(start: RoutePoint, candidates: readonly SnapCandidate[], options: { tolerancePixels: number; worldAxis?: WorldAxis | null; hostOrthogonal?: boolean }): SnapResolution {
+export function resolveSnapCandidate(start: RoutePoint, candidates: readonly SnapCandidate[], options: { tolerancePixels: number; worldAxis?: WorldAxis | null; hostOrthogonal?: boolean; orthogonalDirection?: Vec3 | null }): SnapResolution {
   const candidate = candidates
     .filter((item) => item.compatible && Number.isFinite(item.distancePixels) && item.distancePixels <= options.tolerancePixels)
     .sort((left, right) => priority[left.kind] - priority[right.kind] || left.distancePixels - right.distancePixels || left.targetId.localeCompare(right.targetId))[0];
@@ -40,16 +58,14 @@ export function resolveSnapCandidate(start: RoutePoint, candidates: readonly Sna
     return distance(projected, candidate.point.position) <= ARRIVAL_EPSILON_METERS ? { kind: "snap", point: candidate.point, candidate } : { kind: "alignment", point: { position: projected }, candidate };
   }
   if (options.hostOrthogonal) {
-    const basis = start.attachment?.basis;
-    const directions: Vec3[] = basis ? [basis.u, basis.v] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
-    const direction = directions.sort((left, right) => Math.abs(dot(delta, right)) - Math.abs(dot(delta, left)))[0];
+    const direction = options.orthogonalDirection ?? resolveOrthogonalDirection(start, candidate.point);
     const projected = add(start.position, scale(direction, dot(delta, direction)));
     return distance(projected, candidate.point.position) <= ARRIVAL_EPSILON_METERS ? { kind: "snap", point: candidate.point, candidate } : { kind: "alignment", point: { position: projected, attachment: start.attachment }, candidate };
   }
   return { kind: "snap", point: candidate.point, candidate };
 }
 
-export function resolveTargetClick(start: RoutePoint, candidate: SnapCandidate, options: { tolerancePixels: number; worldAxis?: WorldAxis | null; hostOrthogonal?: boolean }): TargetClickResolution {
+export function resolveTargetClick(start: RoutePoint, candidate: SnapCandidate, options: { tolerancePixels: number; worldAxis?: WorldAxis | null; hostOrthogonal?: boolean; orthogonalDirection?: Vec3 | null }): TargetClickResolution {
   const resolution = resolveSnapCandidate(start, [candidate], options);
   if (!resolution.point || !resolution.candidate) return { kind: "none" };
   if (resolution.kind === "alignment" && candidate.kind === "device-port" && reachesSameHostPlane(start, resolution.point.position, candidate.point)) return { kind: "connect", point: candidate.point, candidate };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
+import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
 import type { RoutePoint } from "./overlay";
 
 const point = (x: number, y: number, z: number): RoutePoint => ({ position: [x, y, z], attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", localPosition: [x, y, z], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
@@ -24,6 +24,25 @@ describe("route object snap resolution", () => {
   it("preserves host orthogonal direction instead of faking a diagonal connection", () => {
     expect(resolveSnapCandidate(point(0, 0, 0), [candidate("open-end", 2, .1, 0)], { tolerancePixels: 12, hostOrthogonal: true })).toMatchObject({ kind: "alignment", point: { position: [2, 0, 0] } });
     expect(resolveSnapCandidate(point(0, 0, 0), [candidate("open-end", 2, 0, 0)], { tolerancePixels: 12, hostOrthogonal: true })).toMatchObject({ kind: "snap" });
+  });
+
+  it("uses pointer intent instead of the target position to choose the assisted direction", () => {
+    const start = point(0, 0, 0), target = candidate("device-port", 1, 4, 0);
+    expect(resolveSnapCandidate(start, [target], {
+      tolerancePixels: 12,
+      hostOrthogonal: true,
+      orthogonalDirection: [1, 0, 0],
+    })).toMatchObject({ kind: "alignment", point: { position: [1, 0, 0] } });
+  });
+
+  it("keeps the current pointer-intent direction until another direction is 1.5 times stronger", () => {
+    const start = point(0, 0, 0);
+    expect(resolveOrthogonalDirection(start, point(1, 1.4, 0), [1, 0, 0])).toEqual([1, 0, 0]);
+    expect(resolveOrthogonalDirection(start, point(1, 1.6, 0), [1, 0, 0])).toEqual([0, 1, 0]);
+  });
+
+  it("projects a raw pointer intent onto the selected orthogonal direction", () => {
+    expect(projectRoutePointToDirection(point(1, 2, 3), point(5, 7, 9), [0, 0, 1])).toMatchObject({ position: [1, 2, 9] });
   });
 
   it("uses world-axis alignment for an orthogonal suspended route instead of snapping diagonally", () => {

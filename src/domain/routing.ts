@@ -1,5 +1,6 @@
 import type { BendArc, Circuit, ConduitOverlayDocument, HostAttachment, JunctionBox, NetworkPort, Penetration, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SurfaceChase, SurfaceMode, Vec3 } from "./overlay";
 import { boxFrame, eightBoxPorts, sameFaceFreePeer } from "./box-ports";
+import { cleanLightingControlGroupsAfterDeviceDeletion } from "./lighting-controls";
 
 let sequence = 0;
 const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
@@ -253,7 +254,7 @@ export function deleteNetworkObject(overlay: ConduitOverlayDocument, id: string)
   const segments = overlay.segments.filter((segment) => segment.id !== id && !connectedSegmentIds.has(segment.id)), remainingIds = new Set(segments.map((segment) => segment.id)), removedIds = new Set(overlay.segments.filter((segment) => !remainingIds.has(segment.id)).map((segment) => segment.id));
   const remainingFittings = overlay.fittings.filter((fitting) => fitting.id !== id && fitting.segmentIds.every((segmentId) => remainingIds.has(segmentId))), remainingElementIds = new Set([...remainingIds, ...remainingFittings.map((fitting) => fitting.id)]);
   const devices = overlay.devices.filter((item) => item.id !== id).map((item) => ({ ...item, ports: item.ports.map((port) => ({ ...port, connectedSegmentIds: port.connectedSegmentIds.filter((segmentId) => remainingIds.has(segmentId)) })) }));
-  return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
+  return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), lightingControlGroups: cleanLightingControlGroupsAfterDeviceDeletion(overlay, id), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
 }
 
 export function resetRoutingIdsForTests() { sequence = 0; }

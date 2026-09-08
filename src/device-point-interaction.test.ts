@@ -19,9 +19,10 @@ describe("device point interaction wiring", () => {
     expect(workspace).not.toContain("<b>施工与槽孔</b>");
   });
 
-  it("shows a visible label for active conduit snap and alignment", () => {
-    expect(scene).toContain("conduit-snap-label");
-    expect(scene).toContain("辅助对齐");
+  it("keeps snap text in a fixed HUD instead of covering the 3D target", () => {
+    expect(scene).not.toContain("conduit-snap-label");
+    expect(workspace).toContain('className="conduit-snap-status"');
+    expect(workspace).toContain("辅助对齐");
   });
 
   it("clears point selection from empty space or Escape", () => {
@@ -46,8 +47,12 @@ describe("device point interaction wiring", () => {
     expect(scene).toContain("target:device-port:");
     expect(scene).toContain('name="target-reticle"');
     expect(scene).toContain("!targetingDevice &&");
-    expect(scene).toContain("连接后结束");
+    expect(workspace).toContain("连接后结束");
     expect(workspace).toContain("activeTargetPortId");
+  });
+
+  it("keeps the unhosted world-axis cursor in the rendered route preview", () => {
+    expect(workspace).toContain('displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession })');
   });
 
   it("wires L, D, and Delete shortcuts without interfering with text entry", () => {
@@ -63,5 +68,25 @@ describe("device point interaction wiring", () => {
 
   it("refreshes the keyboard Delete handler when the selection changes", () => {
     expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
+  });
+
+  it("creates one lighting control group by selecting luminaires and then a switch", () => {
+    expect(workspace).toContain("绑定开关");
+    expect(workspace).toContain("createLightingControlGroup(overlay, deviceId, controlBinding.luminaireDeviceIds)");
+    expect(workspace).toContain("只能选择尚未绑定的灯具点位");
+    expect(scene).toContain('controlBinding === "create" && device.deviceType === "switch"');
+  });
+
+  it("edits and unbinds complete switch control groups", () => {
+    expect(workspace).toContain("重新选择灯具");
+    expect(workspace).toContain("解除该路");
+    expect(workspace).toContain("replaceLightingControlGroup(overlay, controlBinding.groupId, controlBinding.luminaireDeviceIds)");
+    expect(workspace).toContain("removeLightingControlGroup(overlay, group.id)");
+  });
+
+  it("shows selected lighting relationships without rendering permanent physical conduit", () => {
+    expect(workspace).toContain("visibleControlGroups={visibleControlGroups}");
+    expect(scene).toContain('name="lighting-control-relation"');
+    expect(scene).toContain("dashed");
   });
 });
