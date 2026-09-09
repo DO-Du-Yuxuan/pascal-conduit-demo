@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { beginPenetration, constrainToHostAxes, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion } from "./drawing";
+import { beginPenetration, constrainToHostAxes, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion } from "./drawing";
 import type { RoutePoint } from "./overlay";
 
 const wall = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] }, localPosition: position } });
 const slab = (position: [number, number, number]): RoutePoint => ({ position, attachment: { hostId: "slab", hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 0, 1] }, localPosition: position } });
 
 describe("surface drawing preview", () => {
+  it("projects an empty-space pointer onto a stable view-depth plane", () => {
+    expect(pointOnViewPlane([0, 2, 0], [0, 2, 10], [.1, 0, -1]).position).toEqual([1, 2, 0]);
+    expect(displayedRoutePoints([{ position: [0, 2, 0] }], { position: [1, 2, 0] }, "free", { allowUnhostedCursor: true })).toHaveLength(2);
+  });
+
   it("uses the wall's local horizontal or vertical axis, never a world dominant axis", () => {
     expect(constrainToHostAxes(wall([0, 1, 0]), wall([3, 2, 0]), "orthogonal").position).toEqual([3, 1, 0]);
     expect(constrainToHostAxes(wall([0, 1, 0]), wall([1, 4, 0]), "orthogonal").position).toEqual([0, 4, 0]);

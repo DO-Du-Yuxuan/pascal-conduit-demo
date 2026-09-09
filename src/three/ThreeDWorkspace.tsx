@@ -7,7 +7,7 @@ import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type C
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
-import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
+import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { createLightingControlGroup, removeLightingControlGroup, replaceLightingControlGroup } from "../domain/lighting-controls";
 import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
@@ -295,6 +295,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commit(result.overlay); setStatus(result.removedSegmentIds.length ? "设备已移动；相邻管段已断开，请从开放管端重新连接。" : "设备定位已更新。");
   };
   const selectSystem = (next: RoutingSystem) => { const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); };
+  const canDrawWithoutSource = tool === "draw" && system === "network";
   const validatedPlan = (points: RoutePoint[], ignoredSegmentId?: string, ignoredDeviceId?: string): PlannedRoute => {
     const plan = ignoredSegmentId
       ? planBranchContinuation(overlay, ignoredSegmentId, points, constructionParameters, explicitPenetrations)
@@ -317,7 +318,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const snapped = resolveSnapCandidate(draft[draft.length - 1], candidates, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current });
     if (snapped.point) return snapped.point;
     if (orthogonal && orthogonalDirection.current) return projectRoutePointToDirection(draft[draft.length - 1], raw, orthogonalDirection.current);
-    const points = displayedRoutePoints(draft, raw, orthogonal ? "orthogonal" : "free", { worldAxis, penetration: penetrationSession });
+    const points = displayedRoutePoints(draft, raw, orthogonal ? "orthogonal" : "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource });
     return points[points.length - 1] ?? raw;
   };
   const routePointsToTarget = (target: RoutePoint, targetId: string, label: string, ignoredDeviceId: string): RoutePoint[] | null => {
@@ -350,14 +351,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       return;
     }
     if (tool !== "draw" && tool !== "branch") return;
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart) return;
+    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (penetrationSession) return;
     const preview = completionMode === "include-preview" ? resolveEffectiveCursor(latestCursor.current) : null;
     const points = routePointsForCompletion(draft, preview, completionMode);
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan));
+    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan));
     clearCompletedDraft(); setDeviceRouteStart(null); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const finishPath = () => finishCurrentRoute("include-preview");
@@ -370,7 +371,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else return;
+    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan)); else return;
     clearCompletedDraft(); setDeviceRouteStart(null); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const effectiveCursor = resolveEffectiveCursor(cursor);
@@ -381,7 +382,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const snapStatus = !draft.length ? null : activeTargetDevice && activeTargetPort
     ? `设备端口 · ${deviceTargetMode === "connect" ? "连接后结束" : "辅助对齐"}`
     : branchPreview?.valid ? "分支捕捉" : hoverId?.startsWith("open-end:") ? "开放管端 · 捕捉" : null;
-  const previewPoints = useMemo(() => displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession }), [draft, effectiveCursor, penetrationSession, worldAxis]);
+  const previewPoints = useMemo(() => displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource }), [draft, effectiveCursor, penetrationSession, worldAxis, canDrawWithoutSource]);
   const displayDraft = draft.length ? previewPoints : cursor ? [cursor] : [];
   const previewPlan = useMemo(() => displayDraft.length >= 2 && (tool === "draw" || tool === "branch" && branchStart) ? validatedPlan(displayDraft, branchStart?.segmentId) : null, [displayDraft, tool, branchStart, overlay, system, diameterMm, surfaceMode, constructionParameters, explicitPenetrations, deviceRouteStart]);
   useEffect(() => {
@@ -412,7 +413,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     rawSurfaceHit.current = hit;
     const active = draft[draft.length - 1];
     if (tool === "point") { scheduleCursor(routePoint(hit)); return; }
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart) { scheduleCursor(null); return; }
+    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
     if (penetrationSession) { scheduleCursor(hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
     if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) scheduleCursor(routePoint(hit));
@@ -427,7 +428,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
     if (tool === "point") { try { commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, routePoint(hit))] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart) return;
+    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(latestCursor.current), routePoint(hit));
     if (!point) return;
@@ -520,6 +521,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     rawSurfaceHit.current = null;
     surfaceOccluded.current = false;
     if (worldAxis && draft.length) { scheduleCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); return; }
+    if (canDrawWithoutSource && !surfaceHit) {
+      const point = pointOnViewPlane(draft[draft.length - 1]?.position ?? scene?.bounds.center ?? [0, 0, 0], origin, direction);
+      if (orthogonal && draft.length) orthogonalDirection.current = resolveOrthogonalDirection(draft[draft.length - 1], point, orthogonalDirection.current);
+      scheduleCursor(point); return;
+    }
     if (blockedByOpening) { scheduleCursor(null); return; }
     const active = draft[draft.length - 1];
     if (penetrationSession) { scheduleCursor(surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
@@ -531,6 +537,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     } else if ((tool === "draw" || tool === "branch" && branchStart) && !surfaceHit) {
       scheduleCursor(null);
     }
+  };
+  const onEmptyCanvasClick = () => {
+    if (!canDrawWithoutSource) { selectWhileBrowsing(null); return; }
+    const point = resolveEffectiveCursor(latestCursor.current);
+    if (!point) return;
+    const candidate = [...draft, point].filter((item, index, points) => index === 0 || !sameRoutePoint(points[index - 1], item));
+    if (candidate.length >= 2) {
+      const plan = validatedPlan(candidate);
+      if (!plan.canCommit) { rejectDiagnostics(plan); return; }
+    }
+    setDraft(candidate); setCursor(null); orthogonalDirection.current = null;
+    setStatus(candidate.length === 1 ? "已确定白色管道悬空起点；继续逐点绘制。" : "已确定悬空落点；按 Enter 或双击生成白色管道。");
   };
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
   if (!scene.rootNodeIds.length) return <section className="three-d-empty"><b>无法建立 3D 场景</b>{scene.diagnostics.map((diagnostic) => <span key={diagnostic.code}>{diagnostic.message}</span>)}</section>;
@@ -565,7 +583,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
               <button className={worldAxis ? "active" : ""} disabled={!worldAxis} onClick={() => setWorldAxis(null)}>{worldAxis ? `世界 ${worldAxis.toUpperCase()} · 取消` : "宿主面"}</button>
             </div>
             {routeInProgress && <div className="conduit-route-actions"><button className="primary" disabled={Boolean(penetrationSession) || displayDraft.length < 2 || Boolean(previewPlan && !previewPlan.canCommit)} onClick={finishPath}>完成路径</button><button onClick={resetRouteSession}>取消</button></div>}
-            <small className="conduit-context-hint">先选合法来源或开放管端；Shift 切正交，Tab 穿透，方向键锁定世界轴。</small>
+            <small className="conduit-context-hint">{system === "network" && tool === "draw" ? "白色网络管可在空白处直接起画；" : "先选合法来源或开放管端；"}Shift 切正交，Tab 穿透，方向键锁定世界轴。</small>
           </section>}
 
           {tool === "point" && <section className="conduit-context-section">
@@ -629,7 +647,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       </aside>
   <Canvas key={projection} frameloop="demand" orthographic={projection === "orthographic"} camera={projection === "orthographic" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA} dpr={CANVAS_DPR} gl={CANVAS_GL} onPointerMissed={() => selectWhileBrowsing(null)}><color attach="background" args={["#dfe6e9"]} />
     {activeLevelId && (tool === "point" && (deviceType === "luminaire" || deviceType === "sprinkler-head") || selectedDevice?.mount?.kind === "reference-plane") && <InstallationPlane bounds={scene.bounds} y={referencePlaneY} onPreview={(position) => { if (tool === "point") scheduleCursor(position ? { position } : null); }} onPlace={(position) => { if (tool !== "point") { selectWhileBrowsing(null); return; } const withPlane = ensureInstallationReferencePlane(overlay, activeLevelId, referencePlaneElevationMm); const device = createReferencePlaneDevice(deviceType as "luminaire" | "sprinkler-head", position, activeLevelId, referencePlaneElevationMm); commit({ ...withPlane, devices: [...withPlane.devices, device] }); setCursor(null); onSelect(device.id); setSelectedDeviceIds([device.id]); }} />}
-    <PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" || tool === "point" || tool === "branch" && branchStart ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationSession?.host.hostId} onSelect={selectWhileBrowsing} overlay={overlay} appliedSurfaceChases={appliedConstruction.surfaceChases} appliedPenetrations={appliedConstruction.penetrations} constructionMode="construction" onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} onChaseFallback={reportChaseFallback} /><ConduitScene overlay={renderedOverlay} departingSegments={departingSegments} selectedId={selectedId} constructionMode="construction" visibleSystems={overlay.settings.visibleSystems} appliedSurfaceChases={appliedConstruction.surfaceChases} fallbackChaseKeys={chaseFallbacks} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewPlan={previewPlan} conflictPoints={previewPlan?.diagnostics.flatMap((item) => item.point ? [item.point] : [])} branchPreview={branchPreview} previewHost={effectiveCursor?.attachment} alignmentAssist={Boolean(worldAxis || orthogonal)} deviceTarget={draft.length ? { system, portId: activeTargetPortId, mode: deviceTargetMode } : null} deviceType={deviceType} devicePreview={inlineDevicePreview ?? (tool === "point" && cursor ? { deviceType, point: cursor, valid: cursor.attachment ? DEVICE_DEFAULTS[deviceType].hostKinds.includes(cursor.attachment.hostKind) : deviceType === "luminaire" || deviceType === "sprinkler-head" } : null)} controlBinding={controlBinding?.kind ?? null} visibleControlGroups={visibleControlGroups} onControlDevice={onControlDevice} tool={tool} hoverId={hoverId} onHover={setHoverId} onDeviceTarget={onDeviceTarget} onBranchPreview={(preview) => { if (!preview) { setBranchPreview(null); return; } const radius = preview.kind === "junction-box" ? Math.hypot(...preview.sizeMm) / 2000 : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000; setBranchPreview({ ...preview, valid: preview.valid && validateBranchCandidate(overlay, preview.segmentId, preview.point, radius).length === 0 }); }} onDevicePreview={scheduleInlineDevicePreview} onSelect={selectWhileBrowsing} onBranch={(segment, position) => onBranch(segment.id, position)} onInsertDevice={(segment, position) => { const next = insertDeviceOnSegment(overlay, segment.id, deviceType, position); if (next !== overlay) { commit(next); setStatus(`已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能插入当前管段。`); setInlineDevicePreview(null); }} onInsertEndpointDevice={(endpoint) => { const next = placeDeviceAtEndpoint(overlay, endpoint, deviceType); if (next !== overlay) { commit(next); setStatus(`已在开放端放置${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}只能连接当前开放端。`); }} onConnectLegacy={onConnectLegacy} onStartDeviceRoute={onStartDeviceRoute} onStartJunctionRoute={onStartJunctionRoute} onStartEndpoint={onStartEndpoint} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} onEmptyClick={() => selectWhileBrowsing(null)} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas>{snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}<div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
+    <PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "draw" || tool === "point" || tool === "branch" && branchStart ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationSession?.host.hostId} onSelect={selectWhileBrowsing} overlay={overlay} appliedSurfaceChases={appliedConstruction.surfaceChases} appliedPenetrations={appliedConstruction.penetrations} constructionMode="construction" onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} onChaseFallback={reportChaseFallback} /><ConduitScene overlay={renderedOverlay} departingSegments={departingSegments} selectedId={selectedId} constructionMode="construction" visibleSystems={overlay.settings.visibleSystems} appliedSurfaceChases={appliedConstruction.surfaceChases} fallbackChaseKeys={chaseFallbacks} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewPlan={previewPlan} conflictPoints={previewPlan?.diagnostics.flatMap((item) => item.point ? [item.point] : [])} branchPreview={branchPreview} previewHost={effectiveCursor?.attachment} alignmentAssist={Boolean(worldAxis || orthogonal)} deviceTarget={draft.length ? { system, portId: activeTargetPortId, mode: deviceTargetMode } : null} deviceType={deviceType} devicePreview={inlineDevicePreview ?? (tool === "point" && cursor ? { deviceType, point: cursor, valid: cursor.attachment ? DEVICE_DEFAULTS[deviceType].hostKinds.includes(cursor.attachment.hostKind) : deviceType === "luminaire" || deviceType === "sprinkler-head" } : null)} controlBinding={controlBinding?.kind ?? null} visibleControlGroups={visibleControlGroups} onControlDevice={onControlDevice} tool={tool} hoverId={hoverId} onHover={setHoverId} onDeviceTarget={onDeviceTarget} onBranchPreview={(preview) => { if (!preview) { setBranchPreview(null); return; } const radius = preview.kind === "junction-box" ? Math.hypot(...preview.sizeMm) / 2000 : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000; setBranchPreview({ ...preview, valid: preview.valid && validateBranchCandidate(overlay, preview.segmentId, preview.point, radius).length === 0 }); }} onDevicePreview={scheduleInlineDevicePreview} onSelect={selectWhileBrowsing} onBranch={(segment, position) => onBranch(segment.id, position)} onInsertDevice={(segment, position) => { const next = insertDeviceOnSegment(overlay, segment.id, deviceType, position); if (next !== overlay) { commit(next); setStatus(`已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能插入当前管段。`); setInlineDevicePreview(null); }} onInsertEndpointDevice={(endpoint) => { const next = placeDeviceAtEndpoint(overlay, endpoint, deviceType); if (next !== overlay) { commit(next); setStatus(`已在开放端放置${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}只能连接当前开放端。`); }} onConnectLegacy={onConnectLegacy} onStartDeviceRoute={onStartDeviceRoute} onStartJunctionRoute={onStartJunctionRoute} onStartEndpoint={onStartEndpoint} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} onEmptyClick={onEmptyCanvasClick} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas>{snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}<div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
     </div>
   </section>;
 }

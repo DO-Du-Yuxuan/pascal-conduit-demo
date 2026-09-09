@@ -96,9 +96,9 @@ export function penetrationRequest(session: PenetrationSession, exit: RoutePoint
   return { host: session.host, entry: session.entry, exit, direction: session.direction };
 }
 
-export function displayedRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint | null, mode: DirectionMode, options: { worldAxis?: WorldAxis | null; penetration?: PenetrationSession | null } = {}): RoutePoint[] {
+export function displayedRoutePoints(confirmed: RoutePoint[], cursor: RoutePoint | null, mode: DirectionMode, options: { worldAxis?: WorldAxis | null; penetration?: PenetrationSession | null; allowUnhostedCursor?: boolean } = {}): RoutePoint[] {
   if (options.penetration) return [...confirmed, options.penetration.entry, ...(cursor ? [cursor] : [])];
-  if (options.worldAxis && cursor) return [...confirmed, cursor];
+  if ((options.worldAxis || options.allowUnhostedCursor && !cursor?.attachment) && cursor) return [...confirmed, cursor];
   return previewRoutePoints(confirmed, cursor, mode);
 }
 
@@ -115,4 +115,12 @@ export function pointOnWorldAxis(start: RoutePoint, axis: WorldAxis, rayOrigin: 
   const denominator = a * c - b * b;
   const distance = Math.abs(denominator) < 1e-7 ? -d / a : (b * e - c * d) / denominator;
   return { position: add(start.position, scale(u, distance)) };
+}
+
+/** Projects a pointer ray onto the camera-facing plane through an unhosted route point. */
+export function pointOnViewPlane(anchor: Vec3, rayOrigin: Vec3, rayDirection: Vec3): RoutePoint {
+  const normal = normalize(subtract(anchor, rayOrigin)), denominator = dot(rayDirection, normal);
+  if (Math.abs(denominator) < 1e-9) return { position: [...anchor] };
+  const distance = dot(subtract(anchor, rayOrigin), normal) / denominator;
+  return { position: add(rayOrigin, scale(rayDirection, distance)) };
 }

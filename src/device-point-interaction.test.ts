@@ -26,7 +26,8 @@ describe("device point interaction wiring", () => {
   });
 
   it("clears point selection from empty space or Escape", () => {
-    expect(workspace).toContain("onEmptyClick={() => selectWhileBrowsing(null)}");
+    expect(workspace).toContain('if (!canDrawWithoutSource) { selectWhileBrowsing(null); return; }');
+    expect(workspace).toContain("onEmptyClick={onEmptyCanvasClick}");
     expect(workspace).toContain('if (tool === "select") { selectWhileBrowsing(null); return; }');
   });
 
@@ -52,7 +53,13 @@ describe("device point interaction wiring", () => {
   });
 
   it("keeps the unhosted world-axis cursor in the rendered route preview", () => {
-    expect(workspace).toContain('displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession })');
+    expect(workspace).toContain('displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource })');
+  });
+
+  it("allows only the white network system to begin and commit in empty space", () => {
+    expect(workspace).toContain('const canDrawWithoutSource = tool === "draw" && system === "network"');
+    expect(workspace).toContain("pointOnViewPlane(draft[draft.length - 1]?.position ?? scene?.bounds.center ?? [0, 0, 0], origin, direction)");
+    expect(workspace).toContain("commit(commitPlannedRoute(overlay, plan))");
   });
 
   it("wires L, D, and Delete shortcuts without interfering with text entry", () => {
