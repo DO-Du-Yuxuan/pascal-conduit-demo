@@ -12,7 +12,7 @@ import { ConstructionAnnotations, ConstructionNotices, useConstructionPlan } fro
 import { PointPositionDimensions } from "./plan/PointPositionDimensions";
 import { ConstructionLegend } from "./plan/ConstructionLegend";
 import { ManualCallouts } from "./plan/ManualCallouts";
-import { manualCalloutTargetAnchor } from "./plan/manual-callout-model";
+import { manualCalloutTargetAnchor, newManualCalloutDraft } from "./plan/manual-callout-model";
 import { allConstructionDrawingsSelected, setAllConstructionDrawings } from "./plan/construction-drawings";
 import "./evaluation.css";
 import { parseProject } from "./parser/parse";
@@ -1391,7 +1391,7 @@ function Plan({
             if (deleteId) onDeleteManual(deleteId); else if (measurementId) onSelectManual(measurementId);
             return;
           }
-          if(calloutTargetId&&calloutTarget&&calloutHover){event.preventDefault();event.stopPropagation();const id=onCreateCallout({targetId:calloutTargetId,levelId:calloutTarget.levelId,anchor:calloutTarget.anchor,label:calloutHover,text:'文字标注'});setAutoEditCalloutId(id);setCalloutHover(null);return;}
+          if(calloutTargetId&&calloutTarget&&calloutHover){event.preventDefault();event.stopPropagation();const id=onCreateCallout(newManualCalloutDraft(calloutTargetId,calloutTarget.levelId,calloutTarget.anchor,calloutHover));setAutoEditCalloutId(id);setCalloutHover(null);return;}
           if (measurementMode === "off") return;
           event.preventDefault(); event.stopPropagation();
           const snap = snapAtEvent(event); if (snap) commitMeasurementPoint(snap);

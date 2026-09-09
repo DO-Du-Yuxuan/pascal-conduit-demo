@@ -1,8 +1,10 @@
 import type { NodeData } from '../types';
-import type { ConduitOverlayDocument } from '../domain/overlay';
+import type { ConduitOverlayDocument, ManualCallout } from '../domain/overlay';
 import { resolveAncestorLevelId, resolveItemPlanTransform } from '../geometry/transform';
 
 export type PlanPoint = [number, number];
+
+export const newManualCalloutDraft = (targetId: string, levelId: string, anchor: PlanPoint, label: PlanPoint): Omit<ManualCallout,'id'|'createdAt'> => ({ targetId, levelId, anchor, label, text: '' });
 
 export function manualCalloutTargetAnchor(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument | null, targetId: string): { levelId: string; anchor: PlanPoint } | null {
   const device = overlay?.devices.find(item => item.id === targetId);
