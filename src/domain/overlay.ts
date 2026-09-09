@@ -45,6 +45,7 @@ export type NetworkDevice = { id: string; type: "network-device"; deviceType: Ne
 export type InstallationReferencePlane = { levelId: string; elevationMm: number; basis: "finished-floor"; derived?: boolean };
 export type Circuit = { id: string; system: RoutingSystem; sourceDeviceId: string | null; rootPortId: string | null; segmentIds: string[]; status: "rooted" | "legacy-unrooted" | "broken"; createdAt: string };
 export type LightingControlGroup = { id: string; switchDeviceId: string; luminaireDeviceIds: string[]; createdAt: string };
+export type ManualCallout = { id: string; targetId: string; levelId: string; anchor: [number, number]; label: [number, number]; text: string; createdAt: string };
 export type WallChase = { id: string; type: "wall-chase"; wallId: string; segmentId: string; start: RoutePoint; end: RoutePoint; widthMm: number; depthMm: number };
 export type SurfaceChasePath = { kind: "line"; start: RoutePoint; end: RoutePoint } | { kind: "arc"; arc: BendArc };
 export type SurfaceChase = { id: string; type: "surface-chase"; hostId: string; hostKind: "wall" | "slab"; surfaceNormal: Vec3; routeElementId: string; path: SurfaceChasePath; widthMm: number; depthMm: number };
@@ -60,6 +61,7 @@ export type ConduitOverlayDocument = {
   devices: NetworkDevice[];
   circuits: Circuit[];
   lightingControlGroups: LightingControlGroup[];
+  manualCallouts: ManualCallout[];
   surfaceChases: SurfaceChase[];
   penetrations: Penetration[];
   installationReferencePlanes: InstallationReferencePlane[];
@@ -102,10 +104,11 @@ const deviceSchema = z.object({ id: z.string(), type: z.literal("network-device"
 const installationReferencePlaneSchema = z.object({ levelId: z.string(), elevationMm: z.number(), basis: z.literal("finished-floor"), derived: z.boolean().optional() });
 const circuitSchema = z.object({ id: z.string(), system: inputSystemSchema, sourceDeviceId: z.string().nullable(), rootPortId: z.string().nullable(), segmentIds: z.array(z.string()), status: z.enum(["rooted", "legacy-unrooted", "broken"]), createdAt: z.string() });
 const lightingControlGroupSchema = z.object({ id: z.string(), switchDeviceId: z.string(), luminaireDeviceIds: z.array(z.string()), createdAt: z.string() });
+const manualCalloutSchema = z.object({ id: z.string(), targetId: z.string(), levelId: z.string(), anchor: z.tuple([z.number(), z.number()]), label: z.tuple([z.number(), z.number()]), text: z.string(), createdAt: z.string() });
 const wallChaseSchema = z.object({ id: z.string(), type: z.literal("wall-chase"), wallId: z.string(), segmentId: z.string(), start: pointSchema, end: pointSchema, widthMm: z.number().positive(), depthMm: z.number().positive() });
 const surfaceChaseSchema = z.object({ id: z.string(), type: z.literal("surface-chase"), hostId: z.string(), hostKind: z.enum(["wall", "slab"]), surfaceNormal: vec3Schema, routeElementId: z.string(), path: z.discriminatedUnion("kind", [z.object({ kind: z.literal("line"), start: pointSchema, end: pointSchema }), z.object({ kind: z.literal("arc"), arc: arcSchema })]), widthMm: z.number().positive(), depthMm: z.number().positive() });
 const penetrationSchema = z.object({ id: z.string(), type: z.literal("penetration"), hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), segmentId: z.string(), point: pointSchema.optional(), entry: pointSchema.optional(), exit: pointSchema.optional(), direction: vec3Schema.optional(), diameterMm: z.number().positive(), derived: z.boolean().optional() }).refine((feature) => Boolean(feature.entry || feature.point), { message: "穿孔必须包含入口点或旧版 point。" });
-const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1", "1.2", "2.0", "2.1", "2.2"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(z.string(), z.string()), visibleSystems: z.record(z.string(), z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), devices: z.array(deviceSchema).optional(), circuits: z.array(circuitSchema).optional(), lightingControlGroups: z.array(lightingControlGroupSchema).optional(), wallChases: z.array(wallChaseSchema).optional(), surfaceChases: z.array(surfaceChaseSchema).optional(), penetrations: z.array(penetrationSchema), installationReferencePlanes: z.array(installationReferencePlaneSchema).optional() });
+const overlaySchema = z.object({ schemaVersion: z.enum(["1.0", "1.1", "1.2", "2.0", "2.1", "2.2"]), source: z.object({ fileName: z.string(), sha256: z.string() }), settings: z.object({ colors: z.record(z.string(), z.string()), visibleSystems: z.record(z.string(), z.boolean()).optional(), bendRadiusMm: z.number().positive().optional(), stockLengthMm: z.number().positive().optional(), junctionBoxSizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]).optional() }), segments: z.array(segmentSchema), fittings: z.array(fittingSchema), junctionBoxes: z.array(junctionBoxSchema).optional(), devices: z.array(deviceSchema).optional(), circuits: z.array(circuitSchema).optional(), lightingControlGroups: z.array(lightingControlGroupSchema).optional(), manualCallouts: z.array(manualCalloutSchema).optional(), wallChases: z.array(wallChaseSchema).optional(), surfaceChases: z.array(surfaceChaseSchema).optional(), penetrations: z.array(penetrationSchema), installationReferencePlanes: z.array(installationReferencePlaneSchema).optional() });
 
 type ParsedDevice = z.infer<typeof deviceSchema>;
 
@@ -137,7 +140,7 @@ function migrateBoxPorts(device: ParsedDevice, frame: DeviceFrame, ports: Networ
 }
 
 export function createEmptyOverlay(fileName: string, sha256: string): ConduitOverlayDocument {
-  return { schemaVersion: "2.2", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], lightingControlGroups: [], surfaceChases: [], penetrations: [], installationReferencePlanes: [] };
+  return { schemaVersion: "2.2", source: { fileName, sha256 }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], lightingControlGroups: [], manualCallouts: [], surfaceChases: [], penetrations: [], installationReferencePlanes: [] };
 }
 
 export function parseOverlay(raw: unknown): ConduitOverlayDocument {
@@ -230,7 +233,7 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   });
   const colors = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.colors[system] ?? parsed.settings.colors[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>;
   const visibleSystems = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.visibleSystems?.[system] ?? parsed.settings.visibleSystems?.[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? true])) as Record<RoutingSystem, boolean>;
-  return { schemaVersion: "2.2", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, lightingControlGroups, surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, installationReferencePlanes: parsed.installationReferencePlanes ?? [], settings: { colors, visibleSystems, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
+  return { schemaVersion: "2.2", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, lightingControlGroups, manualCallouts: parsed.manualCallouts ?? [], surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, installationReferencePlanes: parsed.installationReferencePlanes ?? [], settings: { colors, visibleSystems, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
 }
 
 /**

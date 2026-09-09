@@ -2,6 +2,7 @@
 .plan .furniture image{filter:grayscale(1);opacity:.42}
 .plan .furniture .item-label{fill:#777}
 .plan .construction-annotations{cursor:pointer}
+.plan .manual-callouts textarea{font-family:system-ui,sans-serif;outline:none}
 .plan .construction-notices{position:absolute;right:10px;bottom:28px;max-width:min(460px,60%);max-height:32%;overflow:auto;background:rgba(255,253,250,.96);border:1px solid #ded4c6;border-radius:6px;padding:6px 8px;color:#655e54;font:10px/1.5 system-ui;z-index:3}
 .plan .construction-notices small{font-size:10px;display:block}
 .plan .construction-notices summary{cursor:pointer;margin-top:3px}

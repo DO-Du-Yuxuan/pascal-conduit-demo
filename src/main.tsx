@@ -11,6 +11,8 @@ import { ConduitPlanOverlay } from "./plan/ConduitPlan";
 import { ConstructionAnnotations, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
 import { PointPositionDimensions } from "./plan/PointPositionDimensions";
 import { ConstructionLegend } from "./plan/ConstructionLegend";
+import { ManualCallouts } from "./plan/ManualCallouts";
+import { manualCalloutTargetAnchor } from "./plan/manual-callout-model";
 import { allConstructionDrawingsSelected, setAllConstructionDrawings } from "./plan/construction-drawings";
 import "./evaluation.css";
 import { parseProject } from "./parser/parse";
@@ -65,7 +67,8 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
-import { createEmptyOverlay, type ConduitOverlayDocument } from "./domain/overlay";
+import { createEmptyOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
+import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
 import { scoreS1FunctionalRelationships } from "./evaluation/s1-functional-relation-scoring";
@@ -156,6 +159,8 @@ function App() {
     [selectedId, setSelectedId] = useState<string | null>(null),
     [selectedDimension, setSelectedDimension] = useState<DimensionSegment | null>(null),
     [selectedManualId, setSelectedManualId] = useState<string | null>(null),
+    [selectedCalloutId, setSelectedCalloutId] = useState<string | null>(null),
+    [calloutTargetId, setCalloutTargetId] = useState<string | null>(null),
     [sceneVisibility, setSceneVisibility] = useState(createSceneVisibilityHistory),
     [manualMeasurements, setManualMeasurements] = useState<ManualMeasurement[]>([]),
     [measurementMode, setMeasurementMode] = useState<MeasurementMode>("off"),
@@ -206,10 +211,11 @@ function App() {
   const conduitOverlay = useOverlayStore((state) => state.overlay);
   const conduitOverlayDirty = useOverlayStore((state) => state.dirty);
   const resetConduitOverlay = useOverlayStore((state) => state.load);
+  const commitConduitOverlay = useOverlayStore((state) => state.commit);
   const levels = Object.values(nodes).filter((n) => n.type === "level");
   const threeDScene = useMemo(() => data ? buildThreeDSceneInput(data) : null, [data]);
   const hiddenNodeIds = useMemo(() => new Set(sceneVisibility.hiddenNodeIds), [sceneVisibility.hiddenNodeIds]);
-  useEffect(() => { const closeTransientUi = (event: KeyboardEvent) => { if (event.key !== "Escape") return; setMeasurementMode("off"); if (activeEvaluationHighlight) { setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); return; } setEvaluationHighlights([]); setEvaluationFocusMessage(null); }; window.addEventListener("keydown", closeTransientUi); return () => window.removeEventListener("keydown", closeTransientUi); }, [activeEvaluationHighlight]);
+  useEffect(() => { const closeTransientUi = (event: KeyboardEvent) => { if (event.key !== "Escape") return; setMeasurementMode("off"); setCalloutTargetId(null); if (activeEvaluationHighlight) { setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); return; } setEvaluationHighlights([]); setEvaluationFocusMessage(null); }; window.addEventListener("keydown", closeTransientUi); return () => window.removeEventListener("keydown", closeTransientUi); }, [activeEvaluationHighlight]);
   useEffect(() => {
     if (!conduitOverlayDirty) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
@@ -668,7 +674,9 @@ function App() {
     setSelectedId(id);
     setSelectedDimension(null);
     setSelectedManualId(null);
+    setSelectedCalloutId(null);
   };
+  const selectedCalloutTarget = selectedId && conduitOverlay ? manualCalloutTargetAnchor(nodes, conduitOverlay, selectedId) : null;
   const selectedSceneNode = selectedId ? nodes[selectedId] : null;
   const hideSelectedSceneNode = () => {
     if (!isHideableSceneNode(selectedSceneNode)) return;
@@ -718,6 +726,7 @@ function App() {
         {layerControls}
         <label>全局单位 <select value={measurementUnit} onChange={(event) => setMeasurementUnit(event.target.value as MeasurementUnit)}><option value="millimeters">公制（mm / m²）</option><option value="feet-inches">英制（ft-in / ft²）</option></select></label>
         <button className={`measure-toggle ${measurementMode !== "off" ? "active" : ""}`} title="开启后点击两点测量；按一次 Shift 切换正交；Esc 退出" onClick={() => setMeasurementMode((current) => current === "off" ? "aligned" : "off")}>{measurementMode === "off" ? "测量" : "退出测量"}</button>
+        <button className={calloutTargetId ? "active" : ""} disabled={!calloutTargetId&&!selectedCalloutTarget} title="选择对象后添加文字引线标注" onClick={() => { if(calloutTargetId){setCalloutTargetId(null);return;}if (selectedId && selectedCalloutTarget) { setMeasurementMode("off"); setCalloutTargetId(selectedId); } }}>{calloutTargetId ? "取消添加标注" : "添加标注"}</button>
       </section>
       <section className="two-d-tool-section" aria-label="对象隐藏">
         <button disabled={!isHideableSceneNode(selectedSceneNode)} onClick={hideSelectedSceneNode}>隐藏所选</button>
@@ -799,6 +808,8 @@ function App() {
                 pointAnnotationScale={pointAnnotationScale}
                 manualMeasurements={manualMeasurements.filter((item) => item.levelId === (canvas.levelId || levels[0]?.id || ""))}
                 selectedManualId={selectedManualId}
+                selectedCalloutId={selectedCalloutId}
+                calloutTargetId={calloutTargetId}
                 onSelect={selectCanvasObject}
                 onClearEvaluationHighlight={() => { setEvaluationHighlights([]); setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); }}
                 onRestoreEvaluationOverview={() => { if (activeEvaluationHighlight) { setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); } }}
@@ -807,6 +818,10 @@ function App() {
                 onCreateMeasurement={(measurement) => { const created = { ...measurement, id: `measure-${nextMeasurementId.current++}`, createdAt: Date.now() }; setManualMeasurements((current) => [...current, created]); setSelectedId(null); setSelectedDimension(null); setSelectedManualId(created.id); }}
                 onSelectManual={(id) => { setSelectedId(null); setSelectedDimension(null); setSelectedManualId(id); }}
                 onDeleteManual={(id) => { setManualMeasurements((current) => current.filter((item) => item.id !== id)); setSelectedManualId((current) => current === id ? null : current); }}
+                onCreateCallout={(value) => { if (!conduitOverlay) return null; const result=addManualCallout(conduitOverlay,value);commitConduitOverlay(result.overlay);setCalloutTargetId(null);setSelectedId(null);setSelectedCalloutId(result.callout.id);return result.callout.id; }}
+                onUpdateCallout={(id,update) => { if(conduitOverlay)commitConduitOverlay(updateManualCallout(conduitOverlay,id,update)); }}
+                onDeleteCallout={(id) => { if(conduitOverlay)commitConduitOverlay(deleteManualCallout(conduitOverlay,id));setSelectedCalloutId(current=>current===id?null:current); }}
+                onSelectCallout={(id) => { setSelectedId(null);setSelectedDimension(null);setSelectedManualId(null);setSelectedCalloutId(id); }}
                 onUpdate={updateCanvas}
                 onRemove={removeCanvas}
                 canRemove={canvases.length > 1}
@@ -892,9 +907,15 @@ function CanvasPanel({
   pointAnnotationScale,
   manualMeasurements,
   selectedManualId,
+  selectedCalloutId,
+  calloutTargetId,
   onCreateMeasurement,
   onSelectManual,
   onDeleteManual,
+  onCreateCallout,
+  onUpdateCallout,
+  onDeleteCallout,
+  onSelectCallout,
   onUpdate,
   onRemove,
   canRemove,
@@ -936,9 +957,15 @@ function CanvasPanel({
   pointAnnotationScale: number;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
+  selectedCalloutId: string | null;
+  calloutTargetId: string | null;
   onCreateMeasurement: (measurement: Omit<ManualMeasurement, "id" | "createdAt">) => void;
   onSelectManual: (id: string | null) => void;
   onDeleteManual: (id: string) => void;
+  onCreateCallout: (value: Omit<ManualCallout,'id'|'createdAt'>) => string | null;
+  onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
+  onDeleteCallout: (id: string) => void;
+  onSelectCallout: (id: string) => void;
   onUpdate: (id: number, u: Partial<CanvasState>) => void;
   onRemove: (id: number) => void;
   canRemove: boolean;
@@ -1040,9 +1067,15 @@ function CanvasPanel({
         pointAnnotationScale={pointAnnotationScale}
         manualMeasurements={manualMeasurements}
         selectedManualId={selectedManualId}
+        selectedCalloutId={selectedCalloutId}
+        calloutTargetId={calloutTargetId}
         onCreateMeasurement={onCreateMeasurement}
         onSelectManual={onSelectManual}
         onDeleteManual={onDeleteManual}
+        onCreateCallout={onCreateCallout}
+        onUpdateCallout={onUpdateCallout}
+        onDeleteCallout={onDeleteCallout}
+        onSelectCallout={onSelectCallout}
       />
     </article>
   );
@@ -1138,9 +1171,15 @@ function Plan({
   pointAnnotationScale,
   manualMeasurements,
   selectedManualId,
+  selectedCalloutId,
+  calloutTargetId,
   onCreateMeasurement,
   onSelectManual,
   onDeleteManual,
+  onCreateCallout,
+  onUpdateCallout,
+  onDeleteCallout,
+  onSelectCallout,
 }: {
   nodes: Record<string, NodeData>;
   levelId: string;
@@ -1181,14 +1220,23 @@ function Plan({
   pointAnnotationScale: number;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
+  selectedCalloutId: string | null;
+  calloutTargetId: string | null;
   onCreateMeasurement: (measurement: Omit<ManualMeasurement, "id" | "createdAt">) => void;
   onSelectManual: (id: string | null) => void;
   onDeleteManual: (id: string) => void;
+  onCreateCallout: (value: Omit<ManualCallout,'id'|'createdAt'>) => string | null;
+  onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
+  onDeleteCallout: (id: string) => void;
+  onSelectCallout: (id: string) => void;
 }) {
   const drag = useRef<{ x: number; y: number; box: ViewBox; moved: boolean } | null>(null), suppressClick = useRef(false), planRef = useRef<HTMLDivElement>(null), svgRef = useRef<SVGSVGElement>(null), sceneRef = useRef<SVGGElement>(null), viewBoxRef = useRef(viewBox), setViewBoxRef = useRef(setViewBox), safariGesture = useRef<{ scale: number } | null>(null),
     [measurementStart, setMeasurementStart] = useState<MeasurementSnap | null>(null),
     [measurementHover, setMeasurementHover] = useState<MeasurementSnap | null>(null),
     [orthogonalLock, setOrthogonalLock] = useState(false),
+    [calloutHover,setCalloutHover]=useState<[number,number]|null>(null),
+    [autoEditCalloutId,setAutoEditCalloutId]=useState<string|null>(null),
+    [calloutDrag,setCalloutDrag]=useState<{id:string;label:[number,number];pointerId:number}|null>(null),
     rendered = objectsOnLevel(nodes, levelId).filter((node) => !hiddenNodeIds.has(node.id)),
     items = rendered.filter((n) => n.type === "item"),
     zones = rendered.filter((n) => n.type === "zone"),
@@ -1210,15 +1258,19 @@ function Plan({
   const highlightsOnLevel = visibleEvaluationHighlights.filter((highlight) => (resolveAncestorLevelId(highlight.primaryId, nodes).levelId ?? roomAnalysis?.rooms.find((room) => room.roomRegionId === highlight.primaryId)?.levelId) === levelId);
   const snapSegments = useMemo(() => buildMeasurementSnapSegments(nodes, levelId), [nodes, levelId]);
   const activeMeasurementMode = resolveMeasurementMode(measurementStart?.point ?? null, measurementHover?.point ?? null, orthogonalLock);
+  const calloutTarget=calloutTargetId&&conduitOverlay?manualCalloutTargetAnchor(nodes,conduitOverlay,calloutTargetId):null;
+  const visibleCallouts=(conduitOverlay?.manualCallouts??[]).filter(item=>manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)?.levelId===levelId&&!hiddenNodeIds.has(item.targetId)&&(()=>{const device=conduitOverlay?.devices.find(d=>d.id===item.targetId);if(device)return visibility.devices&&device.systems.some(system=>systemVisibility[system]);const segment=conduitOverlay?.segments.find(s=>s.id===item.targetId);if(segment)return visibility.conduits&&systemVisibility[segment.system];const fitting=conduitOverlay?.fittings.find(f=>f.id===item.targetId);if(fitting)return visibility.conduits&&systemVisibility[fitting.system];const box=conduitOverlay?.junctionBoxes.find(b=>b.id===item.targetId);if(box)return visibility.devices&&systemVisibility[box.system];const node=nodes[item.targetId];if(!node)return false;return node.type==='wall'?visibility.walls:node.type==='slab'?visibility.slabs:node.type==='door'||node.type==='window'?visibility.openings:node.type==='stair'?visibility.stairs:node.type==='zone'?visibility.zones:node.type==='item'?visibility.images:node.type==='shelf'?(visibility.shelves||visibility.centers):true;})()).map(item=>({...item,anchor:manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)!.anchor,label:calloutDrag?.id===item.id?calloutDrag.label:item.label}));
   useEffect(() => { setMeasurementStart(null); setMeasurementHover(null); setOrthogonalLock(false); }, [measurementMode, levelId]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if(event.target instanceof HTMLElement&&(event.target.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)))return;
       if (event.key === "Shift" && !event.repeat) setOrthogonalLock((locked) => !locked);
       if (event.key === "Escape") { setMeasurementStart(null); setMeasurementHover(null); }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedManualId) { event.preventDefault(); onDeleteManual(selectedManualId); }
+      else if ((event.key === "Delete" || event.key === "Backspace") && selectedCalloutId) { event.preventDefault(); onDeleteCallout(selectedCalloutId); }
     };
     window.addEventListener("keydown", onKeyDown); return () => { window.removeEventListener("keydown", onKeyDown); };
-  }, [selectedManualId, onDeleteManual]);
+  }, [selectedManualId, selectedCalloutId, onDeleteManual, onDeleteCallout]);
   useEffect(() => {
     const plan = planRef.current, svg = svgRef.current;
     if (!plan || !svg) return;
@@ -1291,11 +1343,11 @@ function Plan({
       className={`plan ${measurementMode !== "off" ? "measuring" : ""}`}
       style={{ userSelect: "none", WebkitUserSelect: "none" }}
       onPointerDown={(e) => {
-        if (measurementMode !== "off" || e.button !== 0) return;
+        if (measurementMode !== "off" || calloutTargetId || e.button !== 0) return;
         drag.current = { x: e.clientX, y: e.clientY, box: viewBox, moved: false };
       }}
       onPointerMove={(e) => {
-        if (measurementMode !== "off") return;
+        if (measurementMode !== "off" || calloutTargetId) return;
         if (!drag.current) return;
         const screenDx = e.clientX - drag.current.x, screenDz = e.clientY - drag.current.y;
         if (!drag.current.moved && Math.hypot(screenDx, screenDz) < 3) return;
@@ -1328,7 +1380,7 @@ function Plan({
       onPointerCancel={() => { drag.current = null; }}
     >
       <svg ref={svgRef} viewBox={vb}
-        onPointerMove={(event) => { if (measurementMode !== "off") { const snap = snapAtEvent(event); if (snap) setMeasurementHover(snap); } }}
+        onPointerMove={(event) => { const point=eventWorldPoint(event);if(calloutTargetId){setCalloutHover(point);return;}if (measurementMode !== "off") { const snap = snapAtEvent(event); if (snap) setMeasurementHover(snap); } }}
         onPointerLeave={() => { if (!measurementStart) setMeasurementHover(null); }}
         onContextMenu={(event) => { if (measurementMode !== "off") { event.preventDefault(); setMeasurementStart(null); setMeasurementHover(null); } }}
         onClickCapture={(event) => {
@@ -1339,6 +1391,7 @@ function Plan({
             if (deleteId) onDeleteManual(deleteId); else if (measurementId) onSelectManual(measurementId);
             return;
           }
+          if(calloutTargetId&&calloutTarget&&calloutHover){event.preventDefault();event.stopPropagation();const id=onCreateCallout({targetId:calloutTargetId,levelId:calloutTarget.levelId,anchor:calloutTarget.anchor,label:calloutHover,text:'文字标注'});setAutoEditCalloutId(id);setCalloutHover(null);return;}
           if (measurementMode === "off") return;
           event.preventDefault(); event.stopPropagation();
           const snap = snapAtEvent(event); if (snap) commitMeasurementPoint(snap);
@@ -1418,6 +1471,7 @@ function Plan({
           <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
           {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} />}
+          <ManualCallouts callouts={visibleCallouts} preview={calloutTarget&&calloutHover?{anchor:calloutTarget.anchor,label:calloutHover}:null} rotation={rotation} annotationScale={pointAnnotationScale} selectedId={selectedCalloutId} autoEditId={autoEditCalloutId} onSelect={onSelectCallout} onUpdate={onUpdateCallout} onDelete={onDeleteCallout} onEditFinished={()=>setAutoEditCalloutId(null)} onMoveStart={(id,event)=>{event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);const item=visibleCallouts.find(callout=>callout.id===id);if(item)setCalloutDrag({id,label:item.label,pointerId:event.pointerId});onSelectCallout(id);}} onMove={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;const point=eventWorldPoint(event);if(point)setCalloutDrag({...calloutDrag,label:point});}} onMoveEnd={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);onUpdateCallout(calloutDrag.id,{label:eventWorldPoint(event)??calloutDrag.label});setCalloutDrag(null);}}/>
           <ManualMeasurements measurements={manualMeasurements} preview={measurementMode !== "off" && measurementStart && measurementHover ? { mode: activeMeasurementMode, start: measurementStart, end: measurementHover } : null} unit={measurementUnit} viewRotation={rotation} selectedId={selectedManualId} onSelect={onSelectManual} onDelete={onDeleteManual} />
           {measurementMode !== "off" && measurementHover && <SnapIndicator snap={measurementHover} active={Boolean(measurementStart)} />}
           </g>
@@ -1440,6 +1494,7 @@ function Plan({
       </svg>
       <ConstructionLegend sections={constructionPlan.installationSchedule} annotationScale={pointAnnotationScale} />
       {measurementMode !== "off" && <div className="measure-hint">{measurementStart ? `${orthogonalLock ? activeMeasurementMode === "horizontal" ? "水平正交已开启" : "垂直正交已开启" : "自由对齐"} · 点击第二点 · Shift 切换正交 · Esc 退出` : `${orthogonalLock ? "正交已开启" : "正交已关闭"} · 点击第一点 · Shift 切换正交 · Esc 退出`}</div>}
+      {calloutTargetId&&<div className="measure-hint">移动鼠标确定引线位置 · 单击放置 · Esc 取消</div>}
       {visibility.constructionAnnotations && <ConstructionNotices plan={constructionPlan} onFocus={(id, anchor) => { onSelect(id); if (anchor) setViewBox({ minX: anchor[0] - 3, minZ: anchor[1] - 3, width: 6, height: 6 }); }} />}
       <Compass rotation={rotation} />
       {highlightsOnLevel.length > 0 && <div className="evaluation-highlight-legend"><span><i className={highlightsOnLevel.some((highlight) => highlight.status === "measured") ? "measured" : "primary"} />{highlightsOnLevel.some((highlight) => highlight.status === "measured") ? "测量空间" : "确定问题"}</span>{highlightsOnLevel.some((highlight) => highlight.status === "unable_to_determine") && <span><i className="unresolved" />待核验对象</span>}{highlightsOnLevel.some((highlight) => highlight.emphasizedIds?.length) && <span><i className="private" />私密中间空间</span>}<span><i className="related" />关联对象</span><span><i className="muted" />其他对象</span>{activeEvaluationHighlight && <button onClick={onRestoreEvaluationOverview}>返回全部问题</button>}<button onClick={onClearEvaluationHighlight}>关闭高亮</button></div>}

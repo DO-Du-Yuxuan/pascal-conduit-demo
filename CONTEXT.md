@@ -40,6 +40,10 @@ _Avoid_: Device identifier, pipe annotation
 Editable construction wording stored in the existing Overlay device name. Editing it does not override height, quantity, or relative arrangement.
 _Avoid_: Height override, point number
 
+**Manual callout**:
+A user-authored 2D note bound to one stable source object. It stores its own text and paper position, follows the source object's visibility and level, and is removed when its source object is deleted. It does not rename the source object or replace automatic construction annotations.
+_Avoid_: Device description, automatic point annotation, measurement
+
 **Callout rule column**:
 The shared visual alignment position for the separate short vertical rules of point annotations on one building side. A point annotation uses an outward secondary column only when its text would collide with another annotation, and later non-colliding annotations return to the primary column. The short rules remain disconnected.
 _Avoid_: Continuous callout line, permanent alternating lane

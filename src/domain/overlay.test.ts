@@ -17,7 +17,13 @@ describe("Conduit overlay", () => {
     const raw = JSON.parse(JSON.stringify(createEmptyOverlay("default-layout.json", "abc")));
     raw.schemaVersion = "2.1";
     delete raw.lightingControlGroups;
-    expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.2", lightingControlGroups: [] });
+    expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.2", lightingControlGroups: [], manualCallouts: [] });
+  });
+
+  it("round-trips persisted manual callouts", () => {
+    const overlay = createEmptyOverlay("callouts.json", "abc");
+    overlay.manualCallouts=[{id:"note",targetId:"device",levelId:"L0",anchor:[1,2],label:[3,4],text:"现场复核",createdAt:"now"}];
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).manualCallouts).toEqual(overlay.manualCallouts);
   });
 
   it("rejects imported lighting groups that violate membership invariants", () => {
