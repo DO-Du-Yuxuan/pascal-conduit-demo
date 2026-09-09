@@ -32,4 +32,12 @@ describe('manual callout editing',()=>{
     const text=[...host.querySelectorAll('text')].find(node=>node.textContent==='已保存')!;act(()=>text.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
     expect(document.body.querySelector('textarea')?.value).toBe('已保存');expect(host.querySelector('foreignObject')).toBeNull();
   });
+
+  it('encloses saved text in one outline without a fixed-side terminator',()=>{
+    const host=document.createElement('div'),root=createRoot(host);roots.push(root);const saved={...callout,text:'现场备注'};
+    act(()=>root.render(<svg><ManualCallouts callouts={[saved]} preview={null} rotation={0} annotationScale={1} selectedId={null} autoEditId={null} onSelect={()=>{}} onUpdate={()=>{}} onDelete={()=>{}} onMoveStart={()=>{}} onMove={()=>{}} onMoveEnd={()=>{}} onEditFinished={()=>{}}/></svg>));
+    const label=host.querySelector('[data-manual-callout-label="note"]')!;
+    expect(label.querySelector('rect')?.getAttribute('stroke')).toBe('#343434');
+    expect(label.querySelector('line')).toBeNull();
+  });
 });
