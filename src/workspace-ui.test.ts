@@ -48,7 +48,7 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("does not turn drawing clicks into global scene selections in split view", () => {
-    expect(threeDSource).toContain('if (tool === "select") onSelect(id)');
+    expect(threeDSource).toContain('if (tool !== "select") return;');
     expect(threeDSource).toContain("onPointerMissed={() => selectWhileBrowsing(null)}");
     expect(threeDSource).toContain("onSelect={selectWhileBrowsing}");
     expect(styles).toContain("contain:layout paint");
