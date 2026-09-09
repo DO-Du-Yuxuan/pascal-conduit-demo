@@ -20,6 +20,18 @@ function Harness({overlay}:{overlay:ConduitOverlayDocument}) {
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
+ it('draws network conduits with a bright teal outline and a white core',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');overlay.segments=[{id:'network-pipe',type:'conduit-segment',system:'network',diameterMm:20,start:{position:[0,.3,0],attachment:device.position.attachment},end:{position:[2,.3,0],attachment:device.position.attachment},createdAt:''},{id:'lighting-pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,.3,.2],attachment:device.position.attachment},end:{position:[2,.3,.2],attachment:device.position.attachment},createdAt:''}];
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:true,sprinkler:false});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  const pipe=div.querySelector('[data-conduit-segment="network-pipe"]')!;
+  expect(pipe.querySelector('[data-conduit-stroke="outline"]')?.getAttribute('stroke')).toBe('#00a6a0');
+  expect(pipe.querySelector('[data-conduit-stroke="core"]')?.getAttribute('stroke')).toBe('#ffffff');
+  const lighting=div.querySelector('[data-conduit-segment="lighting-pipe"]')!;
+  expect(lighting.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke')).toBe('#2563c7');
+  expect(lighting.querySelector('[data-conduit-stroke="core"]')).toBeNull();
+ });
  it('keeps switch control relations visible when the conduit layer is hidden',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]},light={...device,id:'light',deviceType:'luminaire' as const,name:'灯具',systems:['lighting' as const],position:{position:[3,2.7,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};
