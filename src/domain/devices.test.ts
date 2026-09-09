@@ -119,11 +119,13 @@ describe("network devices and rooted circuits", () => {
     expect(committed.segments.length).toBeGreaterThan(started.overlay.segments.length);
   });
 
-  it("allows an inline socket on a rooted floor route while keeping manual placement wall-only", () => {
+  it("allows sockets on floor and ceiling hosts without broadening other wall-only devices", () => {
     const original = rooted("receptacle"), segment = original.segments[0], routed = { ...original, segments: [{ ...segment, start: point(0, 0, 0, "slab"), end: point(2, 0, 0, "slab") }] };
     const inserted = insertDeviceOnSegment(routed, segment.id, "socket", [1, 0, 0]);
     expect(inserted.devices.some((device) => device.deviceType === "socket" && device.position.attachment?.hostKind === "slab")).toBe(true);
-    expect(() => createNetworkDevice("socket", point(1, 0, 0, "slab"))).toThrow();
+    expect(createNetworkDevice("socket", point(1, 0, 0, "slab")).position.attachment?.hostKind).toBe("slab");
+    expect(createNetworkDevice("socket", point(1, 2.7, 0, "ceiling")).position.attachment?.hostKind).toBe("ceiling");
+    expect(() => createNetworkDevice("switch", point(1, 0, 0, "slab"))).toThrow();
   });
 
   it("supports floating point devices, stable 86-box holes and a terminal network outlet on an open end", () => {

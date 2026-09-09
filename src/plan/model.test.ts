@@ -111,4 +111,15 @@ describe('2D point annotations', () => {
     expect(dimensions.map(d=>Math.round(d.valueMeters*1000)).sort((a,b)=>a-b)).toEqual([1900,2900]);
     expect(dimensions.every(d=>d.referenceKind==='wall-face')).toBe(true);
   });
+
+  it('derives two orthogonal position dimensions for floor and ceiling sockets',()=>{
+    const overlay=createEmptyOverlay('a','sha'),rectangle={...nodes,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0],thickness:.2},floor:{id:'floor',type:'slab',parentId:'l0',polygon:[[0,0],[6,0],[6,6],[0,6]]},ceiling:{id:'ceiling',type:'ceiling',parentId:'l0',polygon:[[0,0],[6,0],[6,6],[0,6]]}} as Record<string,NodeData>;
+    const floorSocket={...device('floor-socket'),position:{position:[1,0,2] as [number,number,number],attachment:{hostId:'floor',hostKind:'slab' as const,surface:'top',normal:[0,1,0] as [number,number,number],levelId:'l0'}}},ceilingSocket={...device('ceiling-socket'),position:{position:[3,2.7,4] as [number,number,number],attachment:{hostId:'ceiling',hostKind:'ceiling' as const,surface:'bottom',normal:[0,-1,0] as [number,number,number],levelId:'l0'}}};
+    overlay.devices=[floorSocket,ceilingSocket];
+    const context=createPlanContext(rectangle,overlay);
+    expect([floorSocket,ceilingSocket].map(item=>[context.deviceLevel(item),context.deviceVisible(item)])).toEqual([['l0',true],['l0',true]]);
+    const dimensions=buildPointPositionDimensions(rectangle,overlay,'l0',context);
+    expect(dimensions.filter(d=>d.sourceId==='floor-socket')).toHaveLength(2);
+    expect(dimensions.filter(d=>d.sourceId==='ceiling-socket')).toHaveLength(2);
+  });
 });

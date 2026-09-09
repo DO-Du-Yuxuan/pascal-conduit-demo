@@ -22,14 +22,20 @@ export function modelLevelBase(nodes: Record<string, NodeData>, levelId: string)
   const value = nodes[levelId]?.level;
   return (typeof value === 'number' && Number.isFinite(value) ? value : 0) * 3.2;
 }
+export const deviceHostAttachment = (device: NetworkDevice): HostAttachment | undefined =>
+  device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
+export const isFloorSocket = (device: NetworkDevice): boolean =>
+  device.deviceType === 'socket' && deviceHostAttachment(device)?.hostKind === 'slab';
 export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
   if (device.mount?.kind === 'reference-plane') return device.mount.elevationMm / 1000;
+  if (isFloorSocket(device)) return 0;
   return device.position.position[1] - device.sizeMm[1] / 2000 - modelLevelBase(nodes, levelId);
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
 export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDocument): string {
   const source = device.name.trim();
+  if (isFloorSocket(device) && (!source || source === DEVICE_DEFAULTS.socket.label)) return '地插';
   if (device.deviceType !== 'switch' || (source && source !== DEVICE_DEFAULTS.switch.label)) return source || DEVICE_DEFAULTS[device.deviceType].label;
   const gangs = switchGangCount(overlay, device.id);
   return gangs ? switchGangLabel(gangs) : DEVICE_DEFAULTS.switch.label;
@@ -143,10 +149,10 @@ export function buildPointPositionDimensions(nodes:Record<string,NodeData>,overl
     ordered.forEach((entry,index)=>{const center:[number,number]=[entry.start[0]+entry.direction[0]*entry.scalar,entry.start[1]+entry.direction[1]*entry.scalar];dimensions.push({id:`${entry.device.id}:position`,sourceId:entry.device.id,levelId,wallId:entry.wall.id,reference:previousPoint,center,referenceWitness:previousWitness,centerWitness:entry.center,direction:entry.direction,normal:entry.normal,lane,valueMeters:Math.abs(entry.scalar-(index===0?reference.scalar:ordered[index-1]!.scalar)),referenceKind:index===0?reference.kind:'device-center',relatedIds:[entry.device.id,entry.wall.id,...(previousId?[previousId]:[])],measurementBasis:'derived',confidence:'high',assumptions:['设备中心沿直墙宿主方向投影；首段以洞口边或墙端为模型定位基准，后续同类型点位标注中心距。']});previousPoint=center;previousWitness=entry.center;previousId=entry.device.id;});
   });
   for(const device of overlay.devices){
-    if(!context.deviceVisible(device)||context.deviceLevel(device)!==levelId||!['luminaire','sprinkler-head'].includes(device.deviceType)||device.position.attachment?.hostKind==='wall')continue;
+    if(!context.deviceVisible(device)||context.deviceLevel(device)!==levelId||!['socket','luminaire','sprinkler-head'].includes(device.deviceType)||deviceHostAttachment(device)?.hostKind==='wall')continue;
     const center=point2(device.position.position),candidates=straightWalls.flatMap(wall=>{const start:Point=[Number(wall.start![0]),Number(wall.start![1])],end:Point=[Number(wall.end![0]),Number(wall.end![1])],edge:Point=[end[0]-start[0],end[1]-start[1]],length=Math.hypot(...edge);if(length<1e-6)return [];const along:Point=[edge[0]/length,edge[1]/length],raw=(center[0]-start[0])*along[0]+(center[1]-start[1])*along[1];if(raw<0||raw>length)return [];const linePoint:Point=[start[0]+along[0]*raw,start[1]+along[1]*raw],delta:Point=[center[0]-linePoint[0],center[1]-linePoint[1]],distance=Math.hypot(...delta);if(distance<1e-6)return [];const toward:Point=[delta[0]/distance,delta[1]/distance],half=Math.max(0,Number(wall.thickness)||0)/2,reference:Point=[linePoint[0]+toward[0]*half,linePoint[1]+toward[1]*half],value=Math.max(0,distance-half);return [{wall,reference,direction:toward,value}];}).sort((a,b)=>a.value-b.value||a.wall.id.localeCompare(b.wall.id));
     const selected:typeof candidates=[];for(const candidate of candidates){if(!selected.length||Math.abs(candidate.direction[0]*selected[0].direction[0]+candidate.direction[1]*selected[0].direction[1])<.2)selected.push(candidate);if(selected.length===2)break;}
-    selected.forEach((candidate,index)=>{const normal:Point=[-candidate.direction[1],candidate.direction[0]];dimensions.push({id:`${device.id}:position:${index+1}`,sourceId:device.id,levelId,wallId:candidate.wall.id,reference:candidate.reference,center,referenceWitness:candidate.reference,centerWitness:center,direction:candidate.direction,normal,lane:index,valueMeters:candidate.value,referenceKind:'wall-face',relatedIds:[device.id,candidate.wall.id],measurementBasis:'derived',confidence:'limited',assumptions:['顶面点位中心至实际投影落在有限直墙段内的模型墙面；施工前需复核完成面。']});});
+    selected.forEach((candidate,index)=>{const normal:Point=[-candidate.direction[1],candidate.direction[0]];dimensions.push({id:`${device.id}:position:${index+1}`,sourceId:device.id,levelId,wallId:candidate.wall.id,reference:candidate.reference,center,referenceWitness:candidate.reference,centerWitness:center,direction:candidate.direction,normal,lane:index,valueMeters:candidate.value,referenceKind:'wall-face',relatedIds:[device.id,candidate.wall.id],measurementBasis:'derived',confidence:'limited',assumptions:['楼板或顶面点位中心至实际投影落在有限直墙段内的模型墙面；施工前需复核完成面。']});});
   }
   return dimensions;
 }

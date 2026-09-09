@@ -4,8 +4,15 @@ import { createEmptyOverlay, type HostAttachment, type NetworkDevice } from '../
 import { buildInstallationSchedule, installationVariantByDeviceId, setAllConstructionDrawings, type ConstructionDrawingVisibility } from './construction-drawings';
 import { createPlanContext } from './model';
 
-const nodes = { level: { id: 'level', type: 'level', level: 0 }, wall: { id: 'wall', type: 'wall', parentId: 'level', start: [0, 0], end: [4, 0] } } as unknown as Record<string, NodeData>;
+const nodes = {
+  level: { id: 'level', type: 'level', level: 0 },
+  wall: { id: 'wall', type: 'wall', parentId: 'level', start: [0, 0], end: [4, 0] },
+  floor: { id: 'floor', type: 'slab', parentId: 'level', polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] },
+  ceiling: { id: 'ceiling', type: 'ceiling', parentId: 'level', polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] },
+} as unknown as Record<string, NodeData>;
 const wallAttachment: HostAttachment = { hostId: 'wall', hostKind: 'wall', levelId: 'level', surface: 'front', normal: [0, 0, 1] };
+const floorAttachment: HostAttachment = { hostId: 'floor', hostKind: 'slab', levelId: 'level', surface: 'top', normal: [0, 1, 0] };
+const ceilingAttachment: HostAttachment = { hostId: 'ceiling', hostKind: 'ceiling', levelId: 'level', surface: 'bottom', normal: [0, -1, 0] };
 const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: NetworkDevice['systems'], y: number, attachment?: HostAttachment): NetworkDevice => ({ id, type: 'network-device', deviceType, name: deviceType === 'luminaire' ? '筒灯' : '插座', position: { position: [1, y, 1], attachment }, sizeMm: [86, 86, 50], orientation: [0, 0, 0], systems, ports: [], createdAt: '' });
 
 describe('construction drawing visibility and installation schedule', () => {
@@ -55,5 +62,18 @@ describe('construction drawing visibility and installation schedule', () => {
     expect(sections[0].rows).toHaveLength(2);
     expect(sections[0].rows.every(row => row.variant === undefined)).toBe(true);
     expect(installationVariantByDeviceId(sections)).toEqual({});
+  });
+
+  it('labels a slab-mounted socket as a floor socket at zero height while keeping ceiling sockets distinct', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    overlay.devices = [
+      device('floor-socket', 'socket', ['receptacle'], 0, floorAttachment),
+      device('ceiling-socket', 'socket', ['receptacle'], 2.7, ceilingAttachment),
+    ];
+    const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay));
+    expect(sections[0].rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceIds: ['floor-socket'], name: '地插', mounting: '楼板', height: '0 mm', heightMeters: 0, measurementBasis: 'derived', confidence: 'high' }),
+      expect.objectContaining({ sourceIds: ['ceiling-socket'], name: '插座', mounting: '天花' }),
+    ]));
   });
 });
