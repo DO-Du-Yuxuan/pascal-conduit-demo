@@ -182,6 +182,16 @@ describe('2D point annotations', () => {
     const plan={l0:nodes.l0,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6],thickness:.2},door:{id:'door',type:'door',parentId:'west',wallId:'west',position:[3,1,0],width:1}} as Record<string,NodeData>;
     const openingDimension=buildPointPositionDimensions(plan,overlay,'l0').find(d=>d.referenceKind==='opening-edge'&&d.relatedIds.includes('door'));
     expect(openingDimension).toBeDefined();
-    expect(openingDimension!.valueMeters).toBeCloseTo(Math.hypot(1.9,.5));
+    expect(openingDimension!.valueMeters).toBeCloseTo(1.9);
+    expect(openingDimension!.referenceWitness[1]).toBeCloseTo(2.5);
+    expect(Math.abs(openingDimension!.direction[0])<1e-6||Math.abs(openingDimension!.direction[1])<1e-6).toBe(true);
+  });
+
+  it('keeps ceiling point dimensions on the two building axes despite nearby angled walls and openings',()=>{
+    const overlay=createEmptyOverlay('a','sha'),light={...device('light'),deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[3,2.7,3] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l0',elevationMm:2700}};overlay.devices=[light];
+    const plan={l0:nodes.l0,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6],thickness:.2},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0],thickness:.2},south:{id:'south',type:'wall',parentId:'l0',start:[0,6],end:[6,6],thickness:.2},angled:{id:'angled',type:'wall',parentId:'l0',start:[2.6,2.4],end:[3.6,3.4],thickness:.2},door:{id:'door',type:'door',parentId:'west',wallId:'west',position:[3,1,0],width:1}} as Record<string,NodeData>;
+    const dimensions=buildPointPositionDimensions(plan,overlay,'l0').filter(d=>d.sourceId==='light');
+    expect(dimensions).toHaveLength(4);
+    expect(dimensions.every(d=>Math.abs(d.direction[0])<1e-6||Math.abs(d.direction[1])<1e-6)).toBe(true);
   });
 });
