@@ -15,8 +15,8 @@ const device:NetworkDevice={id:'d',type:'network-device',deviceType:'socket',nam
 Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT:true});
 const roots:ReturnType<typeof createRoot>[]=[];
 afterEach(()=>{act(()=>roots.splice(0).forEach(r=>r.unmount()));document.body.innerHTML='';useOverlayStore.setState({preview:null});vi.restoreAllMocks();});
-function Harness({overlay}:{overlay:ConduitOverlayDocument}) {
- const ref=useRef<HTMLDivElement>(null),plan=useConstructionPlan({nodes,overlay,levelId:'l',hiddenNodeIds:new Set(),unit:'millimeters',rotation:90,viewBox:{minX:-5,minZ:-5,width:10,height:10},planRef:ref,selectedId:null,exterior:buildExteriorDimensions(nodes,'l'),dimensionsVisible:true,measurements:[],annotationScale:1});
+function Harness({overlay,modelNodes=nodes}:{overlay:ConduitOverlayDocument;modelNodes?:Record<string,NodeData>}) {
+ const ref=useRef<HTMLDivElement>(null),plan=useConstructionPlan({nodes:modelNodes,overlay,levelId:'l',hiddenNodeIds:new Set(),unit:'millimeters',rotation:90,viewBox:{minX:-5,minZ:-5,width:10,height:10},planRef:ref,selectedId:null,exterior:buildExteriorDimensions(modelNodes,'l'),dimensionsVisible:true,measurements:[],annotationScale:1});
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
@@ -114,5 +114,12 @@ describe('construction plan rendering integration',()=>{
   expect(div.querySelector('[aria-label="筒灯图块"]')).not.toBeNull();
   expect(div.querySelector('[data-schedule-row]')?.getAttribute('title')).toContain('依据：explicit');
   expect(div.textContent).toContain('筒灯');expect(div.textContent).toContain('H=1500 mm');expect(div.textContent).toContain('×2');
+ });
+ it('shows an incomplete-chain notice when a ceiling point has no wall on one side',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const openNodes={l:nodes.l,west:{id:'west',type:'wall',parentId:'l',start:[0,0],end:[0,6],thickness:.2}} as Record<string,NodeData>,overlay=createEmptyOverlay('a','sha');
+  overlay.devices=[{...device,id:'open-light',deviceType:'luminaire',name:'灯具',systems:['lighting'],position:{position:[2,2.7,3]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2700}}];
+  act(()=>root.render(<Harness overlay={overlay} modelNodes={openNodes}/>));
+  expect(div.textContent).toContain('该方向定位尺寸链未闭合');
  });
 });

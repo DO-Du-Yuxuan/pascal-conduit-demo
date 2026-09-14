@@ -36,6 +36,10 @@ _Avoid_: Whole-circuit reroute, move the entire conduit network
 A CAD-style description block connected to one device point or a same-wall installation group. It shows the device type or edited device name and model-derived height, quantity, and relative arrangement. It does not show a generated point number.
 _Avoid_: Device identifier, pipe annotation
 
+**Closed point-position chain**:
+A construction dimension sequence for collinear device points of the same professional system and type within one uninterrupted space. It starts at the first reliable wall face or opening edge reached on one side, passes through device centres in order, and ends at the first reliable wall face or opening edge reached on the other side. A wall crossing splits the sequence; an unresolved side remains explicitly incomplete.
+_Avoid_: Building-wide dimension chain, nearest-distance-only annotation, dimension through a wall
+
 **Device description**:
 Editable construction wording stored in the existing Overlay device name. Editing it does not override height, quantity, or relative arrangement.
 _Avoid_: Height override, point number
