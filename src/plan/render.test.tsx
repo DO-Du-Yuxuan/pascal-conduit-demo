@@ -8,6 +8,7 @@ import {createPlanContext} from './model';
 import {ConduitPlanOverlay,devicePlanRotation} from './ConduitPlan';
 import {ConstructionAnnotations,ConstructionNotices,useConstructionPlan} from './ConstructionAnnotations';
 import {ConstructionLegend} from './ConstructionLegend';
+import {PointPositionDimensions} from './PointPositionDimensions';
 import {buildExteriorDimensions} from '../geometry/exterior-dimensions';
 import {useOverlayStore} from '../domain/store';
 const nodes={l:{id:'l',type:'level',level:0},w:{id:'w',type:'wall',parentId:'l',start:[0,0],end:[4,0],thickness:.2}} as unknown as Record<string,NodeData>;
@@ -121,5 +122,21 @@ describe('construction plan rendering integration',()=>{
   overlay.devices=[{...device,id:'open-light',deviceType:'luminaire',name:'灯具',systems:['lighting'],position:{position:[2,2.7,3]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2700}}];
   act(()=>root.render(<Harness overlay={overlay} modelNodes={openNodes}/>));
   expect(div.textContent).toContain('该方向定位尺寸链未闭合');
+ });
+ it('renders a persisted point-position label placement along its dimension line',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} labelPositions={{position:.8}} /></svg>));
+  const label=div.querySelector('[data-point-position-dimension-label="position"]');
+  expect(Number(label?.getAttribute('x'))).toBeCloseTo(8);
+ });
+ it('projects a dragged point-position label onto its own dimension and persists the relative position',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
+  const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} onLabelPositionChange={onChange} toPlanPoint={(x,y)=>[x,y]} /></svg>));
+  const label=div.querySelector('[data-point-position-dimension-label="position"]') as SVGTextElement;
+  Object.assign(label,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
+  act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:0,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:8,clientY:3,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:8,clientY:3,button:0}));});
+  expect(onChange).toHaveBeenCalledWith('position',.8);
  });
 });

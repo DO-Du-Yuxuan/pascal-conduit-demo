@@ -194,4 +194,14 @@ describe('2D point annotations', () => {
     expect(dimensions).toHaveLength(4);
     expect(dimensions.every(d=>Math.abs(d.direction[0])<1e-6||Math.abs(d.direction[1])<1e-6)).toBe(true);
   });
+
+  it('keeps a surviving point-position dimension ID stable when an unrelated chain is added',()=>{
+    const rectangle={...nodes,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6],thickness:.2},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0],thickness:.2},south:{id:'south',type:'wall',parentId:'l0',start:[0,6],end:[6,6],thickness:.2}} as Record<string,NodeData>;
+    const light=(id:string,x:number,z:number)=>({...device(id),deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[x,2.7,z] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l0',elevationMm:2700}});
+    const overlay=createEmptyOverlay('a','sha'); overlay.devices=[light('target',3,3)];
+    const before=buildPointPositionDimensions(rectangle,overlay,'l0').filter(d=>d.sourceId==='target').map(d=>d.id).sort();
+    overlay.devices=[light('unrelated',1,1),light('target',3,3)];
+    const after=buildPointPositionDimensions(rectangle,overlay,'l0').filter(d=>d.sourceId==='target').map(d=>d.id).sort();
+    expect(after).toEqual(before);
+  });
 });

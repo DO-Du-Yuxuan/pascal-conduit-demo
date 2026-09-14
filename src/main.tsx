@@ -726,7 +726,7 @@ function App() {
   </details>;
   const layerControls = <>
     {layerGroup("建筑图层", { walls: "墙体", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
-    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduits: "管道" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler })); }} />全部施工图</label>)}
+    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
   const reportPanels = <>
@@ -847,6 +847,7 @@ function App() {
                 onUpdateCallout={(id,update) => { if(conduitOverlay)commitConduitOverlay(updateManualCallout(conduitOverlay,id,update)); }}
                 onDeleteCallout={(id) => { if(conduitOverlay)commitConduitOverlay(deleteManualCallout(conduitOverlay,id));setSelectedCalloutId(current=>current===id?null:current); }}
                 onSelectCallout={(id) => { setSelectedId(null);setSelectedDimension(null);setSelectedManualId(null);setSelectedCalloutId(id); }}
+                onUpdatePointPositionDimensionLabel={(id, position) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, pointPositionDimensionLabelPositions: { ...conduitOverlay.pointPositionDimensionLabelPositions, [id]: position } }); }}
                 onUpdate={updateCanvas}
                 onRemove={removeCanvas}
                 canRemove={canvases.length > 1}
@@ -941,6 +942,7 @@ function CanvasPanel({
   onUpdateCallout,
   onDeleteCallout,
   onSelectCallout,
+  onUpdatePointPositionDimensionLabel,
   onUpdate,
   onRemove,
   canRemove,
@@ -991,6 +993,7 @@ function CanvasPanel({
   onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
+  onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
   onUpdate: (id: number, u: Partial<CanvasState>) => void;
   onRemove: (id: number) => void;
   canRemove: boolean;
@@ -1101,6 +1104,7 @@ function CanvasPanel({
         onUpdateCallout={onUpdateCallout}
         onDeleteCallout={onDeleteCallout}
         onSelectCallout={onSelectCallout}
+        onUpdatePointPositionDimensionLabel={onUpdatePointPositionDimensionLabel}
       />
     </article>
   );
@@ -1205,6 +1209,7 @@ function Plan({
   onUpdateCallout,
   onDeleteCallout,
   onSelectCallout,
+  onUpdatePointPositionDimensionLabel,
 }: {
   nodes: Record<string, NodeData>;
   levelId: string;
@@ -1254,6 +1259,7 @@ function Plan({
   onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
+  onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
 }) {
   const drag = useRef<{ x: number; y: number; box: ViewBox; moved: boolean } | null>(null), suppressClick = useRef(false), planRef = useRef<HTMLDivElement>(null), svgRef = useRef<SVGSVGElement>(null), sceneRef = useRef<SVGGElement>(null), viewBoxRef = useRef(viewBox), setViewBoxRef = useRef(setViewBox), safariGesture = useRef<{ scale: number } | null>(null),
     [measurementStart, setMeasurementStart] = useState<MeasurementSnap | null>(null),
@@ -1494,7 +1500,7 @@ function Plan({
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
           <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
-          {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} />}
+          {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} onLabelPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} />}
           <ManualCallouts callouts={visibleCallouts} preview={calloutTarget&&calloutHover?{anchor:calloutTarget.anchor,label:calloutHover}:null} rotation={rotation} annotationScale={pointAnnotationScale} selectedId={selectedCalloutId} autoEditId={autoEditCalloutId} onSelect={onSelectCallout} onUpdate={onUpdateCallout} onDelete={onDeleteCallout} onEditFinished={()=>setAutoEditCalloutId(null)} onMoveStart={(id,event)=>{event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);const item=visibleCallouts.find(callout=>callout.id===id);if(item)setCalloutDrag({id,label:item.label,pointerId:event.pointerId});onSelectCallout(id);}} onMove={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;const point=eventWorldPoint(event);if(point)setCalloutDrag({...calloutDrag,label:point});}} onMoveEnd={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);onUpdateCallout(calloutDrag.id,{label:eventWorldPoint(event)??calloutDrag.label});setCalloutDrag(null);}}/>
           <ManualMeasurements measurements={manualMeasurements} preview={measurementMode !== "off" && measurementStart && measurementHover ? { mode: activeMeasurementMode, start: measurementStart, end: measurementHover } : null} unit={measurementUnit} viewRotation={rotation} selectedId={selectedManualId} onSelect={onSelectManual} onDelete={onDeleteManual} />
