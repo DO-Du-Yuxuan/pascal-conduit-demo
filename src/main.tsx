@@ -67,7 +67,7 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
-import { createEmptyOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
+import { createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
 import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
@@ -205,13 +205,15 @@ function App() {
     [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>("2d"),
     [threeDActivated, setThreeDActivated] = useState(false),
     [splitRatio, setSplitRatio] = useState(45),
+    [threeDOverlayVersion, setThreeDOverlayVersion] = useState(0),
     [twoDPanelCollapsed, setTwoDPanelCollapsed] = useState(false);
-  const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), splitResize = useRef<{ startX: number; startRatio: number; width: number } | null>(null);
+  const input = useRef<HTMLInputElement>(null), twoDOverlayInput = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), evaluationRuleElements = useRef<Record<string, HTMLElement | null>>({}), splitResize = useRef<{ startX: number; startRatio: number; width: number } | null>(null);
   const nodes = data?.nodes || {};
   const conduitOverlay = useOverlayStore((state) => state.overlay);
   const conduitOverlayDirty = useOverlayStore((state) => state.dirty);
   const resetConduitOverlay = useOverlayStore((state) => state.load);
   const commitConduitOverlay = useOverlayStore((state) => state.commit);
+  const markConduitOverlayExported = useOverlayStore((state) => state.markExported);
   const levels = Object.values(nodes).filter((n) => n.type === "level");
   const threeDScene = useMemo(() => data ? buildThreeDSceneInput(data) : null, [data]);
   const hiddenNodeIds = useMemo(() => new Set(sceneVisibility.hiddenNodeIds), [sceneVisibility.hiddenNodeIds]);
@@ -369,6 +371,24 @@ function App() {
         ],
       });
     }
+  };
+  const importConduitOverlayFromTwoD = async (uploaded: File) => {
+    const imported = parseOverlay(JSON.parse(await uploaded.text()));
+    resetConduitOverlay(imported);
+    setSelectedId(null);
+    setSelectedCalloutId(null);
+    setCalloutTargetId(null);
+    setThreeDOverlayVersion((version) => version + 1);
+  };
+  const exportConduitOverlayFromTwoD = () => {
+    if (!conduitOverlay) return;
+    const url = URL.createObjectURL(new Blob([JSON.stringify(conduitOverlay, null, 2)], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "conduit-overlay.json";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    markConduitOverlayExported();
   };
   useEffect(() => { void load(defaultLayoutText, "default-layout.json"); }, []);
   const updateCanvas = (id: number, update: Partial<CanvasState>) =>
@@ -728,6 +748,11 @@ function App() {
         <button className={`measure-toggle ${measurementMode !== "off" ? "active" : ""}`} title="开启后点击两点测量；按一次 Shift 切换正交；Esc 退出" onClick={() => setMeasurementMode((current) => current === "off" ? "aligned" : "off")}>{measurementMode === "off" ? "测量" : "退出测量"}</button>
         <button className={calloutTargetId ? "active" : ""} disabled={!calloutTargetId&&!selectedCalloutTarget} title="选择对象后添加文字引线标注" onClick={() => { if(calloutTargetId){setCalloutTargetId(null);return;}if (selectedId && selectedCalloutTarget) { setMeasurementMode("off"); setCalloutTargetId(selectedId); } }}>{calloutTargetId ? "取消添加标注" : "添加标注"}</button>
       </section>
+      <section className="two-d-tool-section" aria-label="施工图文件">
+        <button disabled={!conduitOverlay} onClick={() => twoDOverlayInput.current?.click()}>导入</button>
+        <button className="primary" disabled={!conduitOverlay} onClick={exportConduitOverlayFromTwoD}>导出</button>
+        <input ref={twoDOverlayInput} hidden type="file" accept=".json,application/json" onChange={(event) => { const uploaded = event.target.files?.[0]; if (uploaded) void importConduitOverlayFromTwoD(uploaded); event.currentTarget.value = ""; }} />
+      </section>
       <section className="two-d-tool-section" aria-label="对象隐藏">
         <button disabled={!isHideableSceneNode(selectedSceneNode)} onClick={hideSelectedSceneNode}>隐藏所选</button>
         <button disabled={!sceneVisibility.hiddenNodeIds.length} onClick={() => setSceneVisibility(restoreAllSceneNodes)}>恢复全部{sceneVisibility.hiddenNodeIds.length ? ` (${sceneVisibility.hiddenNodeIds.length})` : ""}</button>
@@ -861,7 +886,7 @@ function App() {
             }}
           />}
           {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
-            <ThreeDWorkspace scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
+            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
           </div>}
           </div>
         </section>
