@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {annotationRuleSide,layoutAnnotations,layoutExteriorAnnotations,overlaps,rotatePoint} from './layout';
+import {annotationPlacementSignature,annotationRuleSide,layoutAnnotations,layoutExteriorAnnotations,overlaps,rotatePoint} from './layout';
 import type {PlanAnnotation} from './model';
 import type {ExteriorDimensionReport} from '../geometry/exterior-dimensions';
 const a=(id:string):PlanAnnotation=>({id,sourceId:id,relatedIds:[id],levelId:'l',anchor:[2,3],kind:'height',text:`插座\nH=300 mm`,arrangement:'single',rows:[{sourceIds:[id],editableSourceId:id,label:'插座',count:1,height:'300 mm'}],measurementBasis:'derived',confidence:'limited',assumptions:[]});
@@ -33,8 +33,9 @@ it('keeps separated point annotations in the same aligned lane',()=>{
 
 it('uses a saved annotation-panel position for the current annotation group',()=>{
  const exterior={runs:[{id:'bottom',levelId:'l',componentId:'c',start:[0,0],end:[10,0],direction:[1,0],outwardNormal:[0,-1],sourceWallIds:['w'],boundarySegments:[],lengthMeters:10}],rings:[],dimensions:[],diagnostics:[],summary:{}} as unknown as ExteriorDimensionReport;
- const result=layoutExteriorAnnotations([a('socket-a')],exterior,1,{'socket-a':[7.5,-3.25]});
+ const annotation=a('socket-a'),result=layoutExteriorAnnotations([annotation],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)});
  expect(result.placed[0]).toMatchObject({label:[7.5,-3.25],manual:true});
+ expect(layoutExteriorAnnotations([{...annotation,anchor:[2.5,3]}],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)}).placed[0].manual).toBe(false);
 });
 
 it('only staggers colliding callouts and returns later callouts to the main rule line',()=>{

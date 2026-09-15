@@ -16,7 +16,7 @@ const device:NetworkDevice={id:'d',type:'network-device',deviceType:'socket',nam
 Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT:true});
 const roots:ReturnType<typeof createRoot>[]=[];
 afterEach(()=>{act(()=>roots.splice(0).forEach(r=>r.unmount()));document.body.innerHTML='';useOverlayStore.setState({preview:null});vi.restoreAllMocks();});
-function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange}:{overlay:ConduitOverlayDocument;modelNodes?:Record<string,NodeData>;onAnnotationLabelPositionChange?:(id:string,label:[number,number])=>void}) {
+function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange}:{overlay:ConduitOverlayDocument;modelNodes?:Record<string,NodeData>;onAnnotationLabelPositionChange?:(id:string,label:[number,number],signature:string)=>void}) {
  const ref=useRef<HTMLDivElement>(null),plan=useConstructionPlan({nodes:modelNodes,overlay,levelId:'l',hiddenNodeIds:new Set(),unit:'millimeters',rotation:90,viewBox:{minX:-5,minZ:-5,width:10,height:10},planRef:ref,selectedId:null,exterior:buildExteriorDimensions(modelNodes,'l'),dimensionsVisible:true,measurements:[],annotationScale:1});
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
@@ -104,7 +104,16 @@ describe('construction plan rendering integration',()=>{
   const panel=div.querySelector('[data-construction-annotation-panel]') as SVGGElement;expect(panel).toBeTruthy();
   Object.assign(panel,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
   act(()=>{panel.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:1,clientY:1,button:0}));panel.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:7,clientY:-3,button:0}));panel.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:7,clientY:-3,button:0}));});
-  expect(onChange).toHaveBeenCalledWith('group:d',[7,-3]);
+  expect(onChange).toHaveBeenCalledWith('group:d',[7,-3],expect.any(String));
+ });
+ it('clears a cancelled automatic annotation-panel drag without persisting it',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];
+  act(()=>root.render(<Harness overlay={overlay} onAnnotationLabelPositionChange={onChange}/>));
+  const panel=div.querySelector('[data-construction-annotation-panel]') as SVGGElement;
+  Object.assign(panel,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
+  act(()=>{panel.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:1,clientY:1,button:0}));panel.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:7,clientY:-3,button:0}));panel.dispatchEvent(new Event('pointercancel',{bubbles:true}));panel.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:9,clientY:-4,button:0}));});
+  expect(onChange).not.toHaveBeenCalled();
  });
  it('renders the callout rule on the final screen-facing side after rotation',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);

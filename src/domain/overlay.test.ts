@@ -35,7 +35,9 @@ describe("Conduit overlay", () => {
   it("round-trips saved automatic annotation-panel placements", () => {
     const overlay = createEmptyOverlay("annotations.json", "abc");
     overlay.constructionAnnotationLabelPositions = { "group:socket-a:socket-b": [3.25, -1.5] };
+    overlay.constructionAnnotationLabelPlacementSignatures = { "group:socket-a:socket-b": "current-group-state" };
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).constructionAnnotationLabelPositions).toEqual(overlay.constructionAnnotationLabelPositions);
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).constructionAnnotationLabelPlacementSignatures).toEqual(overlay.constructionAnnotationLabelPlacementSignatures);
   });
 
   it("rejects imported lighting groups that violate membership invariants", () => {

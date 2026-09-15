@@ -4,6 +4,7 @@ export type Rect = { x: number; y: number; width: number; height: number };
 export type PlacedAnnotation = { annotation: PlanAnnotation; box: Rect; anchor: Point };
 export type ExteriorPlacedAnnotation = { annotation: PlanAnnotation; innerBend: Point; boundary: Point; outerBend: Point; label: Point; textWidth: number; textHeight: number; lane: number; outwardNormal: Point; manual: boolean };
 export const rotatePoint = (p: Point, rotation: number, scale = 1): Point => { const r = rotation * Math.PI / 180; return [(p[0] * Math.cos(r) - p[1] * Math.sin(r)) * scale, (p[0] * Math.sin(r) + p[1] * Math.cos(r)) * scale]; };
+export const annotationPlacementSignature = (annotation: PlanAnnotation) => JSON.stringify({ anchor: annotation.anchor, arrangement: annotation.arrangement, rows: annotation.rows.map(row => ({ sourceIds: row.sourceIds, label: row.label, count: row.count, height: row.height, position: row.position })) });
 export const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width + 4 && a.x + a.width + 4 > b.x && a.y < b.y + b.height + 4 && a.y + a.height + 4 > b.y;
 export const textWidth = (text: string) => Array.from(text).reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 12 : 7.4), 0) + 12;
 /** Coordinates are rotated world coordinates in pixels: translation/panning is
@@ -39,7 +40,7 @@ function nearestRun(anchor: Point, runs: ExteriorDimensionRun[]) {
 }
 
 /** Places point callouts in model space beyond the existing outer dimension chain. */
-export function layoutExteriorAnnotations(annotations: PlanAnnotation[], exterior: ExteriorDimensionReport, annotationScale: number, labelPositions: Readonly<Record<string, Point>> = {}): { placed: ExteriorPlacedAnnotation[]; hidden: PlanAnnotation[] } {
+export function layoutExteriorAnnotations(annotations: PlanAnnotation[], exterior: ExteriorDimensionReport, annotationScale: number, labelPositions: Readonly<Record<string, Point>> = {}, labelPlacementSignatures: Readonly<Record<string, string>> = {}): { placed: ExteriorPlacedAnnotation[]; hidden: PlanAnnotation[] } {
   const assignments = annotations.map(annotation => ({ annotation, nearest: nearestRun(annotation.anchor, exterior.runs) })).filter(item => item.nearest) as Array<{ annotation: PlanAnnotation; nearest: NonNullable<ReturnType<typeof nearestRun>> }>;
   const hidden = annotations.filter(annotation => !assignments.some(item => item.annotation.id === annotation.id));
   const groups = new Map<string, typeof assignments>();
@@ -66,7 +67,7 @@ export function layoutExteriorAnnotations(annotations: PlanAnnotation[], exterio
           offset=outsideDimensionChain+normalExtent+lane*((horizontalSide?textWidthWorld:textHeight)+.14),
           componentPoints=exterior.rings.filter(ring=>ring.componentId===run.componentId).flatMap(ring=>ring.points),
           sideEdge=componentPoints.length?(horizontalSide?(run.outwardNormal[0]<0?Math.min(...componentPoints.map(p=>p[0])):Math.max(...componentPoints.map(p=>p[0]))):(run.outwardNormal[1]<0?Math.min(...componentPoints.map(p=>p[1])):Math.max(...componentPoints.map(p=>p[1])))):dot(run.start,run.outwardNormal),
-          tangentPoint=add(run.start,run.direction,scalar),automaticLabel:Point=horizontalSide?[sideEdge+run.outwardNormal[0]*offset,tangentPoint[1]]:[tangentPoint[0],sideEdge+run.outwardNormal[1]*offset],savedLabel=labelPositions[item.annotation.id],label:Point=savedLabel??automaticLabel;
+          tangentPoint=add(run.start,run.direction,scalar),automaticLabel:Point=horizontalSide?[sideEdge+run.outwardNormal[0]*offset,tangentPoint[1]]:[tangentPoint[0],sideEdge+run.outwardNormal[1]*offset],savedLabel=labelPlacementSignatures[item.annotation.id]===annotationPlacementSignature(item.annotation)?labelPositions[item.annotation.id]:undefined,label:Point=savedLabel??automaticLabel;
         const boundary=add(run.start,run.direction,crossing),outerBend:Point=horizontalSide?[label[0],boundary[1]]:[boundary[0],label[1]];
         const innerBend: Point = Math.abs(run.direction[0]) >= Math.abs(run.direction[1]) ? [boundary[0], item.annotation.anchor[1]] : [item.annotation.anchor[0], boundary[1]];
         placed.push({ annotation: item.annotation, innerBend, boundary, outerBend, label, textWidth: textWidthWorld, textHeight, lane, outwardNormal:run.outwardNormal, manual: Boolean(savedLabel) });

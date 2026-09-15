@@ -848,7 +848,7 @@ function App() {
                 onDeleteCallout={(id) => { if(conduitOverlay)commitConduitOverlay(deleteManualCallout(conduitOverlay,id));setSelectedCalloutId(current=>current===id?null:current); }}
                 onSelectCallout={(id) => { setSelectedId(null);setSelectedDimension(null);setSelectedManualId(null);setSelectedCalloutId(id); }}
                 onUpdatePointPositionDimensionLabel={(id, position) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, pointPositionDimensionLabelPositions: { ...conduitOverlay.pointPositionDimensionLabelPositions, [id]: position } }); }}
-                onUpdateConstructionAnnotationLabel={(id, label) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, constructionAnnotationLabelPositions: { ...conduitOverlay.constructionAnnotationLabelPositions, [id]: label } }); }}
+                onUpdateConstructionAnnotationLabel={(id, label, signature) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, constructionAnnotationLabelPositions: { ...conduitOverlay.constructionAnnotationLabelPositions, [id]: label }, constructionAnnotationLabelPlacementSignatures: { ...conduitOverlay.constructionAnnotationLabelPlacementSignatures, [id]: signature } }); }}
                 onUpdate={updateCanvas}
                 onRemove={removeCanvas}
                 canRemove={canvases.length > 1}
@@ -996,7 +996,7 @@ function CanvasPanel({
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
   onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
-  onUpdateConstructionAnnotationLabel: (id: string, label: [number, number]) => void;
+  onUpdateConstructionAnnotationLabel: (id: string, label: [number, number], signature: string) => void;
   onUpdate: (id: number, u: Partial<CanvasState>) => void;
   onRemove: (id: number) => void;
   canRemove: boolean;
@@ -1265,7 +1265,7 @@ function Plan({
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
   onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
-  onUpdateConstructionAnnotationLabel: (id: string, label: [number, number]) => void;
+  onUpdateConstructionAnnotationLabel: (id: string, label: [number, number], signature: string) => void;
 }) {
   const drag = useRef<{ x: number; y: number; box: ViewBox; moved: boolean } | null>(null), suppressClick = useRef(false), planRef = useRef<HTMLDivElement>(null), svgRef = useRef<SVGSVGElement>(null), sceneRef = useRef<SVGGElement>(null), viewBoxRef = useRef(viewBox), setViewBoxRef = useRef(setViewBox), safariGesture = useRef<{ scale: number } | null>(null),
     [measurementStart, setMeasurementStart] = useState<MeasurementSnap | null>(null),
