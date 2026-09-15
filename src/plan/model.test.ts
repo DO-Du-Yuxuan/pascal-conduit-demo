@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeData } from '../types';
 import { createEmptyOverlay, type HostAttachment, type NetworkDevice, type RouteSegment } from '../domain/overlay';
-import { buildPlanAnnotations, buildPointPositionDimensionReport, buildPointPositionDimensions, createPlanContext } from './model';
+import { buildPlanAnnotations, buildPointPositionDimensionReport, buildPointPositionDimensions, createPlanContext, devicePlanLabel } from './model';
 
 const nodes = { l0: { id: 'l0', type: 'level', level: 0 }, l1: { id: 'l1', type: 'level', level: 1 }, w: { id: 'w', type: 'wall', parentId: 'l0', start: [0, 0], end: [4, 0] }, w1: { id: 'w1', type: 'wall', parentId: 'l1', start: [0, 0], end: [4, 0] } } as unknown as Record<string, NodeData>;
 const host = (id = 'w', levelId = 'l0'): HostAttachment => ({ hostId: id, hostKind: 'wall', levelId, surface: 'front', normal: [0, 0, 1] });
@@ -16,6 +16,13 @@ describe('2D point annotations', () => {
     expect(report.annotations[0].text).toBe('插座\nH=257 mm');
     expect(report.annotations[0].rows[0]).toMatchObject({label:'插座',height:'257 mm'});
     expect(report.annotations[0].text).not.toMatch(/管径|上行|下行|墙端|模型层基准/);
+  });
+
+  it('labels sprinkler direction explicitly in 2D annotations', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    const sprinkler: NetworkDevice = { ...device('sprinkler'), deviceType: 'sprinkler-head', name: '喷淋头', systems: ['sprinkler'], sprinklerDirection: 'pendent' };
+    expect(devicePlanLabel(sprinkler, overlay)).toBe('向下喷淋头');
+    expect(devicePlanLabel({ ...sprinkler, name: '走廊喷头' }, overlay)).toBe('走廊喷头（向下喷）');
   });
 
   it('derives switch gang text from persisted independent control groups', () => {

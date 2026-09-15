@@ -2,7 +2,7 @@ import type { NodeData } from '../types';
 import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegment, RoutingSystem, Vec3 } from '../domain/overlay';
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
-import { DEVICE_DEFAULTS } from '../domain/devices';
+import { DEVICE_DEFAULTS, sprinklerDirectionOf } from '../domain/devices';
 import { switchGangCount, switchGangLabel } from '../domain/lighting-controls';
 
 export type Point = [number, number];
@@ -35,6 +35,10 @@ export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
 export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDocument): string {
   const source = device.name.trim();
+  if (device.deviceType === 'sprinkler-head') {
+    const direction = sprinklerDirectionOf(device) === 'pendent' ? '向下喷' : '向上喷';
+    return !source || source === DEVICE_DEFAULTS['sprinkler-head'].label || source === '向上喷淋头' || source === '向下喷淋头' ? `${direction}淋头` : `${source}（${direction}）`;
+  }
   if (isFloorSocket(device) && (!source || source === DEVICE_DEFAULTS.socket.label)) return '地插';
   if (device.deviceType !== 'switch' || (source && source !== DEVICE_DEFAULTS.switch.label)) return source || DEVICE_DEFAULTS[device.deviceType].label;
   const gangs = switchGangCount(overlay, device.id);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
@@ -56,6 +56,17 @@ describe("network devices and rooted circuits", () => {
     expect(weak.systems).toEqual(["network"]);
     const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
     expect(head.orientation).toEqual([0, 1, 0]);
+    expect(head.sprinklerDirection).toBe("upright");
+  });
+
+  it("changes a selected sprinkler between upright and pendent without moving its pipe port", () => {
+    const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
+    const connected = { ...head, ports: [{ ...head.ports[0], connectedSegmentIds: ["sprinkler-run"] }] };
+    const overlay = { ...createEmptyOverlay("a.json", "sha"), devices: [connected] };
+    const updated = setSprinklerDirection(overlay, head.id, "pendent");
+
+    expect(updated.devices[0]).toMatchObject({ sprinklerDirection: "pendent", position: connected.position, orientation: connected.orientation });
+    expect(updated.devices[0]?.ports).toEqual(connected.ports);
   });
 
   it("creates rooted circuits from the correct source and dynamic source ports", () => {

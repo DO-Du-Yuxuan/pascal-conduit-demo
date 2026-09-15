@@ -71,3 +71,7 @@ _Avoid_: Luminaire count, lighting circuit count, preset switch size
 **Switch device point**:
 A device point representing one complete switch faceplate. Its control groups determine its gang count, while the physical left-to-right position of those controls is outside the MVP model.
 _Avoid_: Switch button, control channel, preset gang device
+
+**Sprinkler direction**:
+An explicit presentation and installation property of a sprinkler-head device point: upright (向上喷) or pendent (向下喷). It controls the 3D geometry and 2D symbol/text label, defaults to upright for new and legacy points, and does not alter conduit topology or connection ports.
+_Avoid_: A separate sprinkler device type, automatic pipe reroute

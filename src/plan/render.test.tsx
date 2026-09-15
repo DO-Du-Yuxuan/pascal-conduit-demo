@@ -52,6 +52,15 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const symbol=div.querySelector('[data-device-symbol="switch"]');expect(symbol?.getAttribute('data-switch-gangs')).toBe('2');expect(symbol?.querySelectorAll('path')).toHaveLength(2);
  });
+ it('renders an explicit pendent sprinkler symbol in the 2D plan',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),sprinkler={...device,id:'sprinkler',deviceType:'sprinkler-head' as const,name:'喷淋头',systems:['sprinkler' as const],sprinklerDirection:'pendent' as const,position:{position:[2,2.7,1] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};overlay.devices=[sprinkler];
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:true});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  const symbol=div.querySelector('[data-device-symbol="sprinkler-head"]');
+  expect(symbol?.getAttribute('data-sprinkler-direction')).toBe('pendent');
+  expect(symbol?.querySelectorAll('path')[1]?.getAttribute('d')).toContain('M0-10V10');
+ });
  it('orients wall devices from their host normal while ceiling devices stay screen-upright',()=>{
   const wallDevice={...device,position:{...device.position,attachment:{...device.position.attachment!,normal:[1,0,0] as [number,number,number]}}};
   const light={...device,deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,1.5,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:1500}};

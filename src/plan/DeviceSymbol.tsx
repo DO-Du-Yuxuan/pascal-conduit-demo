@@ -1,7 +1,7 @@
 import React from 'react';
-import type { NetworkDeviceType } from '../domain/overlay';
+import type { NetworkDeviceType, SprinklerDirection } from '../domain/overlay';
 /** Local units are screen pixels; callers anchor this to real model geometry. */
-export function DeviceSymbol({ type, switchGangs }: { type: NetworkDeviceType | 'junction-box'; switchGangs?: number | null }) {
+export function DeviceSymbol({ type, switchGangs, sprinklerDirection = 'upright' }: { type: NetworkDeviceType | 'junction-box'; switchGangs?: number | null; sprinklerDirection?: SprinklerDirection }) {
   switch (type) {
     case 'strong-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-6 4L6-4M-6-4L6 4"/></>;
     case 'weak-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-5 0H5"/></>;
@@ -14,7 +14,7 @@ export function DeviceSymbol({ type, switchGangs }: { type: NetworkDeviceType | 
     }
     case 'luminaire': return <><circle r="8"/><path d="M-5.5-5.5L5.5 5.5M5.5-5.5L-5.5 5.5"/></>;
     case 'network-outlet': return <><rect x="-7" y="-6" width="14" height="12"/><path d="M-4-2H4V2H2V4H-2V2H-4Z"/></>;
-    case 'sprinkler-head': return <><circle r="6"/><path d="M-9 0H9M0-9V9"/></>;
+    case 'sprinkler-head': return <><circle r="6"/><path d="M-9 0H9"/><path d={sprinklerDirection === 'pendent' ? 'M0-10V10M-3 7L0 10L3 7' : 'M0 10V-10M-3-7L0-10L3-7'}/></>;
     case 'fire-inlet': return <><circle r="7"/><path d="M-4 0H4M0-4V4M-10 0H-7M7 0H10"/></>;
   }
 }

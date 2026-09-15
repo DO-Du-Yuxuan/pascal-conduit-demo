@@ -1,4 +1,4 @@
-import type { Circuit, ConduitOverlayDocument, DeviceFrame, DeviceMount, HostKind, NetworkDevice, NetworkDeviceType, NetworkPort, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, Vec3 } from "./overlay";
+import type { Circuit, ConduitOverlayDocument, DeviceFrame, DeviceMount, HostKind, NetworkDevice, NetworkDeviceType, NetworkPort, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SprinklerDirection, Vec3 } from "./overlay";
 import type { PlannedRoute } from "./routing";
 import { commitBranchRoute } from "./routing";
 
@@ -30,12 +30,20 @@ export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
   switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   luminaire: { label: "灯具", systems: ["lighting"], hostKinds: ["ceiling"], sizeMm: [300, 300, 40], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
-  "sprinkler-head": { label: "向上喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
+  "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
 };
 
 export const systemCanBranch = (system: RoutingSystem) => system !== "network";
 export const deviceSupportsSystem = (device: NetworkDevice, system: RoutingSystem) => device.systems.includes(system);
 export const isSourceDevice = (device: NetworkDevice) => DEVICE_DEFAULTS[device.deviceType].source;
+export const sprinklerDirectionOf = (device: NetworkDevice): SprinklerDirection => device.deviceType === "sprinkler-head" && device.sprinklerDirection === "pendent" ? "pendent" : "upright";
+
+/** Changes only the sprinkler's presentation/installation direction. Pipe topology and ports stay intact. */
+export function setSprinklerDirection(overlay: ConduitOverlayDocument, deviceId: string, direction: SprinklerDirection): ConduitOverlayDocument {
+  const device = overlay.devices.find((item) => item.id === deviceId);
+  if (!device || device.deviceType !== "sprinkler-head" || sprinklerDirectionOf(device) === direction) return overlay;
+  return { ...overlay, devices: overlay.devices.map((item) => item.id === deviceId ? { ...item, sprinklerDirection: direction } : item) };
+}
 
 function devicePort(deviceId: string, index: number, point: RoutePoint, direction: Vec3, system: RoutingSystem, role: NetworkPort["role"], face?: NetworkPort["face"], slot?: NetworkPort["slot"]): NetworkPort {
   return { id: `${deviceId}:port:${index}`, owner: { kind: "device", id: deviceId }, position: clonePoint(point), direction: normalize(direction), role, system, connectedSegmentIds: [], face, slot, flow: "unknown" };
@@ -96,7 +104,7 @@ function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint,
     if (deviceType === "luminaire") return luminairePorts(id, position, frame, sizeMm, system);
     return [devicePort(id, systemIndex, position, orientation, system, definition.portRole)];
   });
-  return { id, type: "network-device", deviceType, name: name ?? definition.label, position: clonePoint(position), sizeMm: [...sizeMm], orientation, frame, mount: mountFor(position, options.mount), systems: [...definition.systems], ports, createdAt: new Date().toISOString() };
+  return { id, type: "network-device", deviceType, name: name ?? definition.label, position: clonePoint(position), sizeMm: [...sizeMm], orientation, frame, mount: mountFor(position, options.mount), ...(deviceType === "sprinkler-head" ? { sprinklerDirection: "upright" as const } : {}), systems: [...definition.systems], ports, createdAt: new Date().toISOString() };
 }
 
 export function createNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name?: string): NetworkDevice {
@@ -118,7 +126,7 @@ export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.size
     used.add(previous.id);
     return { ...port, id: previous.id, owner: { kind: "device" as const, id: device.id }, connectedSegmentIds: [...previous.connectedSegmentIds] };
   });
-  return { ...rebuilt, id: device.id, createdAt: device.createdAt, positioning: device.positioning, ports };
+  return { ...rebuilt, id: device.id, createdAt: device.createdAt, positioning: device.positioning, ...(device.deviceType === "sprinkler-head" ? { sprinklerDirection: sprinklerDirectionOf(device) } : {}), ports };
 }
 
 export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: NetworkDeviceType, position: RoutePoint, name?: string): ConduitOverlayDocument {

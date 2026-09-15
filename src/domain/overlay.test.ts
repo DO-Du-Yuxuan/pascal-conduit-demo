@@ -20,6 +20,16 @@ describe("Conduit overlay", () => {
     expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.2", lightingControlGroups: [], manualCallouts: [] });
   });
 
+  it("defaults legacy sprinkler heads to upright while preserving an explicit pendent direction", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("sprinklers.json", "abc")));
+    raw.devices = [
+      { id: "upright", type: "network-device", deviceType: "sprinkler-head", name: "向上喷淋头", position: point(0, 2, 0), sizeMm: [80, 80, 100], orientation: [0, 1, 0], systems: ["sprinkler"], ports: [], createdAt: "now" },
+      { id: "pendent", type: "network-device", deviceType: "sprinkler-head", name: "向下喷淋头", position: point(1, 2, 0), sizeMm: [80, 80, 100], orientation: [0, 1, 0], sprinklerDirection: "pendent", systems: ["sprinkler"], ports: [], createdAt: "now" },
+    ];
+
+    expect(parseOverlay(raw).devices.map((device) => device.sprinklerDirection)).toEqual(["upright", "pendent"]);
+  });
+
   it("round-trips persisted manual callouts", () => {
     const overlay = createEmptyOverlay("callouts.json", "abc");
     overlay.manualCallouts=[{id:"note",targetId:"device",levelId:"L0",anchor:[1,2],label:[3,4],text:"现场复核",createdAt:"now"}];
