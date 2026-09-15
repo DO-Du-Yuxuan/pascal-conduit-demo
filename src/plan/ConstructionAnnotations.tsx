@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import type { NodeData } from '../types';
 import type { ConduitOverlayDocument, RoutingSystem } from '../domain/overlay';
 import type { ViewBox } from '../geometry/transform';
@@ -35,9 +36,10 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
 }
 export type ConstructionPlan = ReturnType<typeof useConstructionPlan>;
 export function ConstructionAnnotations({plan,rotation,onSelect,onLabelPositionChange,toPlanPoint}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void;onLabelPositionChange?:(id:string,label:Point,signature:string)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null}) {
-  const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string}|null>(null),[draftLabels,setDraftLabels]=useState<Record<string,Point>>({}),dragRef=useRef<{id:string;pointerId:number}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
+  const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string;left:number;top:number;width:number}|null>(null),[draftLabels,setDraftLabels]=useState<Record<string,Point>>({}),dragRef=useRef<{id:string;pointerId:number}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
   const rename=(ids:string[],value:string)=>{const name=value.trim();if(overlay&&name)commit({...overlay,devices:overlay.devices.map(device=>ids.includes(device.id)?{...device,name}:device)});setEditing(null);};
-  return <g className="construction-annotations" aria-label="施工标注">
+  const editor=editing?createPortal(<input className="construction-annotation-editor" autoFocus value={editing.value} onChange={event=>setEditing({...editing,value:event.target.value})} onBlur={()=>rename(editing.ids,editing.value)} onKeyDown={event=>{event.stopPropagation();if(event.nativeEvent.isComposing)return;if(event.key==='Enter')rename(editing.ids,editing.value);if(event.key==='Escape')setEditing(null);}} style={{position:'fixed',left:editing.left,top:editing.top,zIndex:30,width:editing.width,height:30,border:'1px solid #e75c3c',padding:'3px 6px',background:'#fff',color:'#343434',caretColor:'#343434',fontSize:'14px',fontFamily:'system-ui, sans-serif',lineHeight:'20px'}}/>,document.body):null;
+  return <><g className="construction-annotations" aria-label="施工标注">
     {plan.layout.placed.map(({annotation:a,innerBend,boundary,label:placedLabel,textWidth,textHeight,outwardNormal,manual})=>{
       const label=draftLabels[a.id]??placedLabel,isManual=manual||draftLabels[a.id]!==undefined,leaderDirection:Point=isManual?[label[0]-a.anchor[0],label[1]-a.anchor[1]]:outwardNormal,ruleSide=annotationRuleSide(leaderDirection,rotation);
       const commonHeight=a.rows.every(row=>row.height===a.rows[0]?.height),sharedHeight=a.arrangement==='horizontal'&&commonHeight,edgeX=ruleSide==='left'?-textWidth/2:textWidth/2,edgeOffset=rotatePoint([edgeX,0],-rotation),end:[number,number]=[label[0]+edgeOffset[0],label[1]+edgeOffset[1]],horizontalSide=Math.abs(outwardNormal[0])>=Math.abs(outwardNormal[1]),routeBend:[number,number]=horizontalSide?[end[0],boundary[1]]:[boundary[0],end[1]],manualBend:[number,number]=Math.abs(end[0]-a.anchor[0])>=Math.abs(end[1]-a.anchor[1])?[end[0],a.anchor[1]]:[a.anchor[0],end[1]],leader=isManual?[a.anchor,manualBend,end]:[a.anchor,innerBend,boundary,routeBend,end];
@@ -50,12 +52,12 @@ export function ConstructionAnnotations({plan,rotation,onSelect,onLabelPositionC
           <line data-callout-rule x1={edgeX} y1={-textHeight/2} x2={edgeX} y2={textHeight/2} stroke="#343434" strokeWidth="1" vectorEffect="non-scaling-stroke"/>
           {lines.map((line,index)=>{const y=-textHeight/2+lineHeight*(index+.5),isEditing=line.kind==='label'&&editing?.ids.join('|')===line.row.sourceIds.join('|');return <g key={`${line.row.editableSourceId}:${line.kind}:${index}`}>
             {index>0&&<line x1={-textWidth/2} y1={y-lineHeight/2} x2={textWidth/2} y2={y-lineHeight/2} stroke="#343434" strokeWidth="1" vectorEffect="non-scaling-stroke"/>}
-            {isEditing?<foreignObject x={-textWidth/2+.06} y={y-lineHeight*.42} width={textWidth-.12} height={lineHeight*.84}><input autoFocus value={editing.value} onChange={event=>setEditing({...editing,value:event.target.value})} onBlur={()=>rename(editing.ids,editing.value)} onKeyDown={event=>{if(event.key==='Enter')rename(editing.ids,editing.value);if(event.key==='Escape')setEditing(null);}} style={{width:'100%',height:'100%',border:'none',padding:0,background:'#fff',color:'#343434',caretColor:'#343434',fontSize:'14px',fontFamily:'system-ui, sans-serif',lineHeight:'20px'}}/></foreignObject>:<text x={edgeX<0?-.0:0} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize} fill="#343434" fontFamily="system-ui, sans-serif" onDoubleClick={event=>{event.stopPropagation();if(line.kind==='label')setEditing({ids:line.row.sourceIds,value:line.row.label});}}>{line.kind==='height'?`H=${line.row.height}`:<>{line.row.label}{line.row.count>1?` × ${line.row.count}`:''}{line.row.position?`    ${line.row.position}`:''}</>}</text>}
+            {!isEditing&&<text x={edgeX<0?-.0:0} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize} fill="#343434" fontFamily="system-ui, sans-serif" onDoubleClick={event=>{event.stopPropagation();if(line.kind==='label'){const rect=event.currentTarget.getBoundingClientRect();setEditing({ids:line.row.sourceIds,value:line.row.label,left:rect.left,top:rect.top,width:Math.max(120,rect.width+12)});}}}>{line.kind==='height'?`H=${line.row.height}`:<>{line.row.label}{line.row.count>1?` × ${line.row.count}`:''}{line.row.position?`    ${line.row.position}`:''}</>}</text>}
           </g>;})}
         </g>
       </g>;
     })}
-  </g>;
+  </g>{editor}</>;
 }
 export function ConstructionNotices({plan,onFocus}: {plan:ConstructionPlan;onFocus:(id:string,anchor?:Point)=>void}) {
   const hidden=plan.layout.hidden;

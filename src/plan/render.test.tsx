@@ -89,13 +89,14 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0} annotationScale={2}/></svg>));
   expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('scale(0.036)');
  });
- it('opens an inline editor only when the device description is double-clicked',()=>{
+ it('opens a screen-space editor only when the device description is double-clicked',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];useOverlayStore.getState().load(overlay);
   act(()=>root.render(<Harness overlay={overlay}/>));
   const description=[...div.querySelectorAll('text')].find(node=>node.textContent==='插座');expect(description).toBeTruthy();
   act(()=>description!.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
-  expect(div.querySelector('foreignObject input')).not.toBeNull();
+  expect(document.body.querySelector('.construction-annotation-editor')).not.toBeNull();
+  expect(div.querySelector('foreignObject')).toBeNull();
  });
  it('uses readable text and caret colors while editing an automatic annotation',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
@@ -103,10 +104,12 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<Harness overlay={overlay}/>));
   const description=[...div.querySelectorAll('text')].find(node=>node.textContent==='插座')!;
   act(()=>description.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
-  const input=div.querySelector('foreignObject input') as HTMLInputElement;
+  const input=document.body.querySelector('.construction-annotation-editor') as HTMLInputElement;
   expect(input.style.color).toBe('rgb(52, 52, 52)');
   expect(input.style.caretColor).toBe('rgb(52, 52, 52)');
   expect(Number.parseFloat(input.style.fontSize)).toBeGreaterThanOrEqual(12);
+  act(()=>{Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(input,'现场复核');input.dispatchEvent(new Event('input',{bubbles:true}));});
+  expect(input.value).toBe('现场复核');
  });
  it('persists an arbitrary drag position from an automatic annotation panel',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
