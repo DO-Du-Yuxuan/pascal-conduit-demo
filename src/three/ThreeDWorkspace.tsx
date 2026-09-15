@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackSide, Box3, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode } from "../domain/overlay";
+import { migrateOverlayOwnership, overlayBelongsToProject } from "../domain/workspace";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
@@ -136,7 +137,8 @@ function InstallationPlane({ bounds, y, onPreview, onPlace }: { bounds: ThreeDBo
 }
 
 const copy = (overlay: ConduitOverlayDocument) => structuredClone(overlay);
-const normalizeOverlay = (overlay: ConduitOverlayDocument | null, sourceFile: string, sourceSha: string) => overlay ? parseOverlay(copy(overlay)) : createEmptyOverlay(sourceFile, sourceSha);
+const normalizeOverlay = (overlay: ConduitOverlayDocument | null, sourceFile: string, sourceSha: string, projectId: string | null) => overlay ? parseOverlay(copy(overlay)) : createEmptyOverlay(sourceFile, sourceSha, projectId ?? undefined);
+const overlayForProject = (overlay: ConduitOverlayDocument | null, sourceSha: string, projectId: string | null) => projectId ? overlay?.source.projectId === projectId ? overlay : null : overlay?.source.sha256 === sourceSha ? overlay : null;
 const routePoint = (hit: ThreeDSurfaceHit): RoutePoint => ({ position: hit.point, attachment: hit.attachment });
 const positioningContext = (scene: ThreeDSceneInput | null): DevicePositioningContext => {
   const levelFloorY: Record<string, number> = {}, wallSpans: Record<string, [number, number]> = {}, wallOpenings: Record<string, { id: string; start: number; end: number }[]> = {}, wallFaces: NonNullable<DevicePositioningContext["wallFaces"]>[number][] = [];
@@ -163,16 +165,21 @@ const branchAttachment = (segment: RouteSegment, t: number): HostAttachment | un
   return { ...start, localPosition: start.localPosition && end.localPosition ? start.localPosition.map((value, axis) => value + (end.localPosition![axis] - value) * t) as [number, number, number] : start.localPosition, curveT: start.curveT !== undefined && end.curveT !== undefined ? start.curveT + (end.curveT - start.curveT) * t : start.curveT };
 };
 
-export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string }) {
+export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null }) {
   const publishOverlay = useOverlayStore((state) => state.publish);
-  const loadSharedOverlay = useOverlayStore((state) => state.load);
+  const loadSharedWorkspace = useOverlayStore((state) => state.loadWorkspace);
+  const commitSharedOverlay = useOverlayStore((state) => state.commit);
+  const undoSharedWorkspace = useOverlayStore((state) => state.undo);
+  const redoSharedWorkspace = useOverlayStore((state) => state.redo);
+  const sharedUndoStack = useOverlayStore((state) => state.undoStack);
+  const sharedRedoStack = useOverlayStore((state) => state.redoStack);
   const markOverlayExported = useOverlayStore((state) => state.markExported);
   const publishRoutePreview = useOverlayStore((state) => state.publishPreview);
   const clearRoutePreview = useOverlayStore((state) => state.clearPreview);
   const initialSharedState = useRef(useOverlayStore.getState()).current;
-  const matchingOverlay = initialSharedState.overlay?.source.sha256 === sourceSha ? initialSharedState.overlay : null;
+  const matchingOverlay = overlayForProject(initialSharedState.overlay, sourceSha, projectId);
   const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
-  const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty)), [undoStack, setUndoStack] = useState<ConduitOverlayDocument[]>([]), [redoStack, setRedoStack] = useState<ConduitOverlayDocument[]>([]);
+  const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
   const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set());
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
   const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
@@ -243,9 +250,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   }), []);
 
   useEffect(() => {
-    const stored = useOverlayStore.getState(), restored = stored.overlay?.source.sha256 === sourceSha ? stored.overlay : null;
-    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha)); setOverlayDirty(Boolean(restored && stored.dirty)); setUndoStack([]); setRedoStack([]); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setControlBinding(null); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
-  }, [scene?.sceneKey, sourceFile, sourceSha]);
+    const stored = useOverlayStore.getState(), restored = overlayForProject(stored.overlay, sourceSha, projectId);
+    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setControlBinding(null); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
+  }, [scene?.sceneKey, sourceFile, sourceSha, projectId]);
   useEffect(() => { publishOverlay(overlay, overlayDirty); }, [overlay, overlayDirty, publishOverlay]);
   useEffect(() => { setChaseFallbacks(new Set()); }, [appliedConstruction.surfaceChases, appliedConstruction.penetrations, scene?.sceneKey]);
   useEffect(() => {
@@ -256,7 +263,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const onKeyDown = (event: KeyboardEvent) => {
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
       if (editable) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); setOverlayDirty(true); if (event.shiftKey) setRedoStack((redo) => { const next = redo[redo.length - 1]; if (!next) return redo; setUndoStack((undo) => [...undo, overlay]); setOverlay(next); return redo.slice(0, -1); }); else setUndoStack((undo) => { const previous = undo[undo.length - 1]; if (!previous) return undo; setRedoStack((redo) => [...redo, overlay]); setOverlay(previous); return undo.slice(0, -1); }); return; }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) redoSharedWorkspace(); else undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } return; }
       if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") { chooseTool("draw"); setStatus("已切换到画管模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "d") { chooseTool("point"); setStatus("已切换到点位模式。"); return; }
@@ -274,7 +281,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
   }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, controlBinding]);
 
-  const commit = (next: ConduitOverlayDocument) => { setUndoStack((history) => [...history, overlay]); setRedoStack([]); setOverlay(next); setOverlayDirty(true); };
+  const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const finishControlGroupEdit = () => {
     if (controlBinding?.kind !== "edit") return;
     const result = replaceLightingControlGroup(overlay, controlBinding.groupId, controlBinding.luminaireDeviceIds);
@@ -528,7 +535,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commit(deleteNetworkObject(overlay, id));
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
-  const importOverlay = async (file: File) => { const imported = parseOverlay(JSON.parse(await file.text())); setOverlay(imported); setOverlayDirty(false); loadSharedOverlay(imported); setUndoStack([]); setRedoStack([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] }); };
+  const importOverlay = async (file: File) => { const imported = parseOverlay(JSON.parse(await file.text())), project = useOverlayStore.getState().project; if (!project || !overlayBelongsToProject(imported, project)) { window.alert("该 Overlay 不属于当前项目，未导入。"); return; } const migrated = migrateOverlayOwnership(imported, project); setOverlay(migrated); setOverlayDirty(JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); loadSharedWorkspace(project, migrated, JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); setAppliedConstruction({ surfaceChases: [], penetrations: [] }); };
   const exportOverlay = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "conduit-overlay.json"; anchor.click(); URL.revokeObjectURL(url); setOverlayDirty(false); markOverlayExported(); };
   const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); orthogonalDirection.current = null; };
@@ -656,7 +663,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
 
           <details className="conduit-panel-details conduit-shortcuts"><summary><b>快捷键</b></summary><div className="conduit-details-body"><small>空格选择 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D 点位</small><small>Shift 正交 · Tab 穿透 · ← X / ↑ Y / → Z · ↓ 取消世界轴</small><small>Enter 完成 · Esc 撤销当前步骤</small></div></details>
 
-          <div className="conduit-utility-grid"><button disabled={!undoStack.length} onClick={() => { const previous = undoStack[undoStack.length - 1]; if (previous) { setRedoStack((history) => [...history, overlay]); setUndoStack((history) => history.slice(0, -1)); setOverlay(previous); setOverlayDirty(true); } }}>撤销</button><button disabled={!redoStack.length} onClick={() => { const next = redoStack[redoStack.length - 1]; if (next) { setUndoStack((history) => [...history, overlay]); setRedoStack((history) => history.slice(0, -1)); setOverlay(next); setOverlayDirty(true); } }}>重做</button><button onClick={() => overlayInput.current?.click()}>导入</button><button className="primary" onClick={exportOverlay}>导出</button></div>
+          <div className="conduit-utility-grid"><button disabled={!sharedUndoStack.length} onClick={() => { undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } }}>撤销</button><button disabled={!sharedRedoStack.length} onClick={() => { redoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } }}>重做</button><button onClick={() => overlayInput.current?.click()}>导入</button><button className="primary" onClick={exportOverlay}>导出</button></div>
           <input ref={overlayInput} hidden type="file" accept="application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOverlay(file); event.currentTarget.value = ""; }} />
         </>}
       </aside>

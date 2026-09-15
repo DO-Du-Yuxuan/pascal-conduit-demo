@@ -67,7 +67,8 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
-import { createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
+import { assessOverlayHosts, createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
+import { makeProjectWritable, migrateOverlayOwnership, overlayBelongsToProject, projectDocument, readProjectIdentity } from "./domain/workspace";
 import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
@@ -213,20 +214,32 @@ function App() {
   const nodes = data?.nodes || {};
   const conduitOverlay = useOverlayStore((state) => state.overlay);
   const conduitOverlayDirty = useOverlayStore((state) => state.dirty);
-  const resetConduitOverlay = useOverlayStore((state) => state.load);
+  const projectDirty = useOverlayStore((state) => state.projectDirty);
+  const workspaceProject = useOverlayStore((state) => state.project);
+  const loadWorkspace = useOverlayStore((state) => state.loadWorkspace);
   const commitConduitOverlay = useOverlayStore((state) => state.commit);
+  const commitWorkspace = useOverlayStore((state) => state.commitWorkspace);
   const markConduitOverlayExported = useOverlayStore((state) => state.markExported);
+  const markProjectExported = useOverlayStore((state) => state.markProjectExported);
   const levels = Object.values(nodes).filter((n) => n.type === "level");
   const threeDScene = useMemo(() => data ? buildThreeDSceneInput(data) : null, [data]);
   const hiddenNodeIds = useMemo(() => new Set(sceneVisibility.hiddenNodeIds), [sceneVisibility.hiddenNodeIds]);
   useEffect(() => { const closeTransientUi = (event: KeyboardEvent) => { if (event.key !== "Escape") return; setMeasurementMode("off"); setCalloutTargetId(null); if (activeEvaluationHighlight) { setActiveEvaluationHighlight(null); setEvaluationFocusMessage(null); return; } setEvaluationHighlights([]); setEvaluationFocusMessage(null); }; window.addEventListener("keydown", closeTransientUi); return () => window.removeEventListener("keydown", closeTransientUi); }, [activeEvaluationHighlight]);
   useEffect(() => {
-    if (!conduitOverlayDirty) return;
+    if (!projectDirty && !conduitOverlayDirty) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [conduitOverlayDirty]);
+  }, [projectDirty, conduitOverlayDirty]);
   useEffect(() => subscribeFloorplanImageCrop(() => setImageCropRevision((revision) => revision + 1)), []);
+  useEffect(() => {
+    if (!workspaceProject || JSON.stringify(data?.raw) === JSON.stringify(workspaceProject.raw)) return;
+    const parsed = parseProject(workspaceProject.raw);
+    parsed.diagnostics = [...parsed.diagnostics, ...inspectNodes(parsed.nodes)];
+    setData(parsed);
+    setFile(workspaceProject.fileName);
+    setSourceSha(workspaceProject.revisionSha256);
+  }, [workspaceProject, data?.raw]);
   const clearEvaluationResults = () => {
     setEvaluationReport(null);
     setS1Report(null);
@@ -268,7 +281,12 @@ function App() {
     try {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
       const sha256 = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
-      const parsed = parseProject(JSON.parse(text));
+      const rawProject = JSON.parse(text) as Record<string, unknown>;
+      const importedProject = projectDocument(rawProject, name, sha256);
+      const currentProjectId = data ? readProjectIdentity(data.raw) : null;
+      const isSameProject = Boolean(importedProject.projectId && importedProject.projectId === currentProjectId);
+      if (!useDemoRequirements && data && !isSameProject && (projectDirty || conduitOverlayDirty) && !window.confirm("当前项目或施工 Overlay 尚有未导出的更改；仍要导入另一个项目吗？")) return;
+      const parsed = parseProject(rawProject);
       parsed.diagnostics = [
         ...parsed.diagnostics,
         ...inspectNodes(parsed.nodes),
@@ -312,7 +330,12 @@ function App() {
       setRequirementError(null);
       setFile(name);
       setSourceSha(sha256);
-      resetConduitOverlay(createEmptyOverlay(name, sha256));
+      if (isSameProject && conduitOverlay) {
+        const retained = migrateOverlayOwnership(conduitOverlay, importedProject);
+        const assessment = assessOverlayHosts(retained, Object.keys(parsed.nodes));
+        if (assessment.missingHostIds.length) parsed.diagnostics.push({ severity: "warning", code: "overlay_missing_hosts", message: `新版本缺少 Overlay 引用的宿主：${assessment.missingHostIds.join("、")}` });
+        loadWorkspace(importedProject, retained, true);
+      } else loadWorkspace(importedProject, createEmptyOverlay(name, sha256, importedProject.projectId ?? undefined));
       setWorkspaceViewMode("2d");
       setSelectedId(null);
       setSelectedDimension(null);
@@ -375,8 +398,13 @@ function App() {
     }
   };
   const importConduitOverlayFromTwoD = async (uploaded: File) => {
+    if ((projectDirty || conduitOverlayDirty) && !window.confirm("当前项目或施工 Overlay 尚有未导出的更改；仍要替换 Overlay 吗？")) return;
     const imported = parseOverlay(JSON.parse(await uploaded.text()));
-    resetConduitOverlay(imported);
+    const currentProject = data?.raw && typeof data.raw === "object" ? projectDocument(data.raw, file, sourceSha) : null;
+    const identityMatches = Boolean(currentProject && overlayBelongsToProject(imported, currentProject));
+    if (!currentProject || !identityMatches) { window.alert("该 Overlay 不属于当前项目，未导入。"); return; }
+    const migrated = migrateOverlayOwnership(imported, currentProject);
+    loadWorkspace(currentProject, migrated, JSON.stringify(migrated.source) !== JSON.stringify(imported.source));
     setSelectedId(null);
     setSelectedCalloutId(null);
     setCalloutTargetId(null);
@@ -391,6 +419,29 @@ function App() {
     anchor.click();
     URL.revokeObjectURL(url);
     markConduitOverlayExported();
+  };
+  const exportProjectJson = async () => {
+    if (!data?.raw || typeof data.raw !== "object") return;
+    const current = projectDocument(data.raw as Record<string, unknown>, file, sourceSha);
+    const writable = makeProjectWritable(current);
+    const projectText = JSON.stringify(writable.raw, null, 2);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(projectText));
+    const revisionSha256 = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const exported = { ...writable, revisionSha256 };
+    const nextParsed = parseProject(exported.raw);
+    nextParsed.diagnostics = [...nextParsed.diagnostics, ...inspectNodes(nextParsed.nodes)];
+    const extension = file.toLowerCase().endsWith(".json") ? ".json" : "";
+    const downloadedName = `${file.slice(0, extension ? -extension.length : undefined) || "project"}-export.json`;
+    const url = URL.createObjectURL(new Blob([projectText], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = downloadedName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setData(nextParsed);
+    setSourceSha(revisionSha256);
+    commitWorkspace(exported, conduitOverlay ? migrateOverlayOwnership(conduitOverlay, exported) : null, true, Boolean(conduitOverlay));
+    markProjectExported();
   };
   useEffect(() => { void load(defaultLayoutText, "default-layout.json"); }, []);
   const updateCanvas = (id: number, update: Partial<CanvasState>) =>
@@ -780,6 +831,9 @@ function App() {
           <button className="primary" onClick={() => input.current?.click()}>
             导入 JSON
           </button>
+          <button disabled={!data?.raw || typeof data.raw !== "object"} onClick={() => void exportProjectJson()} title="下载新的项目 JSON 文件，不会覆盖导入源文件">
+            导出项目 JSON
+          </button>
           <input
             ref={input}
             hidden
@@ -890,7 +944,7 @@ function App() {
             }}
           />}
           {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
-            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} />
+            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} />
           </div>}
           </div>
         </section>

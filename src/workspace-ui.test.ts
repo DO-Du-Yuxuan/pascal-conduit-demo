@@ -17,6 +17,13 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("3D 查看");
   });
 
+  it("offers independent project export and protects dirty workspace replacement", () => {
+    expect(source).toContain("导出项目 JSON");
+    expect(source).toContain("makeProjectWritable");
+    expect(source).toContain("当前项目或施工 Overlay 尚有未导出的更改");
+    expect(threeDSource).toContain("source.projectId");
+  });
+
   it("provides a collapsible 2D overlay panel and an accessible divider", () => {
     expect(source).toContain("two-d-floating-panel");
     expect(source).toContain("调整 2D 与 3D 视图宽度");

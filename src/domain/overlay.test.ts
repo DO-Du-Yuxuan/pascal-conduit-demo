@@ -17,7 +17,13 @@ describe("Conduit overlay", () => {
     const raw = JSON.parse(JSON.stringify(createEmptyOverlay("default-layout.json", "abc")));
     raw.schemaVersion = "2.1";
     delete raw.lightingControlGroups;
-    expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.2", lightingControlGroups: [], manualCallouts: [] });
+    expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.3", lightingControlGroups: [], manualCallouts: [] });
+  });
+
+  it("does not reclassify current 2.3 routes as legacy-unrooted", () => {
+    const raw = createEmptyOverlay("current.json", "abc", "project-1");
+    raw.segments = [{ id: "route", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: point(0, 1, 0), end: point(1, 1, 0), createdAt: "now" }];
+    expect(parseOverlay(raw).segments[0].legacyUnrooted).toBe(false);
   });
 
   it("defaults the independent sensor layer to visible for legacy overlays", () => {
@@ -90,7 +96,7 @@ describe("Conduit overlay", () => {
     delete legacy.surfaceChases; legacy.wallChases = [{ id: "legacy-chase", type: "wall-chase", wallId: "wall-a", segmentId: "pipe", start: point(0, 1, 0), end: point(1, 1, 0), widthMm: 30, depthMm: 25 }];
     legacy.penetrations = [{ id: "legacy-hole", type: "penetration", hostId: "wall-a", hostKind: "wall", segmentId: "pipe", point: point(.5, 1, 0), diameterMm: 30 }];
     const migratedLegacy = parseOverlay(legacy);
-    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.2", junctionBoxes: [], devices: [], lightingControlGroups: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
+    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.3", junctionBoxes: [], devices: [], lightingControlGroups: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
     expect(migratedLegacy.surfaceChases[0]).toMatchObject({ type: "surface-chase", hostId: "wall-a", hostKind: "wall", path: { kind: "line" } });
     expect(migratedLegacy.penetrations[0]).toMatchObject({ entry: { position: [.5, 1, 0] }, exit: { position: [.5, 1, 0] }, direction: [0, 0, 1], derived: true });
     expect(parseOverlay(JSON.parse(JSON.stringify(migratedLegacy)))).toEqual(migratedLegacy);
