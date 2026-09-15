@@ -25,6 +25,22 @@ describe('2D point annotations', () => {
     expect(devicePlanLabel({ ...sprinkler, name: '走廊喷头' }, overlay)).toBe('走廊喷头（向下喷）');
   });
 
+  it('keeps sensor points in their dedicated visible layer and labels their purpose', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    const sensor: NetworkDevice = { ...device('sensor'), deviceType: 'sensor', name: '水浸传感器', systems: [], ports: [] };
+    overlay.devices = [sensor];
+    expect(devicePlanLabel(sensor, overlay)).toBe('水浸传感器');
+    expect(createPlanContext(nodes, overlay).deviceVisible(sensor)).toBe(true);
+    expect(createPlanContext(nodes, overlay, new Set(), overlay.settings.visibleSystems, false).deviceVisible(sensor)).toBe(false);
+  });
+
+  it('creates an editable 2D text annotation for a suspended sensor purpose', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    const sensor: NetworkDevice = { ...device('sensor'), deviceType: 'sensor', name: '温湿度传感器', systems: [], ports: [], position: { position: [1, 2.7, 1] }, mount: { kind: 'reference-plane', levelId: 'l0', elevationMm: 2700 } };
+    overlay.devices = [sensor];
+    expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0]?.text).toContain('温湿度传感器');
+  });
+
   it('derives switch gang text from persisted independent control groups', () => {
     const overlay = createEmptyOverlay('a', 'sha'), wallSwitch = { ...device('switch'), deviceType: 'switch' as const, name: '开关', systems: ['lighting' as const] };
     overlay.devices = [wallSwitch];

@@ -3,26 +3,28 @@ import type { ConduitOverlayDocument, NetworkDevice, RoutingSystem } from '../do
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
 import { deviceInstallationHeightMeters, devicePlanLabel, isFloorSocket, type PlanContext } from './model';
 
-export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean>;
-export const CONSTRUCTION_DRAWING_LABELS: Record<RoutingSystem, string> = {
+export type ConstructionDrawingSystem = RoutingSystem | 'sensor';
+export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean> & { sensor?: boolean };
+export const CONSTRUCTION_DRAWING_LABELS: Record<ConstructionDrawingSystem, string> = {
   receptacle: '插座施工图', lighting: '灯具施工图', network: '弱电施工图', sprinkler: '消防施工图',
+  sensor: '传感器施工图',
 };
-export const CONSTRUCTION_DRAWING_SYSTEMS: RoutingSystem[] = ['receptacle', 'lighting', 'network', 'sprinkler'];
-export const allConstructionDrawingsSelected = (visibility: ConstructionDrawingVisibility) => CONSTRUCTION_DRAWING_SYSTEMS.every(system => visibility[system]);
-export const setAllConstructionDrawings = (checked: boolean): ConstructionDrawingVisibility => ({ receptacle: checked, lighting: checked, network: checked, sprinkler: checked });
+export const CONSTRUCTION_DRAWING_SYSTEMS: ConstructionDrawingSystem[] = ['receptacle', 'lighting', 'network', 'sprinkler', 'sensor'];
+export const allConstructionDrawingsSelected = (visibility: ConstructionDrawingVisibility) => CONSTRUCTION_DRAWING_SYSTEMS.every(system => system === 'sensor' ? visibility.sensor !== false : visibility[system]);
+export const setAllConstructionDrawings = (checked: boolean): ConstructionDrawingVisibility => ({ receptacle: checked, lighting: checked, network: checked, sprinkler: checked, sensor: checked });
 
 export type InstallationScheduleRow = { variant?: string; deviceType: NetworkDevice['deviceType']; name: string; mounting: string; height: string; heightMeters: number; quantity: number; sourceIds: string[]; measurementBasis: 'explicit' | 'derived'; assumptions: string[]; confidence: 'high' | 'limited' };
-export type InstallationScheduleSection = { system: RoutingSystem; label: string; rows: InstallationScheduleRow[] };
+export type InstallationScheduleSection = { system: ConstructionDrawingSystem; label: string; rows: InstallationScheduleRow[] };
 
 const wallAttachment = (device: NetworkDevice) => device.position.attachment?.hostKind === 'wall' || (device.mount?.kind === 'host' && device.mount.attachment.hostKind === 'wall');
 export const usesExteriorHeightCallout = (device: NetworkDevice) => wallAttachment(device);
 
 export function buildInstallationSchedule(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context: PlanContext): InstallationScheduleSection[] {
   const suffix = unit === 'millimeters' ? ' mm' : '';
-  const rows = new Map<RoutingSystem, Map<string, InstallationScheduleRow>>();
+  const rows = new Map<ConstructionDrawingSystem, Map<string, InstallationScheduleRow>>();
   for (const device of overlay.devices) {
     if (!context.deviceVisible(device) || context.deviceLevel(device) !== levelId || usesExteriorHeightCallout(device)) continue;
-    const system = device.systems.find(candidate => context.systemVisibility[candidate]);
+    const system: ConstructionDrawingSystem | undefined = device.deviceType === 'sensor' ? context.sensorVisible ? 'sensor' : undefined : device.systems.find(candidate => context.systemVisibility[candidate]);
     if (!system) continue;
     const mounting = device.mount?.kind === 'reference-plane' ? '安装参考面' : device.position.attachment?.hostKind === 'ceiling' ? '天花' : device.position.attachment?.hostKind === 'slab' ? '楼板' : '悬空';
     const heightMeters = deviceInstallationHeightMeters(device, nodes, levelId);

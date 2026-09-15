@@ -16,11 +16,11 @@ const ceilingAttachment: HostAttachment = { hostId: 'ceiling', hostKind: 'ceilin
 const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: NetworkDevice['systems'], y: number, attachment?: HostAttachment): NetworkDevice => ({ id, type: 'network-device', deviceType, name: deviceType === 'luminaire' ? '筒灯' : '插座', position: { position: [1, y, 1], attachment }, sizeMm: [86, 86, 50], orientation: [0, 0, 0], systems, ports: [], createdAt: '' });
 
 describe('construction drawing visibility and installation schedule', () => {
-  it('turns all four construction drawings on and off as one global selection', () => {
+  it('turns all five construction drawings on and off as one global selection', () => {
     const partial: ConstructionDrawingVisibility = { receptacle: true, lighting: false, network: true, sprinkler: false };
     expect(partial.receptacle).toBe(true);
-    expect(setAllConstructionDrawings(true)).toEqual({ receptacle: true, lighting: true, network: true, sprinkler: true });
-    expect(setAllConstructionDrawings(false)).toEqual({ receptacle: false, lighting: false, network: false, sprinkler: false });
+    expect(setAllConstructionDrawings(true)).toEqual({ receptacle: true, lighting: true, network: true, sprinkler: true, sensor: true });
+    expect(setAllConstructionDrawings(false)).toEqual({ receptacle: false, lighting: false, network: false, sprinkler: false, sensor: false });
   });
 
   it('lists only visible ceiling or suspended devices and groups equal rows by quantity', () => {

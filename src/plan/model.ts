@@ -32,9 +32,11 @@ export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Rec
   return device.position.position[1] - device.sizeMm[1] / 2000 - modelLevelBase(nodes, levelId);
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
+export const SENSOR_PLAN_COLOR = '#7c3aed';
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
 export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDocument): string {
   const source = device.name.trim();
+  if (device.deviceType === 'sensor') return source || '传感器';
   if (device.deviceType === 'sprinkler-head') {
     const direction = sprinklerDirectionOf(device) === 'pendent' ? '向下喷' : '向上喷';
     return !source || source === DEVICE_DEFAULTS['sprinkler-head'].label || source === '向上喷淋头' || source === '向下喷淋头' ? `${direction}淋头` : `${source}（${direction}）`;
@@ -44,7 +46,7 @@ export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDo
   const gangs = switchGangCount(overlay, device.id);
   return gangs ? switchGangLabel(gangs) : DEVICE_DEFAULTS.switch.label;
 }
-export function createPlanContext(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, hidden: ReadonlySet<string> = new Set(), systemVisibility: Readonly<Record<RoutingSystem, boolean>> = overlay.settings.visibleSystems) {
+export function createPlanContext(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, hidden: ReadonlySet<string> = new Set(), systemVisibility: Readonly<Record<RoutingSystem, boolean>> = overlay.settings.visibleSystems, sensorVisible = overlay.settings.sensorVisible) {
   const scene = parseBuilding({ nodes });
   const hostLevel = (a?: HostAttachment): string | null => {
     if (!a || !scene.nodes[a.hostId]) return null;
@@ -105,8 +107,8 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
     const levels = [...new Set(ids.flatMap(id => segmentLevels.get(id) ?? []))]; return levels.length === 1 ? levels[0] : null;
   };
   const segmentVisible = (s: RouteSegment) => systemVisibility[s.system] && !hidden.has(s.id) && !hostHidden(s.start.attachment) && !hostHidden(s.end.attachment);
-  const deviceVisible = (d: NetworkDevice) => d.systems.some(s => systemVisibility[s]) && !hidden.has(d.id) && !hostHidden(d.position.attachment) && !(d.mount?.kind === 'host' && hostHidden(d.mount.attachment)) && !(d.mount?.kind === 'segment' && !d.position.attachment && !overlay.segments.some(s => s.id === (d.mount as { segmentId: string }).segmentId && segmentVisible(s)));
-  return { scene, hostLevel, hostHidden, segmentLevels, deviceLevel, linkedLevel, segmentVisible, deviceVisible, hidden, systemVisibility };
+  const deviceVisible = (d: NetworkDevice) => (d.deviceType === 'sensor' ? sensorVisible : d.systems.some(s => systemVisibility[s])) && !hidden.has(d.id) && !hostHidden(d.position.attachment) && !(d.mount?.kind === 'host' && hostHidden(d.mount.attachment)) && !(d.mount?.kind === 'segment' && !d.position.attachment && !overlay.segments.some(s => s.id === (d.mount as { segmentId: string }).segmentId && segmentVisible(s)));
+  return { scene, hostLevel, hostHidden, segmentLevels, deviceLevel, linkedLevel, segmentVisible, deviceVisible, hidden, systemVisibility, sensorVisible };
 }
 export type PlanContext = ReturnType<typeof createPlanContext>;
 export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context = createPlanContext(nodes, overlay)) {
@@ -118,13 +120,13 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     const level = context.deviceLevel(d);
     if (!level) { notices.push({ sourceId: d.id, levelId: null, text: '楼层归属不明，未绘制设备' }); continue; }
     const attachment = d.position.attachment ?? (d.mount?.kind === 'host' ? d.mount.attachment : undefined);
-    if (level === levelId && attachment?.hostKind === 'wall') devices.push(d);
+    if (level === levelId && (attachment?.hostKind === 'wall' || d.deviceType === 'sensor')) devices.push(d);
   }
   const terminal = (d:NetworkDevice)=>!DEVICE_DEFAULTS[d.deviceType].source;
   const remaining=new Set(devices.map(d=>d.id));
   while(remaining.size){
     const seed=devices.find(d=>remaining.has(d.id))!, group:NetworkDevice[]=[], queue=[seed];remaining.delete(seed.id);
-    while(queue.length){const current=queue.pop()!;group.push(current);for(const peer of devices){if(!remaining.has(peer.id)||terminal(peer)!==terminal(current))continue;const a=current.position.attachment??(current.mount?.kind==='host'?current.mount.attachment:undefined),b=peer.position.attachment??(peer.mount?.kind==='host'?peer.mount.attachment:undefined);if(!a||!b||a.hostId!==b.hostId)continue;if(Math.hypot(current.position.position[0]-peer.position.position[0],current.position.position[2]-peer.position.position[2])<=.15){remaining.delete(peer.id);queue.push(peer);}}}
+    while(queue.length){const current=queue.pop()!;group.push(current);for(const peer of devices){if(!remaining.has(peer.id)||peer.deviceType!==current.deviceType||terminal(peer)!==terminal(current))continue;const a=current.position.attachment??(current.mount?.kind==='host'?current.mount.attachment:undefined),b=peer.position.attachment??(peer.mount?.kind==='host'?peer.mount.attachment:undefined);if(!a||!b||a.hostId!==b.hostId)continue;if(Math.hypot(current.position.position[0]-peer.position.position[0],current.position.position[2]-peer.position.position[2])<=.15){remaining.delete(peer.id);queue.push(peer);}}}
     const planPoints=group.map(d=>point2(d.position.position)),planSpread=Math.max(...planPoints.flatMap((p,i)=>planPoints.map(q=>Math.hypot(p[0]-q[0],p[1]-q[1])))),heightSpread=Math.max(...group.map(d=>d.position.position[1]))-Math.min(...group.map(d=>d.position.position[1])),arrangement:PlanAnnotation['arrangement']=group.length===1?'single':planSpread<=.15&&heightSpread>.15?'vertical':'horizontal';
     const wall=nodes[(group[0].position.attachment??(group[0].mount?.kind==='host'?group[0].mount.attachment:undefined))?.hostId??''];const direction:Array<number>=wall?.type==='wall'&&Array.isArray(wall.start)&&Array.isArray(wall.end)?[wall.end[0]-wall.start[0],wall.end[1]-wall.start[1]]:[1,0];
     group.sort((a,b)=>arrangement==='vertical'?b.position.position[1]-a.position.position[1]:(a.position.position[0]*direction[0]+a.position.position[2]*direction[1])-(b.position.position[0]*direction[0]+b.position.position[2]*direction[1]));

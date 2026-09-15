@@ -59,6 +59,13 @@ describe("network devices and rooted circuits", () => {
     expect(head.sprinklerDirection).toBe("upright");
   });
 
+  it("creates a sensor point without conduit ports or systems", () => {
+    const sensor = createNetworkDevice("sensor", point(1, 2, 0, "ceiling"));
+    expect(sensor.name).toBe("传感器");
+    expect(sensor.systems).toEqual([]);
+    expect(sensor.ports).toEqual([]);
+  });
+
   it("changes a selected sprinkler between upright and pendent without moving its pipe port", () => {
     const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
     const connected = { ...head, ports: [{ ...head.ports[0], connectedSegmentIds: ["sprinkler-run"] }] };

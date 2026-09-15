@@ -102,6 +102,7 @@ type Visibility = {
   conduitLighting: boolean;
   conduitNetwork: boolean;
   conduitSprinkler: boolean;
+  conduitSensor: boolean;
   constructionAnnotations: boolean;
   pointPositionDimensions: boolean;
   conduits: boolean;
@@ -133,6 +134,7 @@ const visibilityDefault: Visibility = {
   conduitLighting: false,
   conduitNetwork: false,
   conduitSprinkler: false,
+  conduitSensor: true,
   constructionAnnotations: true,
   pointPositionDimensions: true,
   conduits: true,
@@ -726,7 +728,7 @@ function App() {
   </details>;
   const layerControls = <>
     {layerGroup("建筑图层", { walls: "墙体", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
-    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler })); }} />全部施工图</label>)}
+    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduitSensor: "传感器", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler, sensor: visibility.conduitSensor })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler, conduitSensor: next.sensor ?? true })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
   const reportPanels = <>
@@ -1288,7 +1290,7 @@ function Plan({
     cz = viewBox.minZ + viewBox.height / 2,
     vb = `${viewBox.minX} ${viewBox.minZ} ${viewBox.width} ${viewBox.height}`;
   const systemVisibility = useMemo(() => ({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler }), [visibility.conduitReceptacle, visibility.conduitLighting, visibility.conduitNetwork, visibility.conduitSprinkler]);
-  const constructionPlan = useConstructionPlan({ nodes, overlay: conduitOverlay, levelId, hiddenNodeIds, unit: measurementUnit, rotation, viewBox, planRef, selectedId, exterior: exteriorDimensions, dimensionsVisible: visibility.dimensions, measurements: manualMeasurements, systemVisibility, devicesVisible: visibility.devices, annotationScale: pointAnnotationScale });
+  const constructionPlan = useConstructionPlan({ nodes, overlay: conduitOverlay, levelId, hiddenNodeIds, unit: measurementUnit, rotation, viewBox, planRef, selectedId, exterior: exteriorDimensions, dimensionsVisible: visibility.dimensions, measurements: manualMeasurements, systemVisibility, sensorVisible: visibility.conduitSensor, devicesVisible: visibility.devices, annotationScale: pointAnnotationScale });
   viewBoxRef.current = viewBox;
   setViewBoxRef.current = setViewBox;
   const visibleEvaluationHighlights = activeEvaluationHighlight ? evaluationHighlights.filter((highlight) => highlight.ruleId === activeEvaluationHighlight.ruleId && highlight.targetIndex === activeEvaluationHighlight.targetIndex) : evaluationHighlights;
@@ -1296,7 +1298,7 @@ function Plan({
   const snapSegments = useMemo(() => buildMeasurementSnapSegments(nodes, levelId), [nodes, levelId]);
   const activeMeasurementMode = resolveMeasurementMode(measurementStart?.point ?? null, measurementHover?.point ?? null, orthogonalLock);
   const calloutTarget=calloutTargetId&&conduitOverlay?manualCalloutTargetAnchor(nodes,conduitOverlay,calloutTargetId):null;
-  const visibleCallouts=(conduitOverlay?.manualCallouts??[]).filter(item=>manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)?.levelId===levelId&&!hiddenNodeIds.has(item.targetId)&&(()=>{const device=conduitOverlay?.devices.find(d=>d.id===item.targetId);if(device)return visibility.devices&&device.systems.some(system=>systemVisibility[system]);const segment=conduitOverlay?.segments.find(s=>s.id===item.targetId);if(segment)return visibility.conduits&&systemVisibility[segment.system];const fitting=conduitOverlay?.fittings.find(f=>f.id===item.targetId);if(fitting)return visibility.conduits&&systemVisibility[fitting.system];const box=conduitOverlay?.junctionBoxes.find(b=>b.id===item.targetId);if(box)return visibility.devices&&systemVisibility[box.system];const node=nodes[item.targetId];if(!node)return false;return node.type==='wall'?visibility.walls:node.type==='slab'?visibility.slabs:node.type==='door'||node.type==='window'?visibility.openings:node.type==='stair'?visibility.stairs:node.type==='zone'?visibility.zones:node.type==='item'?visibility.images:node.type==='shelf'?(visibility.shelves||visibility.centers):true;})()).map(item=>({...item,anchor:manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)!.anchor,label:calloutDrag?.id===item.id?calloutDrag.label:item.label}));
+  const visibleCallouts=(conduitOverlay?.manualCallouts??[]).filter(item=>manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)?.levelId===levelId&&!hiddenNodeIds.has(item.targetId)&&(()=>{const device=conduitOverlay?.devices.find(d=>d.id===item.targetId);if(device)return visibility.devices&&(device.deviceType==='sensor'?visibility.conduitSensor:device.systems.some(system=>systemVisibility[system]));const segment=conduitOverlay?.segments.find(s=>s.id===item.targetId);if(segment)return visibility.conduits&&systemVisibility[segment.system];const fitting=conduitOverlay?.fittings.find(f=>f.id===item.targetId);if(fitting)return visibility.conduits&&systemVisibility[fitting.system];const box=conduitOverlay?.junctionBoxes.find(b=>b.id===item.targetId);if(box)return visibility.devices&&systemVisibility[box.system];const node=nodes[item.targetId];if(!node)return false;return node.type==='wall'?visibility.walls:node.type==='slab'?visibility.slabs:node.type==='door'||node.type==='window'?visibility.openings:node.type==='stair'?visibility.stairs:node.type==='zone'?visibility.zones:node.type==='item'?visibility.images:node.type==='shelf'?(visibility.shelves||visibility.centers):true;})()).map(item=>({...item,anchor:manualCalloutTargetAnchor(nodes,conduitOverlay,item.targetId)!.anchor,label:calloutDrag?.id===item.id?calloutDrag.label:item.label}));
   useEffect(() => { setMeasurementStart(null); setMeasurementHover(null); setOrthogonalLock(false); }, [measurementMode, levelId]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

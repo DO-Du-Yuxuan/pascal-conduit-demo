@@ -31,6 +31,7 @@ export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
   luminaire: { label: "灯具", systems: ["lighting"], hostKinds: ["ceiling"], sizeMm: [300, 300, 40], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
   "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
+  sensor: { label: "传感器", systems: [], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [80, 80, 30], portRole: "sink", source: false, canInsertMidSegment: false },
 };
 
 export const systemCanBranch = (system: RoutingSystem) => system !== "network";
@@ -111,7 +112,7 @@ export function createNetworkDevice(deviceType: NetworkDeviceType, position: Rou
   return buildNetworkDevice(deviceType, position, name, true);
 }
 
-export function createReferencePlaneDevice(deviceType: "luminaire" | "sprinkler-head", position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
+export function createReferencePlaneDevice(deviceType: "luminaire" | "sprinkler-head" | "sensor", position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
   return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm } });
 }
 

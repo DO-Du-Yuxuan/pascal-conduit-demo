@@ -15,6 +15,7 @@ export function DeviceSymbol({ type, switchGangs, sprinklerDirection = 'upright'
     case 'luminaire': return <><circle r="8"/><path d="M-5.5-5.5L5.5 5.5M5.5-5.5L-5.5 5.5"/></>;
     case 'network-outlet': return <><rect x="-7" y="-6" width="14" height="12"/><path d="M-4-2H4V2H2V4H-2V2H-4Z"/></>;
     case 'sprinkler-head': return <><circle r="6"/><path d="M-9 0H9"/><path d={sprinklerDirection === 'pendent' ? 'M0-10V10M-3 7L0 10L3 7' : 'M0 10V-10M-3-7L0-10L3-7'}/></>;
+    case 'sensor': return <><circle r="7"/><circle r="2" fill="currentColor"/><path d="M-10 0H-7M7 0H10M0-10V-7M0 7V10"/></>;
     case 'fire-inlet': return <><circle r="7"/><path d="M-4 0H4M0-4V4M-10 0H-7M7 0H10"/></>;
   }
 }

@@ -10,10 +10,10 @@ import { buildInstallationSchedule, installationVariantByDeviceId } from './cons
 import { annotationPlacementSignature, annotationRuleSide, layoutExteriorAnnotations, rotatePoint } from './layout';
 import { useOverlayStore } from '../domain/store';
 
-export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, unit, rotation, viewBox, planRef, selectedId, exterior, dimensionsVisible, measurements, systemVisibility, devicesVisible, annotationScale }: {
+export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, unit, rotation, viewBox, planRef, selectedId, exterior, dimensionsVisible, measurements, systemVisibility, sensorVisible, devicesVisible, annotationScale }: {
   nodes: Record<string,NodeData>; overlay: ConduitOverlayDocument | null; levelId: string; hiddenNodeIds: ReadonlySet<string>; unit: MeasurementUnit; rotation: number; viewBox: ViewBox;
   planRef: RefObject<HTMLDivElement | null>; selectedId: string | null; exterior: ExteriorDimensionReport; dimensionsVisible: boolean; measurements: ManualMeasurement[];
-  systemVisibility?: Readonly<Record<RoutingSystem, boolean>>; devicesVisible?: boolean; annotationScale: number;
+  systemVisibility?: Readonly<Record<RoutingSystem, boolean>>; sensorVisible?: boolean; devicesVisible?: boolean; annotationScale: number;
 }) {
   const [size,setSize] = useState({width:800,height:600});
   useEffect(()=>{
@@ -24,7 +24,7 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
     return ()=>{observer?.disconnect();cancelAnimationFrame(frame);};
   },[planRef]);
   const scale=Math.max(.001,Math.min(size.width/viewBox.width,size.height/viewBox.height));
-  const context=useMemo(()=>overlay ? createPlanContext(nodes,overlay,hiddenNodeIds,systemVisibility) : null,[nodes,overlay,hiddenNodeIds,systemVisibility]);
+  const context=useMemo(()=>overlay ? createPlanContext(nodes,overlay,hiddenNodeIds,systemVisibility,sensorVisible) : null,[nodes,overlay,hiddenNodeIds,systemVisibility,sensorVisible]);
   const annotationReport=useMemo(()=>overlay && context && devicesVisible !== false ? buildPlanAnnotations(nodes,overlay,levelId,unit,context) : {annotations:[],notices:[]},[nodes,overlay,levelId,unit,context,devicesVisible]);
   const positionReport=useMemo(()=>overlay&&context&&devicesVisible!==false?buildPointPositionDimensionReport(nodes,overlay,levelId,context):{dimensions:[],notices:[]},[nodes,overlay,levelId,context,devicesVisible]);
   const report=useMemo(()=>({annotations:annotationReport.annotations,notices:[...annotationReport.notices,...positionReport.notices]}),[annotationReport,positionReport]);
@@ -37,7 +37,7 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
 export type ConstructionPlan = ReturnType<typeof useConstructionPlan>;
 export function ConstructionAnnotations({plan,rotation,onSelect,onLabelPositionChange,toPlanPoint}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void;onLabelPositionChange?:(id:string,label:Point,signature:string)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null}) {
   const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string;left:number;top:number;width:number}|null>(null),[draftLabels,setDraftLabels]=useState<Record<string,Point>>({}),dragRef=useRef<{id:string;pointerId:number}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
-  const rename=(ids:string[],value:string)=>{const name=value.trim();if(overlay&&name)commit({...overlay,devices:overlay.devices.map(device=>ids.includes(device.id)?{...device,name}:device)});setEditing(null);};
+  const rename=(ids:string[],value:string)=>{const selected=overlay?.devices.filter(device=>ids.includes(device.id))??[],trimmed=value.trim(),name=trimmed||(selected.every(device=>device.deviceType==='sensor')?'传感器':'');if(overlay&&name)commit({...overlay,devices:overlay.devices.map(device=>ids.includes(device.id)?{...device,name}:device)});setEditing(null);};
   const editor=editing?createPortal(<input className="construction-annotation-editor" autoFocus value={editing.value} onChange={event=>setEditing({...editing,value:event.target.value})} onBlur={()=>rename(editing.ids,editing.value)} onKeyDown={event=>{event.stopPropagation();if(event.nativeEvent.isComposing)return;if(event.key==='Enter')rename(editing.ids,editing.value);if(event.key==='Escape')setEditing(null);}} style={{position:'fixed',left:editing.left,top:editing.top,zIndex:30,width:editing.width,height:30,border:'1px solid #e75c3c',padding:'3px 6px',background:'#fff',color:'#343434',caretColor:'#343434',fontSize:'14px',fontFamily:'system-ui, sans-serif',lineHeight:'20px'}}/>,document.body):null;
   return <><g className="construction-annotations" aria-label="施工标注">
     {plan.layout.placed.map(({annotation:a,innerBend,boundary,label:placedLabel,textWidth,textHeight,outwardNormal,manual})=>{

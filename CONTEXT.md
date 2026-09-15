@@ -75,3 +75,7 @@ _Avoid_: Switch button, control channel, preset gang device
 **Sprinkler direction**:
 An explicit presentation and installation property of a sprinkler-head device point: upright (向上喷) or pendent (向下喷). It controls the 3D geometry and 2D symbol/text label, defaults to upright for new and legacy points, and does not alter conduit topology or connection ports.
 _Avoid_: A separate sprinkler device type, automatic pipe reroute
+
+**Sensor point**:
+A standalone, unpowered device point used to record a sensor's installation location and editable purpose. It may mount to a wall, slab, ceiling, installation reference plane, or free space; it has no physical conduit port, circuit, or routing system. Its independent sensor layer controls its 2D and 3D display, while its location continues to participate in construction dimensions and installation-height schedules.
+_Avoid_: Weak-current outlet, luminaire, conduit endpoint

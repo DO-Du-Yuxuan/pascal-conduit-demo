@@ -20,6 +20,18 @@ describe("Conduit overlay", () => {
     expect(parseOverlay(raw)).toMatchObject({ schemaVersion: "2.2", lightingControlGroups: [], manualCallouts: [] });
   });
 
+  it("defaults the independent sensor layer to visible for legacy overlays", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("sensors.json", "abc")));
+    delete raw.settings.sensorVisible;
+    expect(parseOverlay(raw).settings.sensorVisible).toBe(true);
+  });
+
+  it("removes imported conduit systems and ports from a sensor point", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("sensors.json", "abc")));
+    raw.devices = [{ id: "sensor", type: "network-device", deviceType: "sensor", name: "传感器", position: point(0, 2, 0), sizeMm: [80, 80, 30], orientation: [0, 1, 0], systems: ["network"], ports: [{ id: "sensor:port", position: point(0, 2, 0), direction: [0, 1, 0] }], createdAt: "now" }];
+    expect(parseOverlay(raw).devices[0]).toMatchObject({ systems: [], ports: [] });
+  });
+
   it("defaults legacy sprinkler heads to upright while preserving an explicit pendent direction", () => {
     const raw = JSON.parse(JSON.stringify(createEmptyOverlay("sprinklers.json", "abc")));
     raw.devices = [

@@ -61,6 +61,16 @@ describe('construction plan rendering integration',()=>{
   expect(symbol?.getAttribute('data-sprinkler-direction')).toBe('pendent');
   expect(symbol?.querySelectorAll('path')[1]?.getAttribute('d')).toContain('M0-10V10');
  });
+ it('renders a sensor only while the dedicated sensor layer is visible',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),sensor={...device,id:'sensor',deviceType:'sensor' as const,name:'传感器',systems:[] as [],ports:[],position:{position:[2,2.7,1] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};overlay.devices=[sensor];
+  const visible=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false},true);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={visible} scale={50} rotation={0}/></svg>));
+  expect(div.querySelector('[data-device-symbol="sensor"]')).not.toBeNull();
+  const hidden=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false},false);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={hidden} scale={50} rotation={0}/></svg>));
+  expect(div.querySelector('[data-device-symbol="sensor"]')).toBeNull();
+ });
  it('orients wall devices from their host normal while ceiling devices stay screen-upright',()=>{
   const wallDevice={...device,position:{...device.position,attachment:{...device.position.attachment!,normal:[1,0,0] as [number,number,number]}}};
   const light={...device,deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,1.5,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:1500}};
