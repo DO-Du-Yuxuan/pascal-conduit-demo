@@ -52,6 +52,14 @@ describe('2D point annotations', () => {
     expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters', createPlanContext(nodes, overlay, new Set(), hiddenSystems)).annotations).toHaveLength(0);
   });
 
+  it('uses a unique rooted circuit level for legacy floating segment devices', () => {
+    const overlay = createEmptyOverlay('a', 'sha'), source = { ...device('source'), deviceType: 'strong-panel' as const }, mounted = { ...device('mounted'), position: { position: [1, 2, 0] as [number, number, number] }, mount: { kind: 'segment' as const, segmentId: 'floating', t: .5, tangent: [1, 0, 0] as [number, number, number], circuitId: 'circuit' } };
+    overlay.devices = [source, mounted];
+    overlay.segments = [{ ...segment('floating', [0, 2, 0], [2, 2, 0]), start: { position: [0, 2, 0] }, end: { position: [2, 2, 0] }, circuitId: 'circuit' }];
+    overlay.circuits = [{ id: 'circuit', system: 'receptacle', sourceDeviceId: source.id, rootPortId: null, segmentIds: ['floating'], status: 'rooted', createdAt: '' }];
+    expect(createPlanContext(nodes, overlay).deviceLevel(mounted)).toBe('l0');
+  });
+
   it('keeps a connected wall device visible when splitting leaves a stale segment mount id',()=>{
     const overlay=createEmptyOverlay('a','sha'),connected=device();connected.mount={kind:'segment',segmentId:'split-away',t:1,tangent:[0,1,0]};overlay.devices=[connected];
     const context=createPlanContext(nodes,overlay);

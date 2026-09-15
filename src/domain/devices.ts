@@ -262,21 +262,21 @@ const interpolateAttachment = (segment: RouteSegment, t: number) => {
 };
 
 /** Inserts a physical point device without allowing the conduit to pass through its body. */
-export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId: string, deviceType: NetworkDeviceType, world: Vec3): ConduitOverlayDocument {
+export function insertDeviceOnSegment(overlay: ConduitOverlayDocument, segmentId: string, deviceType: NetworkDeviceType, world: Vec3, requestedLevelId?: string | null): ConduitOverlayDocument {
   const segment = overlay.segments.find((item) => item.id === segmentId), definition = DEVICE_DEFAULTS[deviceType];
   if (!segment || !definition.canInsertMidSegment || !definition.systems.includes(segment.system) || segment.legacyUnrooted) return overlay;
   if (deviceType === "network-outlet") return overlay;
   const delta = segment.end.position.map((value, axis) => value - segment.start.position[axis]) as Vec3, lengthSquared = delta.reduce((sum, value) => sum + value * value, 0);
   const t = lengthSquared < 1e-9 ? 0 : Math.max(0, Math.min(1, world.map((value, axis) => value - segment.start.position[axis]).reduce((sum, value, axis) => sum + value * delta[axis], 0) / lengthSquared));
   if (t < .03 || t > .97) return overlay;
-  const position: Vec3 = segment.start.position.map((value, axis) => value + delta[axis] * t) as Vec3, attachment = interpolateAttachment(segment, t), point: RoutePoint = attachment ? { position, attachment } : { position }, tangent = normalize(delta), mount: DeviceMount = { kind: "segment", segmentId, t, tangent, circuitId: segment.circuitId };
+  const position: Vec3 = segment.start.position.map((value, axis) => value + delta[axis] * t) as Vec3, attachment = interpolateAttachment(segment, t), point: RoutePoint = attachment ? { position, attachment } : { position }, tangent = normalize(delta), inheritedLevels = new Set([segment.start.attachment?.levelId, segment.end.attachment?.levelId].filter((levelId): levelId is string => Boolean(levelId))), circuit = segment.circuitId ? overlay.circuits.find((candidate) => candidate.id === segment.circuitId) : undefined, source = circuit?.sourceDeviceId ? overlay.devices.find((device) => device.id === circuit.sourceDeviceId) : undefined, circuitLevels = new Set([source?.position.attachment?.levelId, source?.mount?.kind === "host" ? source.mount.attachment.levelId : undefined, source?.mount?.kind === "reference-plane" ? source.mount.levelId : undefined, ...overlay.segments.filter((candidate) => candidate.circuitId === segment.circuitId).flatMap((candidate) => [candidate.start.attachment?.levelId, candidate.end.attachment?.levelId])].filter((levelId): levelId is string => Boolean(levelId))), resolvedLevelId = attachment?.levelId ?? (inheritedLevels.size === 1 ? [...inheritedLevels][0] : null) ?? (circuitLevels.size === 1 ? [...circuitLevels][0] : null) ?? requestedLevelId ?? null, mount: DeviceMount = { kind: "segment", segmentId, t, tangent, circuitId: segment.circuitId, ...(resolvedLevelId ? { levelId: resolvedLevelId } : {}) };
   if (deviceType === "sprinkler-head") {
     const branchEnd: RoutePoint = { position: [position[0], position[1] + .12, position[2]], attachment };
     const branched = commitBranchRoute(overlay, segment.id, [point, branchEnd], { chaseWidthMm: 60, chaseDepthMm: 55, penetrationDiameterMm: 60 });
     if (branched === overlay) return overlay;
     const branchSegment = branched.segments.filter((item) => !overlay.segments.some((old) => old.id === item.id)).find((item) => distance(item.end.position, branchEnd.position) < .02 || distance(item.start.position, branchEnd.position) < .02);
     if (!branchSegment) return overlay;
-    const device = buildNetworkDevice(deviceType, branchEnd, undefined, false, { tangent: [0, 1, 0], mount: { kind: "segment", segmentId: branchSegment.id, t: 1, tangent: [0, 1, 0], circuitId: segment.circuitId } });
+    const device = buildNetworkDevice(deviceType, branchEnd, undefined, false, { tangent: [0, 1, 0], mount: { kind: "segment", segmentId: branchSegment.id, t: 1, tangent: [0, 1, 0], circuitId: segment.circuitId, ...(resolvedLevelId ? { levelId: resolvedLevelId } : {}) } });
     const port = { ...device.ports[0], connectedSegmentIds: [branchSegment.id] };
     branchSegment.endPortId = port.id;
     return { ...branched, devices: [...branched.devices, { ...device, ports: [port] }] };

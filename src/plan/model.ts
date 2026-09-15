@@ -77,11 +77,23 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
     }
     component.forEach(id => segmentLevels.set(id, [...levels].sort()));
   }
+  const circuitLevels = new Map(overlay.circuits.map(circuit => {
+    const source = circuit.sourceDeviceId ? overlay.devices.find(device => device.id === circuit.sourceDeviceId) : undefined;
+    const sourceLevel = source ? hostLevel(source.position.attachment) ?? (source.mount?.kind === 'host' ? hostLevel(source.mount.attachment) : null) ?? (source.mount?.kind === 'reference-plane' && scene.nodes[source.mount.levelId]?.type === 'level' ? source.mount.levelId : null) : null;
+    const levels = new Set([sourceLevel, ...circuit.segmentIds.flatMap(segmentId => segmentLevels.get(segmentId) ?? [])].filter((level): level is string => Boolean(level)));
+    return [circuit.id, [...levels].sort()] as const;
+  }));
   const deviceLevel = (d: NetworkDevice): string | null => {
     const own = hostLevel(d.position.attachment) ?? (d.mount?.kind === 'host' ? hostLevel(d.mount.attachment) : null);
     if (own) return own;
     if (d.mount?.kind === 'reference-plane') return scene.nodes[d.mount.levelId]?.type === 'level' ? d.mount.levelId : null;
-    if (d.mount?.kind === 'segment') { const levels = segmentLevels.get(d.mount.segmentId) ?? []; return levels.length === 1 ? levels[0] : null; }
+    if (d.mount?.kind === 'segment') {
+      if (d.mount.levelId && scene.nodes[d.mount.levelId]?.type === 'level') return d.mount.levelId;
+      const levels = segmentLevels.get(d.mount.segmentId) ?? [];
+      if (levels.length === 1) return levels[0];
+      const circuitLevelsForDevice = d.mount.circuitId ? circuitLevels.get(d.mount.circuitId) ?? [] : [];
+      return circuitLevelsForDevice.length === 1 ? circuitLevelsForDevice[0] : null;
+    }
     return null;
   };
   const linkedLevel = (ids: string[], a?: HostAttachment) => {

@@ -138,6 +138,7 @@ describe("network devices and rooted circuits", () => {
     const floatingRed = { ...red, segments: red.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [2, 2, 0] as [number, number, number] } })) };
     const socket = insertDeviceOnSegment(floatingRed, floatingRed.segments[0].id, "socket", [1, 2, 0]);
     expect(socket.devices.find((device) => device.deviceType === "socket")?.mount).toMatchObject({ kind: "segment" });
+    expect(socket.devices.find((device) => device.deviceType === "socket")?.mount).toMatchObject({ levelId: "L0" });
     expect(socket.devices.find((device) => device.deviceType === "socket")?.ports.filter((port) => port.face === "left" || port.face === "right")).toHaveLength(4);
     const floatingBlue = { ...blue, segments: blue.segments.map((segment) => ({ ...segment, start: { position: [0, 2, 0] as [number, number, number] }, end: { position: [0, 2, 2] as [number, number, number] } })) };
     const light = insertDeviceOnSegment(floatingBlue, floatingBlue.segments[0].id, "luminaire", [0, 2, 1]);

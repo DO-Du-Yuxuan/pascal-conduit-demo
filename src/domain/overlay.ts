@@ -28,7 +28,7 @@ export type HostAttachment = {
 };
 export type RoutePoint = { position: Vec3; attachment?: HostAttachment };
 /** A device may live on a read-only building surface or ride a conduit in free space. */
-export type DeviceMount = { kind: "host"; attachment: HostAttachment } | { kind: "segment"; segmentId: string; t: number; tangent: Vec3; circuitId?: string } | { kind: "reference-plane"; levelId: string; elevationMm: number };
+export type DeviceMount = { kind: "host"; attachment: HostAttachment } | { kind: "segment"; segmentId: string; t: number; tangent: Vec3; circuitId?: string; levelId?: string } | { kind: "reference-plane"; levelId: string; elevationMm: number };
 export type DevicePositionReference = { horizontal?: { kind: "device" | "wall-end" | "opening"; referenceId: string; direction: -1 | 1 }; planarWallIds?: string[] };
 export type DeviceFrame = { front: Vec3; up: Vec3; right: Vec3 };
 export type NetworkOwnerKind = "device" | "fitting" | "junction-box";
@@ -92,7 +92,7 @@ const vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const attachmentSchema = z.object({ hostId: z.string(), hostKind: z.enum(["wall", "slab", "ceiling"]), surface: z.string(), normal: vec3Schema, levelId: z.string().nullable(), localPosition: vec3Schema.optional(), basis: z.object({ u: vec3Schema, v: vec3Schema }).optional(), curveT: z.number().min(0).max(1).optional(), wallSide: z.enum(["interior", "exterior"]).optional() });
 const pointSchema = z.object({ position: vec3Schema, attachment: attachmentSchema.optional() });
 const inputSystemSchema = z.enum([...SYSTEMS, ...LEGACY_SYSTEMS] as [string, ...string[]]);
-const deviceMountSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("host"), attachment: attachmentSchema }), z.object({ kind: z.literal("segment"), segmentId: z.string(), t: z.number().min(0).max(1), tangent: vec3Schema, circuitId: z.string().optional() }), z.object({ kind: z.literal("reference-plane"), levelId: z.string(), elevationMm: z.number() })]);
+const deviceMountSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("host"), attachment: attachmentSchema }), z.object({ kind: z.literal("segment"), segmentId: z.string(), t: z.number().min(0).max(1), tangent: vec3Schema, circuitId: z.string().optional(), levelId: z.string().optional() }), z.object({ kind: z.literal("reference-plane"), levelId: z.string(), elevationMm: z.number() })]);
 const positioningSchema = z.object({ horizontal: z.object({ kind: z.enum(["device", "wall-end", "opening"]), referenceId: z.string(), direction: z.union([z.literal(-1), z.literal(1)]) }).optional(), planarWallIds: z.array(z.string()).optional() });
 const deviceFrameSchema = z.object({ front: vec3Schema, up: vec3Schema, right: vec3Schema });
 const portSchema = z.object({ id: z.string(), owner: z.object({ kind: z.enum(["device", "fitting", "junction-box"]), id: z.string() }).optional(), position: pointSchema, direction: vec3Schema, role: z.enum(["source", "bidirectional", "sink", "branch"]).optional(), system: inputSystemSchema.optional(), connectedSegmentIds: z.array(z.string()).optional(), segmentId: z.string().optional(), connectedPortId: z.string().optional(), face: z.enum(["top", "bottom", "left", "right"]).optional(), slot: z.union([z.literal(0), z.literal(1)]).optional(), flow: z.enum(["in", "out", "unknown"]).optional() });
