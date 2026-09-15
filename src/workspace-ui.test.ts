@@ -114,11 +114,12 @@ describe("conduit workspace UI contract", () => {
     expect(styles).not.toContain(".three-d-status");
   });
 
-  it("reports wall and slab shallow-cut fallback in the left editor panel", () => {
+  it("keeps shallow-cut fallback internal instead of showing a diagnostics panel", () => {
     expect(pascalSceneSource).toContain("subtractHorizontalChases");
     expect(pascalSceneSource).toContain("subtractWallChases");
     expect(threeDSource).toContain("onChaseFallback={reportChaseFallback}");
-    expect(threeDSource).toContain("宿主浅槽切割失败");
+    expect(threeDSource).not.toContain("<b>诊断</b>");
+    expect(threeDSource).not.toContain("deviceDiagnostics(overlay)");
   });
 
   it("renders a quiet non-interactive edge overlay for 3D building geometry", () => {

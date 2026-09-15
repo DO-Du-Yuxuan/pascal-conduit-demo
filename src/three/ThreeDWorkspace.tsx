@@ -6,7 +6,7 @@ import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview 
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode } from "../domain/overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
+import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { createLightingControlGroup, removeLightingControlGroup, replaceLightingControlGroup } from "../domain/lighting-controls";
@@ -213,7 +213,6 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const referencePlaneElevationMm = activeLevelId ? overlay.installationReferencePlanes.find((plane) => plane.levelId === activeLevelId)?.elevationMm ?? 2700 : 2700;
   const referencePlaneY = activeLevelId ? (devicePositioningContext.levelFloorY[activeLevelId] ?? 0) + referencePlaneElevationMm / 1000 : 2.7;
   const renderedOverlay = { ...overlay, devices: overlay.devices.map((device) => Object.assign({}, device, { displaySelected: selectedDeviceIds.includes(device.id) || relatedControlDeviceIds.has(device.id), ...(device.id === selectedDevice?.id ? { displayPosition: positionDescription } : {}) })) } as ConduitOverlayDocument & { devices: (NetworkDevice & { displayPosition?: DevicePositionDescription; displaySelected?: boolean })[] };
-  const networkDiagnostics = useMemo(() => deviceDiagnostics(overlay), [overlay]);
   const cancelControlBinding = () => {
     if (controlBinding?.kind === "edit") { onSelect(controlBinding.switchDeviceId); setSelectedDeviceIds([controlBinding.switchDeviceId]); }
     setControlBinding(null);
@@ -361,7 +360,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool === "point") {
       const devicePreview = latestDevicePreview.current;
       if (devicePreview?.valid && devicePreview.segmentId) {
-        const next = insertDeviceOnSegment(overlay, devicePreview.segmentId, deviceType, devicePreview.point.position);
+        const next = insertDeviceOnSegment(overlay, devicePreview.segmentId, deviceType, devicePreview.point.position, activeLevelId);
         if (next !== overlay) { commit(next); setInlineDevicePreview(null); setStatus(`已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`); }
         else setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能插入当前管段。`);
       } else if (cursor) {
@@ -654,11 +653,6 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             <summary><b>管线图层</b></summary>
             <div className="conduit-details-body conduit-layer-grid">{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <label key={key}><input type="checkbox" checked={overlay.settings.visibleSystems[key]} onChange={() => { setOverlay((current) => ({ ...current, settings: { ...current.settings, visibleSystems: { ...current.settings.visibleSystems, [key]: !current.settings.visibleSystems[key] } } })); setOverlayDirty(true); }} />{SYSTEM_DEFAULTS[key].label}</label>)}</div>
           </details>
-
-          {(networkDiagnostics.length > 0 || chaseFallbacks.size > 0) && <details className="conduit-panel-details conduit-diagnostics">
-            <summary><b>诊断</b><span className="conduit-warning-dot" /></summary>
-            <div className="conduit-details-body">{networkDiagnostics.slice(0, 8).map((message) => <small role="alert" key={message}>{message}</small>)}{chaseFallbacks.size > 0 && <small role="alert">宿主浅槽切割失败，已保留 Overlay 并显示替代槽线。</small>}</div>
-          </details>}
 
           <details className="conduit-panel-details conduit-shortcuts"><summary><b>快捷键</b></summary><div className="conduit-details-body"><small>空格选择 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D 点位</small><small>Shift 正交 · Tab 穿透 · ← X / ↑ Y / → Z · ↓ 取消世界轴</small><small>Enter 完成 · Esc 撤销当前步骤</small></div></details>
 
