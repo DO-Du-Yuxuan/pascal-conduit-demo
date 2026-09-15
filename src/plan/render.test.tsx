@@ -97,6 +97,17 @@ describe('construction plan rendering integration',()=>{
   act(()=>description!.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
   expect(div.querySelector('foreignObject input')).not.toBeNull();
  });
+ it('uses readable text and caret colors while editing an automatic annotation',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];useOverlayStore.getState().load(overlay);
+  act(()=>root.render(<Harness overlay={overlay}/>));
+  const description=[...div.querySelectorAll('text')].find(node=>node.textContent==='插座')!;
+  act(()=>description.dispatchEvent(new MouseEvent('dblclick',{bubbles:true})));
+  const input=div.querySelector('foreignObject input') as HTMLInputElement;
+  expect(input.style.color).toBe('rgb(52, 52, 52)');
+  expect(input.style.caretColor).toBe('rgb(52, 52, 52)');
+  expect(Number.parseFloat(input.style.fontSize)).toBeGreaterThanOrEqual(12);
+ });
  it('persists an arbitrary drag position from an automatic annotation panel',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];
