@@ -32,6 +32,12 @@ describe("Conduit overlay", () => {
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).pointPositionDimensionLabelPositions).toEqual(overlay.pointPositionDimensionLabelPositions);
   });
 
+  it("round-trips saved automatic annotation-panel placements", () => {
+    const overlay = createEmptyOverlay("annotations.json", "abc");
+    overlay.constructionAnnotationLabelPositions = { "group:socket-a:socket-b": [3.25, -1.5] };
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).constructionAnnotationLabelPositions).toEqual(overlay.constructionAnnotationLabelPositions);
+  });
+
   it("rejects imported lighting groups that violate membership invariants", () => {
     const valid = JSON.parse(JSON.stringify(createEmptyOverlay("controls.json", "abc")));
     valid.devices = [rawDevice("switch", "switch"), rawDevice("lamp-a", "luminaire"), rawDevice("lamp-b", "luminaire")];

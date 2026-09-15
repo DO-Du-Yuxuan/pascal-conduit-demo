@@ -31,6 +31,12 @@ it('keeps separated point annotations in the same aligned lane',()=>{
  expect(layoutExteriorAnnotations([a('1')],exterior,2).placed[0].textHeight).toBeCloseTo(1.2);
 });
 
+it('uses a saved annotation-panel position for the current annotation group',()=>{
+ const exterior={runs:[{id:'bottom',levelId:'l',componentId:'c',start:[0,0],end:[10,0],direction:[1,0],outwardNormal:[0,-1],sourceWallIds:['w'],boundarySegments:[],lengthMeters:10}],rings:[],dimensions:[],diagnostics:[],summary:{}} as unknown as ExteriorDimensionReport;
+ const result=layoutExteriorAnnotations([a('socket-a')],exterior,1,{'socket-a':[7.5,-3.25]});
+ expect(result.placed[0]).toMatchObject({label:[7.5,-3.25],manual:true});
+});
+
 it('only staggers colliding callouts and returns later callouts to the main rule line',()=>{
  const exterior={runs:[{id:'left',levelId:'l',componentId:'c',start:[0,0],end:[0,10],direction:[0,1],outwardNormal:[-1,0],sourceWallIds:['w'],boundarySegments:[],lengthMeters:10}],rings:[{componentId:'c',ringId:'r',points:[[0,0],[10,0],[10,10],[0,10]],signedArea:100,winding:'counterclockwise',sourceWallIds:['w']}],dimensions:[],diagnostics:[],summary:{}} as unknown as ExteriorDimensionReport;
  const result=layoutExteriorAnnotations([[1,1],[2,1.25],[3,3],[4,5]].map(([id,y])=>({...a(String(id)),anchor:[2,y]})),exterior,1).placed.sort((x,y)=>Number(x.annotation.id)-Number(y.annotation.id));

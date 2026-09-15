@@ -44,6 +44,10 @@ _Avoid_: Building-wide dimension chain, nearest-distance-only annotation, dimens
 A user-adjusted text position along one derived point-position dimension. It changes only the readable label position, retains the dimension's model-derived value and witnesses, and persists with the construction drawing.
 _Avoid_: Dimension value override, geometry edit, manual measurement
 
+**Automatic point-annotation panel placement**:
+A user-adjusted drawing position for the editable construction text panel of one current automatic point-annotation group. It retains the group’s model-derived content and leader origin, follows source visibility, and is ignored when the group’s source membership changes.
+_Avoid_: Manual callout, device geometry edit, point-position dimension label placement
+
 **Device description**:
 Editable construction wording stored in the existing Overlay device name. Editing it does not override height, quantity, or relative arrangement.
 _Avoid_: Height override, point number

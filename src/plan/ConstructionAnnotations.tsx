@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, type RefObject } from 'react';
+import React, { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { NodeData } from '../types';
 import type { ConduitOverlayDocument, RoutingSystem } from '../domain/overlay';
 import type { ViewBox } from '../geometry/transform';
@@ -30,21 +30,21 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
   const positionDimensions=positionReport.dimensions;
   const installationSchedule=useMemo(()=>overlay&&context&&devicesVisible!==false?buildInstallationSchedule(nodes,overlay,levelId,unit,context):[],[nodes,overlay,levelId,unit,context,devicesVisible]);
   const deviceVariants=useMemo(()=>installationVariantByDeviceId(installationSchedule),[installationSchedule]);
-  const layout=useMemo(()=>layoutExteriorAnnotations(report.annotations,exterior,annotationScale),[report.annotations,exterior,annotationScale]);
+  const layout=useMemo(()=>layoutExteriorAnnotations(report.annotations,exterior,annotationScale,overlay?.constructionAnnotationLabelPositions),[report.annotations,exterior,annotationScale,overlay?.constructionAnnotationLabelPositions]);
   return {context,scale,report,layout,positionDimensions,installationSchedule,deviceVariants,annotationScale};
 }
 export type ConstructionPlan = ReturnType<typeof useConstructionPlan>;
-export function ConstructionAnnotations({plan,rotation,onSelect}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void}) {
-  const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
+export function ConstructionAnnotations({plan,rotation,onSelect,onLabelPositionChange,toPlanPoint}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void;onLabelPositionChange?:(id:string,label:Point)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null}) {
+  const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string}|null>(null),[draftLabels,setDraftLabels]=useState<Record<string,Point>>({}),dragRef=useRef<{id:string;pointerId:number}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
   const rename=(ids:string[],value:string)=>{const name=value.trim();if(overlay&&name)commit({...overlay,devices:overlay.devices.map(device=>ids.includes(device.id)?{...device,name}:device)});setEditing(null);};
   return <g className="construction-annotations" aria-label="施工标注">
-    {plan.layout.placed.map(({annotation:a,innerBend,boundary,label,textWidth,textHeight,outwardNormal})=>{
-      const ruleSide=annotationRuleSide(outwardNormal,rotation);
-      const commonHeight=a.rows.every(row=>row.height===a.rows[0]?.height),sharedHeight=a.arrangement==='horizontal'&&commonHeight,edgeX=ruleSide==='left'?-textWidth/2:textWidth/2,edgeOffset=rotatePoint([edgeX,0],-rotation),end:[number,number]=[label[0]+edgeOffset[0],label[1]+edgeOffset[1]],horizontalSide=Math.abs(outwardNormal[0])>=Math.abs(outwardNormal[1]),routeBend:[number,number]=horizontalSide?[end[0],boundary[1]]:[boundary[0],end[1]];
+    {plan.layout.placed.map(({annotation:a,innerBend,boundary,label:placedLabel,textWidth,textHeight,outwardNormal,manual})=>{
+      const label=draftLabels[a.id]??placedLabel,isManual=manual||draftLabels[a.id]!==undefined,leaderDirection:Point=isManual?[label[0]-a.anchor[0],label[1]-a.anchor[1]]:outwardNormal,ruleSide=annotationRuleSide(leaderDirection,rotation);
+      const commonHeight=a.rows.every(row=>row.height===a.rows[0]?.height),sharedHeight=a.arrangement==='horizontal'&&commonHeight,edgeX=ruleSide==='left'?-textWidth/2:textWidth/2,edgeOffset=rotatePoint([edgeX,0],-rotation),end:[number,number]=[label[0]+edgeOffset[0],label[1]+edgeOffset[1]],horizontalSide=Math.abs(outwardNormal[0])>=Math.abs(outwardNormal[1]),routeBend:[number,number]=horizontalSide?[end[0],boundary[1]]:[boundary[0],end[1]],manualBend:[number,number]=Math.abs(end[0]-a.anchor[0])>=Math.abs(end[1]-a.anchor[1])?[end[0],a.anchor[1]]:[a.anchor[0],end[1]],leader=isManual?[a.anchor,manualBend,end]:[a.anchor,innerBend,boundary,routeBend,end];
       const lines=a.rows.flatMap(row=>sharedHeight?[{kind:'label' as const,row}]:[{kind:'label' as const,row},{kind:'height' as const,row}]);if(sharedHeight&&a.rows[0])lines.push({kind:'height',row:a.rows[0]});
       return <g key={a.id} data-annotation={a.kind} data-source-id={a.sourceId} data-rule-side={ruleSide} onClick={e=>{e.stopPropagation();onSelect(a.sourceId);}}>
-        <polyline points={[a.anchor,innerBend,boundary,routeBend,end].map(point=>point.join(',')).join(' ')} fill="none" stroke="#858585" strokeWidth="1" vectorEffect="non-scaling-stroke"/>
-        <g transform={`translate(${label[0]} ${label[1]}) rotate(${-rotation})`}>
+        <polyline points={leader.map(point=>point.join(',')).join(' ')} fill="none" stroke="#858585" strokeWidth="1" vectorEffect="non-scaling-stroke"/>
+        <g data-construction-annotation-panel={a.id} transform={`translate(${label[0]} ${label[1]}) rotate(${-rotation})`} onPointerDown={event=>{if(!toPlanPoint||!onLabelPositionChange||(event.target as Element).closest('text, input, foreignObject'))return;event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);dragRef.current={id:a.id,pointerId:event.pointerId};}} onPointerMove={event=>{const drag=dragRef.current;if(!drag||drag.pointerId!==event.pointerId)return;const point=toPlanPoint?.(event.clientX,event.clientY);if(point)setDraftLabels(labels=>({...labels,[drag.id]:point}));}} onPointerUp={event=>{const drag=dragRef.current;if(!drag||drag.pointerId!==event.pointerId)return;const point=toPlanPoint?.(event.clientX,event.clientY)??draftLabels[drag.id]??label;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);dragRef.current=null;setDraftLabels(labels=>{const next={...labels};delete next[drag.id];return next;});onLabelPositionChange?.(drag.id,point);}}>
           <title>{[a.text,`来源：${a.relatedIds.join(', ')}`,`依据：${a.measurementBasis}；置信度：${a.confidence}`,...a.assumptions].join('\n')}</title>
           <rect x={-textWidth/2-.04} y={-textHeight/2-.08} width={textWidth+.08} height={textHeight+.16} fill="#fff" fillOpacity=".96"/>
           <line data-callout-rule x1={edgeX} y1={-textHeight/2} x2={edgeX} y2={textHeight/2} stroke="#343434" strokeWidth="1" vectorEffect="non-scaling-stroke"/>
