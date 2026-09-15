@@ -27,9 +27,9 @@ export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
   "weak-panel": { label: "弱电箱", systems: ["network"], hostKinds: ["wall"], sizeMm: [350, 400, 100], portRole: "source", source: true, canInsertMidSegment: false },
   "fire-inlet": { label: "入户消防水点", systems: ["sprinkler"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [120, 120, 120], portRole: "source", source: true, canInsertMidSegment: false },
   socket: { label: "插座", systems: ["receptacle"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   luminaire: { label: "灯具", systems: ["lighting"], hostKinds: ["ceiling"], sizeMm: [300, 300, 40], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
+  "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
   "sprinkler-head": { label: "向上喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
 };
 

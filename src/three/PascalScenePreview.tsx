@@ -83,7 +83,17 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
   useEffect(() => () => result.geometry?.dispose(), [result.geometry]);
   const geometry = result.geometry;
   if (!geometry) return null;
-  const hit = (event: any): ThreeDSurfaceHit | null => attachment ? { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey } : null;
+  const hit = (event: any): ThreeDSurfaceHit | null => {
+    if (!attachment) return null;
+    // Horizontal hosts are double-sided. Preserve the face the user actually
+    // clicked so an 86 box fronts downward from below a ceiling and upward
+    // from above it, rather than forcing every horizontal host to one Y side.
+    const normal: Vec3 = attachment.hostKind === "wall" ? attachment.normal : event.ray.direction.y < 0 ? [0, 1, 0] : [0, -1, 0];
+    const surface = attachment.hostKind === "ceiling"
+      ? normal[1] < 0 ? "ceiling-face" : "ceiling-back"
+      : normal[1] < 0 ? "bottom" : "top";
+    return { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, surface, normal, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey };
+  };
   return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
     <primitive object={geometry} attach="geometry" />
     <meshStandardMaterial color={selected ? "#fb923c" : color} transparent opacity={opacity} side={2} roughness={.88} />
