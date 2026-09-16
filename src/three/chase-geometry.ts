@@ -1,6 +1,6 @@
-import { BoxGeometry, BufferGeometry, Vector3 } from "three";
+import { BoxGeometry, BufferGeometry, CylinderGeometry, Vector3 } from "three";
 import { Brush, Evaluator, SUBTRACTION } from "three-bvh-csg";
-import type { BendArc, SurfaceChase, Vec3 } from "../domain/overlay";
+import type { BendArc, Penetration, SurfaceChase, Vec3 } from "../domain/overlay";
 
 const point = (value: Vec3) => new Vector3(...value);
 const tuple = (value: Vector3): Vec3 => [value.x, value.y, value.z];
@@ -15,6 +15,33 @@ export function sampleChase(chase: SurfaceChase, steps = 24): Vec3[] {
 }
 
 type LocalPoint = [number, number, number];
+
+/** Subtracts conservative oriented rectangular sleeves from a Beam runtime mesh. */
+export function subtractBeamPenetrations(baseGeometry: BufferGeometry, penetrations: Penetration[], start: Vec3, end: Vec3, levelY: number): { geometry: BufferGeometry; failed: boolean } {
+  if (!penetrations.length) return { geometry: baseGeometry, failed: false };
+  const axis = point(end).sub(point(start)); axis.y = 0; const span = axis.length();
+  if (span < 1e-7) return { geometry: baseGeometry, failed: false };
+  axis.normalize(); const side = new Vector3(-axis.z, 0, axis.x), center = point(start).add(point(end)).multiplyScalar(.5);
+  let result: Brush | null = null;
+  try {
+    const evaluator = new Evaluator(); evaluator.attributes = ["position", "normal", "uv"];
+    result = new Brush(baseGeometry); result.updateMatrixWorld(true);
+    for (const penetration of penetrations) {
+      const entry = point(penetration.entry.position), exit = point(penetration.exit.position), direction = exit.clone().sub(entry), distance = direction.length();
+      if (distance < 1e-7) continue;
+      const radius = penetration.diameterMm / 2000, cutterGeometry = new CylinderGeometry(radius, radius, distance + .01, 20), cutter = new Brush(cutterGeometry);
+      const midpoint = entry.clone().add(exit).multiplyScalar(.5).sub(center), local = new Vector3(midpoint.dot(side), midpoint.y - levelY, midpoint.dot(axis));
+      const localDirection = new Vector3(direction.dot(side), direction.y, direction.dot(axis)).normalize();
+      cutter.position.copy(local); cutter.quaternion.setFromUnitVectors(new Vector3(0, 1, 0), localDirection); cutter.updateMatrixWorld(true);
+      const previous = result.geometry;
+      try { result = evaluator.evaluate(result, cutter, SUBTRACTION); result.updateMatrixWorld(true); }
+      finally { cutterGeometry.dispose(); }
+      if (previous !== baseGeometry && previous !== result.geometry) previous.dispose();
+    }
+    if (result.geometry !== baseGeometry) baseGeometry.dispose();
+    return { geometry: result.geometry, failed: false };
+  } catch { if (result?.geometry && result.geometry !== baseGeometry) result.geometry.dispose(); return { geometry: baseGeometry, failed: true }; }
+}
 
 /** Subtracts rectangular shallow channels from a horizontal extruded host. */
 export function subtractHorizontalChases(baseGeometry: BufferGeometry, chases: SurfaceChase[], surfaceY: number, thickness: number): { geometry: BufferGeometry; failed: boolean } {

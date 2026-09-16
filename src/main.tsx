@@ -1519,7 +1519,7 @@ function Plan({
           {visibility.slabs && rendered.filter((n) => n.type === "slab" && n.visible !== false).map((n) => <Slab key={n.id} node={n} selected={selectedId === n.id} onSelect={onSelect} />)}
           {visibility.zones &&
             zones.map((n) => <Polygon key={n.id} node={n} onSelect={onSelect} />)}
-          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={n.id} node={n} selected={selectedId === n.id} onSelect={onSelect} />)}
+          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={n.id} node={n} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} />)}
           {visibility.walls &&
             exactWalls.map((n) => (
                 <Wall
@@ -1820,13 +1820,13 @@ function Slab({ node, selected, onSelect }: { node: NodeData; selected: boolean;
   if (!geometry) return null;
   return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#fafaf9"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#d2d2cf"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
 }
-function BeamFootprint({ node, selected, onSelect }: { node: NodeData; selected: boolean; onSelect: (id: string) => void }) {
+function BeamFootprint({ node, selected, penetrations, onSelect }: { node: NodeData; selected: boolean; penetrations: ConduitOverlayDocument["penetrations"]; onSelect: (id: string) => void }) {
   const start = Array.isArray(node.start) ? node.start : [], end = Array.isArray(node.end) ? node.end : [], width = Number(node.width);
   if (!Number.isFinite(start[0]) || !Number.isFinite(start[1]) || !Number.isFinite(end[0]) || !Number.isFinite(end[1]) || !Number.isFinite(width) || width <= 0) return null;
   const dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz);
   if (length < 1e-8) return null;
   const x = (start[0] + end[0]) / 2, z = (start[1] + end[1]) / 2, rotation = Math.atan2(dz, dx) * 180 / Math.PI;
-  return <g data-selectable="beam" transform={`translate(${x} ${z}) rotate(${rotation})`} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" /></g>;
+  return <g data-selectable="beam" transform={`translate(${x} ${z}) rotate(${rotation})`} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" />{penetrations.map((penetration) => { const px = penetration.entry.position[0] - x, pz = penetration.entry.position[2] - z, localX = px * Math.cos(-rotation * Math.PI / 180) - pz * Math.sin(-rotation * Math.PI / 180), localZ = px * Math.sin(-rotation * Math.PI / 180) + pz * Math.cos(-rotation * Math.PI / 180); return <g key={penetration.id}><circle cx={localX} cy={localZ} r={penetration.diameterMm / 2000} fill="#f8fafc" stroke="#111827" strokeWidth=".02" />{selected && <text x={localX} y={localZ - .12} textAnchor="middle" fontSize=".12" fill="#111827">Ø{penetration.diameterMm} · {penetration.segmentId}</text>}</g>; })}</g>;
 }
 function Wall({
   node,

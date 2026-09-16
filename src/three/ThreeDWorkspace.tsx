@@ -17,7 +17,8 @@ import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCa
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, nudgeBeamLaterally, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamClearances, editBeamClearance, snapBeamPoint, type BeamSnap } from "../domain/beam-positioning";
-import { beamRouteDiagnostics } from "../domain/beam-routing";
+import { beamRouteDiagnostics, revalidateBeamPenetrations } from "../domain/beam-routing";
+import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { projectRayToActiveWall } from "./active-host";
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
@@ -317,6 +318,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setSelectedDeviceIds((current) => current.includes(deviceId) ? current.filter((id) => id !== deviceId) : [...current, deviceId]);
   };
   const deleteSelectedObjects = () => {
+    if (selectedBeam) {
+      const hostedDevice = overlay.devices.some((device) => device.position.attachment?.hostId === selectedBeam.id || device.mount?.kind === "host" && device.mount.attachment.hostId === selectedBeam.id);
+      if (hostedDevice) { setStatus("Beam 仍承载设备，不能删除。 "); return; }
+      const current = useOverlayStore.getState(), project = current.project;
+      if (!project?.raw.nodes || typeof project.raw.nodes !== "object") return;
+      const { [selectedBeam.id]: _removed, ...nodes } = project.raw.nodes as Record<string, unknown>;
+      commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, { ...overlay, penetrations: overlay.penetrations.filter((penetration) => penetration.hostId !== selectedBeam.id) }, true, current.dirty);
+      onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
+    }
     const ids = [...new Set(selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
     const next = ids.reduce((current, id) => deleteNetworkObject(current, id), overlay);
@@ -477,7 +487,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const current = useOverlayStore.getState(), project = current.project;
     if (!project || !project.raw.nodes || typeof project.raw.nodes !== "object") return;
     const nextProject = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as Record<string, unknown>), [result.beam.id]: result.beam } } };
-    commitSharedWorkspace(nextProject, current.overlay, true, current.dirty);
+    commitSharedWorkspace(nextProject, revalidateBeamPenetrations({ ...scene.nodes, [result.beam.id]: result.beam }, current.overlay ?? overlay), true, current.dirty);
   };
   const onSurfaceMove = (hit: ThreeDSurfaceHit | null) => {
     if (tool === "beam") { setBeamPointer(hit ? { point: hit.point, shiftKey: hit.shiftKey, levelId: hit.attachment.levelId } : null); return; }
@@ -487,7 +497,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const active = draft[draft.length - 1];
     if (tool === "point") { scheduleCursor(routePoint(hit)); return; }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
-    if (penetrationSession) { scheduleCursor(hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
+    if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
     if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) scheduleCursor(routePoint(hit));
   };
@@ -509,7 +519,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(latestCursor.current), routePoint(hit));
     if (!point) return;
-    if (penetrationSession) { const exit = projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
+    if (penetrationSession) { const exit = penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
     const constrained = point, candidate = [...draft, constrained];
     if (candidate.length >= 2) { const plan = validatedPlan(candidate, branchStart?.segmentId); if (!plan.canCommit) { rejectDiagnostics(plan); return; } }
     setDraft(candidate); setBranchEnd(constrained); setCursor(null); orthogonalDirection.current = null; setStatus("已确定落点；移动鼠标预览下一段，按 Enter、双击或完成路径直接生成。");
@@ -611,7 +621,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     if (blockedByOpening) { scheduleCursor(null); return; }
     const active = draft[draft.length - 1];
-    if (penetrationSession) { scheduleCursor(surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
+    if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
     if ((tool === "draw" || tool === "branch" && branchStart) && active?.attachment?.hostKind === "wall") {
       const projected = projectRayToActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction);
       if (projected) { scheduleCursor(projected); return; }

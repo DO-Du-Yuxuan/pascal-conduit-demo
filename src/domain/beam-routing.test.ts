@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBeam } from "./beams";
-import { beamRouteDiagnostics, validBeamVolumes } from "./beam-routing";
+import { beamRouteDiagnostics, projectBeamPenetrationExit, revalidateBeamPenetrations, validBeamVolumes } from "./beam-routing";
+import { createEmptyOverlay } from "./overlay";
 import { planRoute } from "./routing";
 import type { RoutePoint } from "./overlay";
 
@@ -49,5 +50,16 @@ describe("Beam routing obstacle", () => {
     const entry = free(0, 2.75, -.2), exit = free(0, 2.75, .2);
     const plan = planRoute("receptacle", 20, "penetrate", [free(-1, 2.75, -1), free(1, 2.75, 1)], undefined, [{ host: onBottom(0, 0).attachment!, entry, exit, direction: [0, 0, 1] }]);
     expect(beamRouteDiagnostics(nodes, plan).some((item) => item.code === "beam_collision")).toBe(true);
+  });
+  it("projects Tab's frozen direction to the actual angled Beam exit face", () => {
+    const entry = { ...onBottom(0, 0), position: [0, 2.5, 0] as [number, number, number] };
+    expect(projectBeamPenetrationExit(nodes, { entry, host: entry.attachment!, direction: [0, 1, 0], orthogonal: false })).toMatchObject({ position: [0, 3, 0], attachment: { hostId: "beam", hostKind: "beam", surface: "top" } });
+  });
+  it("retains only still-physical Beam penetrations after a Beam edit or deletion", () => {
+    const entry = onBottom(0, 0), exit = projectBeamPenetrationExit(nodes, { entry, host: entry.attachment!, direction: [0, 1, 0], orthogonal: false })!;
+    const overlay = { ...createEmptyOverlay("a", "b"), segments: [{ id: "route", type: "conduit-segment" as const, system: "receptacle" as const, diameterMm: 20, start: entry, end: exit, createdAt: "now" }], penetrations: [{ id: "hole", type: "penetration" as const, hostId: "beam", hostKind: "beam" as const, segmentId: "route", entry, exit, direction: [0, 1, 0] as [number, number, number], diameterMm: 30 }] };
+    expect(revalidateBeamPenetrations(nodes, overlay).penetrations).toHaveLength(1);
+    expect(revalidateBeamPenetrations({ ...nodes, beam: { ...beam, start: [3, 0], end: [4, 0] } }, overlay).penetrations).toHaveLength(0);
+    expect(revalidateBeamPenetrations({ ...base }, overlay).penetrations).toHaveLength(0);
   });
 });

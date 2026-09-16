@@ -3,6 +3,8 @@ import { validateBeam, type BeamNode } from "./beams";
 import type { RouteDiagnostic } from "./routing";
 import type { PlannedRoute } from "./routing";
 import type { RoutePoint, Vec3 } from "./overlay";
+import type { ConduitOverlayDocument, Penetration } from "./overlay";
+import type { PenetrationSession } from "./drawing";
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -29,6 +31,41 @@ export function validBeamVolumes(nodes: Record<string, NodeData>): BeamVolume[] 
     const beam = checked.beam, delta: Vec3 = [beam.end[0] - beam.start[0], 0, beam.end[1] - beam.start[1]], span = length(delta), axis = normalize(delta), side: Vec3 = [-axis[2], 0, axis[0]], base = levelElevation(nodes, beam), top = base + beam.effectiveCeilingElevation.meters;
     return [{ beam, origin: [(beam.start[0] + beam.end[0]) / 2, 0, (beam.start[1] + beam.end[1]) / 2], axis, side, bottom: top - beam.height, top, halfLength: span / 2, halfWidth: beam.width / 2 }];
   });
+}
+
+/** Finds the far physical Beam face along Tab's frozen incoming direction. */
+export function projectBeamPenetrationExit(nodes: Record<string, NodeData>, session: PenetrationSession): RoutePoint | null {
+  if (session.host.hostKind !== "beam") return null;
+  const volume = validBeamVolumes(nodes).find((item) => item.beam.id === session.host.hostId);
+  if (!volume) return null;
+  const start = local(volume, session.entry.position), direction: Vec3 = [dot(session.direction, volume.side), session.direction[1], dot(session.direction, volume.axis)], minimum: Vec3 = [-volume.halfWidth, volume.bottom, -volume.halfLength], maximum: Vec3 = [volume.halfWidth, volume.top, volume.halfLength];
+  let far = Infinity, exitAxis = -1;
+  for (let axis = 0; axis < 3; axis += 1) {
+    if (Math.abs(direction[axis]) < 1e-9) continue;
+    const boundary = direction[axis] > 0 ? maximum[axis] : minimum[axis], distance = (boundary - start[axis]) / direction[axis];
+    if (distance > 1e-5 && distance < far) { far = distance; exitAxis = axis; }
+  }
+  if (!Number.isFinite(far) || exitAxis < 0) return null;
+  const position: Vec3 = [session.entry.position[0] + session.direction[0] * far, session.entry.position[1] + session.direction[1] * far, session.entry.position[2] + session.direction[2] * far];
+  const positive = direction[exitAxis] > 0, surface = exitAxis === 0 ? positive ? "side-b" : "side-a" : exitAxis === 1 ? positive ? "top" : "bottom" : positive ? "end-b" : "end-a";
+  // A penetration may exit at the ceiling-adjacent top; it is an attachment
+  // evidence record, not a targetable conduit surface.
+  const normal: Vec3 = exitAxis === 0 ? scale(volume.side, positive ? 1 : -1) : exitAxis === 1 ? [0, positive ? 1 : -1, 0] : scale(volume.axis, positive ? 1 : -1);
+  const delta = sub(position, volume.origin);
+  return { position, attachment: { hostId: volume.beam.id, hostKind: "beam", surface, normal, levelId: volume.beam.parentId ?? null, localPosition: [dot(delta, volume.side), position[1] - levelElevation(nodes, volume.beam), dot(delta, volume.axis)], basis: { u: exitAxis === 1 ? volume.axis : exitAxis === 0 ? volume.axis : volume.side, v: exitAxis === 1 ? volume.side : [0, 1, 0] } } };
+}
+
+/** Keeps only explicit Beam holes that still describe an existing, physical passage. */
+export function revalidateBeamPenetrations(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument): ConduitOverlayDocument {
+  const penetrations = overlay.penetrations.filter((penetration) => {
+    if (penetration.hostKind !== "beam") return true;
+    if (!overlay.segments.some((segment) => segment.id === penetration.segmentId)) return false;
+    const entry = penetration.entry, host = entry.attachment;
+    if (!host || host.hostKind !== "beam" || host.hostId !== penetration.hostId) return false;
+    const expected = projectBeamPenetrationExit(nodes, { entry, host, direction: penetration.direction, orthogonal: false });
+    return Boolean(expected && Math.hypot(...expected.position.map((value, axis) => value - penetration.exit.position[axis])) < .006);
+  });
+  return penetrations.length === overlay.penetrations.length ? overlay : { ...overlay, penetrations };
 }
 
 const local = (volume: BeamVolume, point: Vec3): Vec3 => { const delta = sub(point, volume.origin); return [dot(delta, volume.side), point[1], dot(delta, volume.axis)]; };

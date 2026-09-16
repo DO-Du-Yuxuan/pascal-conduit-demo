@@ -36,4 +36,10 @@ The exposed **bottom**, two **sides**, and two **ends** of a valid Beam are ordi
 
 Beam-face conduit is exposed surface work: it never creates a `surface-chase`. Independently of what the cursor ray hit, valid Beam prisms participate in analytic route collision checks for surface, suspended, and world-axis segments. A full run truthfully attached to one exposed Beam face is legal; entry into the member volume is a red blocking conflict unless an active explicit penetration bypass owns that Beam. Invalid imported Beams are excluded from both hosting and collision. Building-member intersections (Beam/Wall, Beam/Column, Beam/Beam) remain building geometry, not conduit conflicts.
 
+## Explicit Beam penetrations
+
+The existing Tab workflow also serves Beams: it freezes the incoming conduit direction and resolves the far exit against the oriented Beam prism, retaining face, normal, Level, local basis, and local position as attachment evidence. A confirmed opening is Overlay-only and stores the stable Beam id, route-element id, entry/exit, direction, and the conduit diameter plus the Demo's 10 mm clearance. No project Beam node receives hole geometry or a surface chase.
+
+When a Beam is edited, the Overlay revalidates its explicit passages against the new physical prism; holes whose exit no longer lies on the frozen ray or whose linked route has disappeared are removed, leaving any newly ordinary Beam intersection to the normal red collision rule. This is a demonstrative construction record, not structural approval.
+
 The governing durable choice is [ADR 0003](adr/0003-author-demo-beams-in-project-json.md).
