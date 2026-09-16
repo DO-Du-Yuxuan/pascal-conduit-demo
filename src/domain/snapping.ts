@@ -24,6 +24,29 @@ export function projectRoutePointToDirection(start: RoutePoint, target: RoutePoi
   return { ...target, position: add(start.position, scale(direction, dot(delta, direction))) };
 }
 
+/** Resolves an orthogonal route direction against the actual target host plane. */
+export function projectRouteDirectionToHost(start: RoutePoint, target: RoutePoint, direction: Vec3): RoutePoint | null {
+  const host = target.attachment;
+  if (!host) return projectRoutePointToDirection(start, target, direction);
+  const denominator = dot(direction, host.normal);
+  if (Math.abs(denominator) < ARRIVAL_EPSILON_METERS) return null;
+  const distance = dot(subtract(target.position, start.position), host.normal) / denominator;
+  if (distance < -ARRIVAL_EPSILON_METERS) return null;
+  const position = add(start.position, scale(direction, Math.max(0, distance)));
+  if (host.hostKind !== "beam" || !host.localPosition || !host.basis) return { ...target, position };
+  const delta = subtract(position, target.position), alongU = dot(delta, host.basis.u), alongV = dot(delta, host.basis.v), local = [...host.localPosition] as [number, number, number];
+  if (host.surface === "bottom") { local[0] += alongV; local[1] += delta[1]; local[2] += alongU; }
+  else if (host.surface === "side-a" || host.surface === "side-b") { local[1] += alongV; local[2] += alongU; }
+  else { local[0] += alongU; local[1] += alongV; }
+  return { position, attachment: { ...host, localPosition: local } };
+}
+
+/** An unreachable Beam face becomes a confirmed orthogonal helper point, never a free diagonal landing. */
+export function resolveOrthogonalBeamHit(start: RoutePoint, target: RoutePoint, direction: Vec3): { kind: "arrival" | "alignment"; point: RoutePoint } {
+  const arrival = projectRouteDirectionToHost(start, target, direction);
+  return arrival ? { kind: "arrival", point: arrival } : { kind: "alignment", point: { position: projectRoutePointToDirection(start, target, direction).position, attachment: start.attachment } };
+}
+
 export function resolveOrthogonalDirection(start: RoutePoint, intent: RoutePoint, previous: Vec3 | null = null, switchRatio = 1.5): Vec3 {
   const basis = start.attachment?.basis;
   const directions: Vec3[] = basis ? [basis.u, basis.v] : [[1, 0, 0], [0, 1, 0], [0, 0, 1]];

@@ -40,6 +40,13 @@ export const quantizeBeamMeters = (value: number) => Math.round(value / BEAM_EDI
 export type BeamEdit = { name?: string; start?: [number, number]; end?: [number, number]; width?: number; height?: number; /** A physical face supplies the already 5 mm-parameterized plan point. */ surfaceResolved?: boolean };
 export function editBeam(nodes: Record<string, NodeData>, beam: BeamNode, edit: BeamEdit): BeamValidation {
   const resolvePlan = edit.surfaceResolved ? (value: number) => value : quantizeBeamMeters;
+  // Section/name edits cannot change the Ceiling polygons crossed by the
+  // existing axis, so preserve imported explicit-crossing evidence.
+  if (edit.start === undefined && edit.end === undefined) {
+    const width = quantizeBeamMeters(edit.width ?? beam.width), height = quantizeBeamMeters(edit.height ?? beam.height);
+    if (!finite(width) || width <= 0 || !finite(height) || height <= 0) return { valid: false, beam: null, diagnostics: ["Beam 宽度和高度必须为正数（米）。"] };
+    return { valid: true, beam: { ...beam, name: edit.name?.trim() || beam.name, width, height }, diagnostics: [] };
+  }
   const start = (edit.start ?? beam.start).map(resolvePlan) as [number, number], end = (edit.end ?? beam.end).map(resolvePlan) as [number, number];
   const width = quantizeBeamMeters(edit.width ?? beam.width), height = quantizeBeamMeters(edit.height ?? beam.height);
   return createBeam(nodes, { id: beam.id, name: edit.name?.trim() || beam.name, levelId: beam.parentId!, start, end, width, height, explicitCeilingCrossing: beam.explicitCeilingCrossing });

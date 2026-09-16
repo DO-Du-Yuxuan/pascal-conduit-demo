@@ -13,7 +13,7 @@ import { describeDevicePosition, editDevicePosition, ensureInstallationReference
 import { createLightingControlGroup, removeLightingControlGroup, replaceLightingControlGroup } from "../domain/lighting-controls";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { connectedRouteElementIds } from "../domain/route-selection";
-import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
+import { projectRoutePointToDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
@@ -414,7 +414,16 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (targetPort) candidates.push({ kind: "device-port", point: targetPort.position, targetId: targetPort.id, label: `${hoveredDevice?.name || DEVICE_DEFAULTS[hoveredDevice!.deviceType].label}端口`, distancePixels: 0, compatible: true });
     const snapped = resolveSnapCandidate(draft[draft.length - 1], candidates, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current });
     if (snapped.point) return snapped.point;
-    if (orthogonal && orthogonalDirection.current) return projectRoutePointToDirection(draft[draft.length - 1], raw, orthogonalDirection.current);
+    if (orthogonal && raw.attachment?.hostKind === "beam") {
+      const direction = orthogonalDirection.current ?? resolveOrthogonalDirection(draft[draft.length - 1], raw);
+      const resolution = resolveOrthogonalBeamHit(draft[draft.length - 1], raw, direction);
+      return resolution.kind === "arrival" && !isValidBeamAttachment(scene?.nodes ?? {}, resolution.point)
+        ? { position: projectRoutePointToDirection(draft[draft.length - 1], raw, direction).position, attachment: draft[draft.length - 1].attachment }
+        : resolution.point;
+    }
+    if (orthogonal && orthogonalDirection.current) {
+      return projectRoutePointToDirection(draft[draft.length - 1], raw, orthogonalDirection.current);
+    }
     const points = displayedRoutePoints(draft, raw, orthogonal ? "orthogonal" : "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource });
     return points[points.length - 1] ?? raw;
   };
@@ -570,7 +579,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     const clickedPoint = routePoint(hit);
-    const point = resolveConfirmedRoutePoint(hit.attachment.hostKind === "beam" ? clickedPoint : resolveEffectiveCursor(latestCursor.current), clickedPoint);
+    const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(hit.attachment.hostKind === "beam" ? clickedPoint : latestCursor.current), hit.attachment.hostKind === "beam" && orthogonal && !worldAxis ? null : clickedPoint);
     if (!point) return;
     if (penetrationSession) { const exit = penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
     const constrained = point, candidate = [...draft, constrained];

@@ -11,6 +11,10 @@ describe("Demo Beam", () => {
     expect(result).toMatchObject({ valid: true, beam: { explicitCeilingCrossing: true, effectiveCeilingElevation: { meters: 3, basis: "explicit-ceiling-height" } } });
     expect(editBeam({ ...nodes, cross: result.beam! }, result.beam!, { width: .45 })).toMatchObject({ valid: true, beam: { width: .45, explicitCeilingCrossing: true } });
   });
+  it("edits the section of an imported explicit-crossing Beam without reclassifying its Ceiling evidence", () => {
+    const result = createBeam(nodes, { id: "cross", name: "跨越梁", levelId: "level", start: [1, 1], end: [7, 1], explicitCeilingCrossing: true });
+    expect(editBeam({ ...nodes, cross: result.beam! }, result.beam!, { width: .9, height: .8 })).toMatchObject({ valid: true, beam: { width: .9, height: .8, explicitCeilingCrossing: true, ceilingIds: ["explicit", "derived"] } });
+  });
   it("permits gaps but rejects mixed elevation evidence and incomplete imported host identities", () => {
     const { derived: _derived, ...gapBase } = nodes, gapNodes = { ...gapBase, same: { id: "same", type: "ceiling", parentId: "level", height: 3, polygon: [[6, 0], [8, 0], [8, 4], [6, 4]] } };
     const result = createBeam(gapNodes, { id: "gap", name: "梁", levelId: "level", start: [1, 1], end: [7, 1] });

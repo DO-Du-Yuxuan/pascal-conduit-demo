@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
+import { projectRouteDirectionToHost, projectRoutePointToDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
 import type { RoutePoint } from "./overlay";
 
 const point = (x: number, y: number, z: number): RoutePoint => ({ position: [x, y, z], attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", localPosition: [x, y, z], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
@@ -43,6 +43,24 @@ describe("route object snap resolution", () => {
 
   it("projects a raw pointer intent onto the selected orthogonal direction", () => {
     expect(projectRoutePointToDirection(point(1, 2, 3), point(5, 7, 9), [0, 0, 1])).toMatchObject({ position: [1, 2, 9] });
+  });
+
+  it("rejects a Beam hit when the locked direction cannot reach its physical face", () => {
+    const start = point(0, 1, 0);
+    const beamBottom: RoutePoint = { position: [2, 3, 4], attachment: { hostId: "beam", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0", localPosition: [0, 3, 0], basis: { u: [1, 0, 0], v: [0, 0, 1] } } };
+    expect(projectRouteDirectionToHost(start, beamBottom, [1, 0, 0])).toBeNull();
+  });
+
+  it("keeps an unreachable Beam hit as a wall-hosted orthogonal helper point so drawing can continue", () => {
+    const start = point(0, 1, 0);
+    const beamBottom: RoutePoint = { position: [2, 3, 4], attachment: { hostId: "beam", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0", localPosition: [0, 3, 0], basis: { u: [1, 0, 0], v: [0, 0, 1] } } };
+    expect(resolveOrthogonalBeamHit(start, beamBottom, [1, 0, 0])).toEqual({ kind: "alignment", point: { position: [2, 1, 0], attachment: start.attachment } });
+  });
+
+  it("uses the locked direction's intersection with a Beam face instead of the raw click coordinate", () => {
+    const start = point(0, 1, 0);
+    const beamSide: RoutePoint = { position: [2, 3, 4], attachment: { hostId: "beam", hostKind: "beam", surface: "side-a", normal: [1, 0, 0], levelId: "L0", localPosition: [0, 3, 0], basis: { u: [0, 0, 1], v: [0, 1, 0] } } };
+    expect(projectRouteDirectionToHost(start, beamSide, [1, 0, 0])).toMatchObject({ position: [2, 1, 0], attachment: { hostId: "beam", hostKind: "beam" } });
   });
 
   it("uses world-axis alignment for an orthogonal suspended route instead of snapping diagonally", () => {

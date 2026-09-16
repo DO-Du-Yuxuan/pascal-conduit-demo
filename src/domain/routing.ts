@@ -1,4 +1,4 @@
-import type { BendArc, Circuit, ConduitOverlayDocument, HostAttachment, JunctionBox, NetworkPort, Penetration, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SurfaceChase, SurfaceMode, Vec3 } from "./overlay";
+import { DEFAULT_BEND_RADIUS_MM, type BendArc, type Circuit, type ConduitOverlayDocument, type HostAttachment, type JunctionBox, type NetworkPort, type Penetration, type RouteFitting, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "./overlay";
 import { boxFrame, eightBoxPorts, sameFaceFreePeer } from "./box-ports";
 import { cleanLightingControlGroupsAfterDeviceDeletion } from "./lighting-controls";
 
@@ -37,7 +37,7 @@ export type PlannedRoute = { system: RoutingSystem; diameterMm: number; mode: Su
 export type ConstructionVisualParameters = { chaseWidthMm: number; chaseDepthMm: number; penetrationDiameterMm: number };
 const defaultConstructionParameters = (diameterMm: number): ConstructionVisualParameters => ({ chaseWidthMm: diameterMm + 10, chaseDepthMm: diameterMm + 5, penetrationDiameterMm: diameterMm + 10 });
 
-type Corner = { point: RoutePoint; style: "none" | "sweep" | "standard"; radiusMm?: number; arc?: BendArc };
+type Corner = { point: RoutePoint; style: "none" | "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc };
 
 function port(ownerId: string, index: number, position: RoutePoint, direction: Vec3, segmentId: string, system: RoutingSystem, ownerKind: NetworkPort["owner"]["kind"] = "fitting"): NetworkPort {
   return { id: `${ownerId}:port:${index}`, owner: { kind: ownerKind, id: ownerId }, position: copyPoint(position), direction: normalize(direction), role: ownerKind === "junction-box" ? "branch" : "bidirectional", system, connectedSegmentIds: [segmentId], segmentId };
@@ -47,13 +47,13 @@ function bindPort(segment: RouteSegment, atStart: boolean, value: NetworkPort) {
 /** Builds tangent sweep bends first, then creates stock-length conduit pieces. */
 export function planRoute(system: RoutingSystem, diameterMm: number, mode: SurfaceMode, points: RoutePoint[], parameters = defaultConstructionParameters(diameterMm), explicitPenetrations: PenetrationRequest[] = [], options?: { bendRadiusMm?: number; stockLengthMm?: number }): PlannedRoute {
   if (points.length < 2) throw new Error("至少需要两个路由点。");
-  const bendRadiusMm = options?.bendRadiusMm ?? 200, stockLengthMm = options?.stockLengthMm ?? 4000;
+  const bendRadiusMm = options?.bendRadiusMm ?? DEFAULT_BEND_RADIUS_MM, stockLengthMm = options?.stockLengthMm ?? 4000;
   const legStarts = points.slice(0, -1).map(copyPoint), legEnds = points.slice(1).map(copyPoint), corners: Corner[] = [], diagnostics: RouteDiagnostic[] = [];
   for (let index = 1; index < points.length - 1; index += 1) {
     const previous = points[index - 1], corner = points[index], next = points[index + 1], incoming = normalize(subtract(corner.position, previous.position)), outgoing = normalize(subtract(next.position, corner.position));
     const deflection = Math.acos(Math.max(-1, Math.min(1, dot(incoming, outgoing))));
     if (deflection < .01) { corners.push({ point: copyPoint(corner), style: "none" }); continue; }
-    if (isElectrical(system)) {
+    if (isElectrical(system) && corner.attachment?.hostKind !== "beam") {
       const radius = bendRadiusMm / 1000, tangentDistance = radius * Math.tan(deflection / 2), incomingLength = length(subtract(corner.position, previous.position)), outgoingLength = length(subtract(next.position, corner.position));
       if (tangentDistance >= incomingLength - EPSILON || tangentDistance >= outgoingLength - EPSILON) {
         diagnostics.push({ code: "bend_clearance", message: `转角空间不足，无法放置 ${bendRadiusMm} mm 大弯。`, point: [...corner.position] as Vec3 });
@@ -65,7 +65,7 @@ export function planRoute(system: RoutingSystem, diameterMm: number, mode: Surfa
       legEnds[index - 1] = { ...copyPoint(corner), position: arcStart };
       legStarts[index] = { ...copyPoint(corner), position: arcEnd };
       corners.push({ point: copyPoint(corner), style: "sweep", radiusMm: bendRadiusMm, arc: { start: arcStart, end: arcEnd, center, normal, sweepRadians: deflection } });
-    } else corners.push({ point: copyPoint(corner), style: "standard" });
+    } else corners.push({ point: copyPoint(corner), style: isElectrical(system) ? "right-angle" : "standard" });
   }
 
   const segments: RouteSegment[] = [], legParts: RouteSegment[][] = [], couplingSpecs: Array<{ point: RoutePoint; left: RouteSegment; right: RouteSegment }> = [], cornerBreaks: Array<{ cornerIndex: number; point: RoutePoint; left: RouteSegment }> = [];

@@ -1,4 +1,4 @@
-import type { BendArc, ConduitOverlayDocument, NetworkPort, RouteFitting, RoutePoint, RouteSegment, Vec3 } from "./overlay";
+import { DEFAULT_BEND_RADIUS_MM, type BendArc, type ConduitOverlayDocument, type NetworkPort, type RouteFitting, type RoutePoint, type RouteSegment, type Vec3 } from "./overlay";
 import type { PlannedRoute, RouteDiagnostic } from "./routing";
 
 type Primitive = { id: string; a: Vec3; b: Vec3; radius: number; segmentId?: string; relatedSegmentIds?: string[]; portIds?: string[] };
@@ -168,7 +168,7 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): P
         { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
       ];
       before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
-      const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: 200, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: [...hit.point] as Vec3, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacle.id, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
+      const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: DEFAULT_BEND_RADIUS_MM, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: [...hit.point] as Vec3, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacle.id, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
       const replacementFor = (position: Vec3) => samePoint(position, proposed.start.position) ? before.id : after.id;
       const fittings = plan.fittings.map((item) => {
         if (!item.segmentIds.includes(proposed.id)) return item;

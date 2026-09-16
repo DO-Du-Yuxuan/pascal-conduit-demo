@@ -83,6 +83,7 @@ export const SYSTEM_DEFAULTS: Record<RoutingSystem, { label: string; color: stri
   network: { label: "网络线路", color: "#ffffff", diameterMm: 20, mode: "surface" },
   sprinkler: { label: "消防喷淋", color: "#22c55e", diameterMm: 50, mode: "suspended" },
 };
+export const DEFAULT_BEND_RADIUS_MM = 150;
 
 export const migrateSystem = (system: RoutingSystem | LegacyRoutingSystem): RoutingSystem => ({ power: "receptacle", "low-voltage": "lighting", signal: "network", sprinkler: "sprinkler", receptacle: "receptacle", lighting: "lighting", network: "network" } as const)[system];
 
@@ -149,7 +150,7 @@ function migrateBoxPorts(device: ParsedDevice, frame: DeviceFrame, ports: Networ
 }
 
 export function createEmptyOverlay(fileName: string, sha256: string, projectId?: string): ConduitOverlayDocument {
-  return { schemaVersion: "2.3", source: { fileName, sha256, ...(projectId ? { projectId } : {}) }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, sensorVisible: true, bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], lightingControlGroups: [], manualCallouts: [], pointPositionDimensionLabelPositions: {}, constructionAnnotationLabelPositions: {}, constructionAnnotationLabelPlacementSignatures: {}, surfaceChases: [], penetrations: [], installationReferencePlanes: [], layoutReferencePlanes: [] };
+  return { schemaVersion: "2.3", source: { fileName, sha256, ...(projectId ? { projectId } : {}) }, settings: { colors: Object.fromEntries(SYSTEMS.map((system) => [system, SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>, visibleSystems: Object.fromEntries(SYSTEMS.map((system) => [system, true])) as Record<RoutingSystem, boolean>, sensorVisible: true, bendRadiusMm: DEFAULT_BEND_RADIUS_MM, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] }, segments: [], fittings: [], junctionBoxes: [], devices: [], circuits: [], lightingControlGroups: [], manualCallouts: [], pointPositionDimensionLabelPositions: {}, constructionAnnotationLabelPositions: {}, constructionAnnotationLabelPlacementSignatures: {}, surfaceChases: [], penetrations: [], installationReferencePlanes: [], layoutReferencePlanes: [] };
 }
 
 export function parseOverlay(raw: unknown): ConduitOverlayDocument {
@@ -242,7 +243,7 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   });
   const colors = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.colors[system] ?? parsed.settings.colors[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>;
   const visibleSystems = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.visibleSystems?.[system] ?? parsed.settings.visibleSystems?.[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? true])) as Record<RoutingSystem, boolean>;
-  return { schemaVersion: "2.3", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, lightingControlGroups, manualCallouts: parsed.manualCallouts ?? [], pointPositionDimensionLabelPositions: parsed.pointPositionDimensionLabelPositions ?? {}, constructionAnnotationLabelPositions: parsed.constructionAnnotationLabelPositions ?? {}, constructionAnnotationLabelPlacementSignatures: parsed.constructionAnnotationLabelPlacementSignatures ?? {}, surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, installationReferencePlanes: parsed.installationReferencePlanes ?? [], layoutReferencePlanes: parsed.layoutReferencePlanes ?? [], settings: { colors, visibleSystems, sensorVisible: parsed.settings.sensorVisible ?? true, bendRadiusMm: parsed.settings.bendRadiusMm ?? 200, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
+  return { schemaVersion: "2.3", source: parsed.source, segments, fittings, junctionBoxes, devices, circuits, lightingControlGroups, manualCallouts: parsed.manualCallouts ?? [], pointPositionDimensionLabelPositions: parsed.pointPositionDimensionLabelPositions ?? {}, constructionAnnotationLabelPositions: parsed.constructionAnnotationLabelPositions ?? {}, constructionAnnotationLabelPlacementSignatures: parsed.constructionAnnotationLabelPlacementSignatures ?? {}, surfaceChases: [...migratedChases, ...(parsed.surfaceChases ?? [])], penetrations, installationReferencePlanes: parsed.installationReferencePlanes ?? [], layoutReferencePlanes: parsed.layoutReferencePlanes ?? [], settings: { colors, visibleSystems, sensorVisible: parsed.settings.sensorVisible ?? true, bendRadiusMm: DEFAULT_BEND_RADIUS_MM, stockLengthMm: parsed.settings.stockLengthMm ?? 4000, junctionBoxSizeMm: parsed.settings.junctionBoxSizeMm ?? [86, 86, 50] } };
 }
 
 /**

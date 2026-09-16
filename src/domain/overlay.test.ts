@@ -96,7 +96,7 @@ describe("Conduit overlay", () => {
     delete legacy.surfaceChases; legacy.wallChases = [{ id: "legacy-chase", type: "wall-chase", wallId: "wall-a", segmentId: "pipe", start: point(0, 1, 0), end: point(1, 1, 0), widthMm: 30, depthMm: 25 }];
     legacy.penetrations = [{ id: "legacy-hole", type: "penetration", hostId: "wall-a", hostKind: "wall", segmentId: "pipe", point: point(.5, 1, 0), diameterMm: 30 }];
     const migratedLegacy = parseOverlay(legacy);
-    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.3", junctionBoxes: [], devices: [], lightingControlGroups: [], settings: { bendRadiusMm: 200, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
+    expect(migratedLegacy).toMatchObject({ schemaVersion: "2.3", junctionBoxes: [], devices: [], lightingControlGroups: [], settings: { bendRadiusMm: 150, stockLengthMm: 4000, junctionBoxSizeMm: [86, 86, 50] } });
     expect(migratedLegacy.surfaceChases[0]).toMatchObject({ type: "surface-chase", hostId: "wall-a", hostKind: "wall", path: { kind: "line" } });
     expect(migratedLegacy.penetrations[0]).toMatchObject({ entry: { position: [.5, 1, 0] }, exit: { position: [.5, 1, 0] }, direction: [0, 0, 1], derived: true });
     expect(parseOverlay(JSON.parse(JSON.stringify(migratedLegacy)))).toEqual(migratedLegacy);
@@ -208,7 +208,7 @@ describe("Conduit overlay", () => {
     const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(2, 1, 0)]));
     const plan = planBranchContinuation(routed, routed.segments[0].id, [point(1, 1, 0), point(1, 2, 0), point(2, 2, 0)], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 })!;
     expect(plan.canCommit).toBe(true);
-    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 200, arc: expect.any(Object) });
+    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 150, arc: expect.any(Object) });
   });
 
   it("splits a sprinkler segment at a physical tee", () => {
@@ -229,12 +229,18 @@ describe("Conduit overlay", () => {
     expect(deleteNetworkObject(sprinklerBranch, tee.id).segments).toHaveLength(0);
   });
 
-  it("creates a 200 mm tangent sweep on one electrical host", () => {
+  it("creates a 150 mm tangent sweep on one electrical host", () => {
     const plan = planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(1, 1, 0), point(1, 1, 1)]);
     expect(plan.canCommit).toBe(true);
-    expect(plan.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "elbow", bendStyle: "sweep", radiusMm: 200, arc: expect.any(Object) })]));
-    expect(plan.segments[0].end.position[0]).toBeCloseTo(.8);
-    expect(plan.segments[1].start.position[2]).toBeCloseTo(.2);
+    expect(plan.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "elbow", bendStyle: "sweep", radiusMm: 150, arc: expect.any(Object) })]));
+    expect(plan.segments[0].end.position[0]).toBeCloseTo(.85);
+    expect(plan.segments[1].start.position[2]).toBeCloseTo(.15);
+  });
+
+  it("uses a right-angle electrical elbow when the corner is on a Beam face", () => {
+    const beamCorner = { position: [1, 1, 0] as [number, number, number], attachment: { hostId: "beam", hostKind: "beam" as const, surface: "side-a", normal: [0, 0, -1] as [number, number, number], levelId: "L0", localPosition: [0, 1, 1] as [number, number, number], basis: { u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number] } } };
+    const plan = planRoute("receptacle", 20, "surface", [point(0, 1, 0), beamCorner, point(1, 1, 1)]);
+    expect(plan.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "elbow", bendStyle: "right-angle", arc: undefined })]));
   });
 
   it("rejects a sweep when either tangent is shorter than its clearance", () => {
@@ -245,12 +251,12 @@ describe("Conduit overlay", () => {
 
   it("uses sweep electrical bends across hosts and standard sprinkler bends", () => {
     const electrical = planRoute("receptacle", 20, "surface", [point(0, 1, 0, "wall-a"), point(1, 1, 0, "wall-a"), point(1, 1, 1, "slab-a")]);
-    expect(electrical.fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 200, arc: expect.any(Object) });
+    expect(electrical.fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 150, arc: expect.any(Object) });
     const sprinkler = planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(1, 2, 0), point(1, 2, 1)]);
     expect(sprinkler.fittings[0]).toMatchObject({ bendStyle: "standard" });
   });
 
-  it("uses a 200 mm sweep for every electrical system across the complete host matrix", () => {
+  it("uses a 150 mm sweep for every electrical system across the complete host matrix", () => {
     const wallB = (x: number, y: number, z: number) => ({ ...point(x, y, z, "wall-b"), attachment: { ...point(x, y, z, "wall-b").attachment!, normal: [1, 0, 0] as [number, number, number] } });
     const cases = [
       [floorPoint(0, 0, 0), floorPoint(1, 0, 0), floorPoint(1, 0, 1)],
@@ -263,7 +269,7 @@ describe("Conduit overlay", () => {
     for (const system of ["receptacle", "lighting", "network"] as const) for (const route of cases) {
       const plan = planRoute(system, 20, "surface", route);
       expect(plan.canCommit, `${system}: ${route.map((item) => item.attachment?.hostId).join(" -> ")}`).toBe(true);
-      expect(plan.fittings.filter((fitting) => fitting.fitting === "elbow").every((fitting) => fitting.bendStyle === "sweep" && fitting.radiusMm === 200 && Boolean(fitting.arc))).toBe(true);
+      expect(plan.fittings.filter((fitting) => fitting.fitting === "elbow").every((fitting) => fitting.bendStyle === "sweep" && fitting.radiusMm === 150 && Boolean(fitting.arc))).toBe(true);
     }
   });
 
@@ -272,7 +278,7 @@ describe("Conduit overlay", () => {
     const request: PenetrationRequest = { host: route[1].attachment!, entry: route[1], exit: route[2], direction: [1, 0, 0] };
     const plan = planRoute("receptacle", 20, "surface", route, undefined, [request]);
     expect(plan.fittings.filter((fitting) => fitting.fitting === "elbow")).toHaveLength(1);
-    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 200 });
+    expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 150 });
     expect(plan.penetrations).toMatchObject([{ hostId: "slab-a", entry: { position: [1, 0, 0] }, exit: { position: [2, 0, 0] }, direction: [1, 0, 0] }]);
   });
 
@@ -296,7 +302,7 @@ describe("Conduit overlay", () => {
     const oldHost = { position: [0, 0, 0] as [number, number, number], attachment: { hostId: "floor", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } };
     const wallCorner = { position: [0, 1, 0] as [number, number, number], attachment: { hostId: "wall", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } };
     const wallNext = { ...wallCorner, position: [1, 1, 0] as [number, number, number] };
-    expect(planRoute("receptacle", 20, "surface", [oldHost, wallCorner, wallNext]).fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 200 });
+    expect(planRoute("receptacle", 20, "surface", [oldHost, wallCorner, wallNext]).fittings[0]).toMatchObject({ bendStyle: "sweep", radiusMm: 150 });
   });
 
   it("splits all systems at four metres and inserts physical couplings", () => {
@@ -308,7 +314,7 @@ describe("Conduit overlay", () => {
   });
 
   it("accumulates stock length through a sweep and breaks early at the arc start", () => {
-    const plan = planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(3.9, 1, 0), point(3.9, 1, 2)]);
+    const plan = planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(3.95, 1, 0), point(3.95, 1, 2)]);
     const sweep = plan.fittings.find((fitting) => fitting.bendStyle === "sweep")!;
     const coupling = plan.fittings.find((fitting) => fitting.fitting === "coupling" && fitting.position.position.every((value, axis) => Math.abs(value - sweep.arc!.start[axis]) < 1e-6));
     expect(coupling).toBeDefined();
