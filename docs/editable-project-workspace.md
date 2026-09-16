@@ -6,7 +6,7 @@
 
 项目 JSON 顶层的 `pascalConduitProjectId` 是 Demo 自己的稳定项目身份扩展。旧项目在首次通过 Demo 导出为可写项目时生成一次；后续导入和导出保持不变。它不是文件名，也不是 Pascal Core 字段。
 
-每份 JSON 内容仍计算 SHA-256，作为某一个项目修订版的指纹。内容发生变化会改变 SHA，但不会改变 `pascalConduitProjectId`。项目导出总是下载 `*-export.json` 新文件，绝不尝试覆盖用户导入的源文件或调用原地写入 API。
+每份 JSON 内容仍计算 SHA-256，作为某一个项目修订版的指纹。内容发生变化会改变 SHA，但不会改变 `pascalConduitProjectId`。浏览器安全上下文可用时使用原生 Web Crypto；局域网 HTTP 开发时则使用等价的本地 SHA-256 回退，结果保持相同。项目导出总是下载 `*-export.json` 新文件，绝不尝试覆盖用户导入的源文件或调用原地写入 API。
 
 导出只添加或更新 Demo 明确拥有的顶层身份扩展；未编辑的顶层字段、节点、未知节点种类、插件 payload 与 metadata 会按语义保留。JSON 的空白和属性顺序不属于保留承诺。
 

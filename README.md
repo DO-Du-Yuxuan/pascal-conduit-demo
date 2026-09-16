@@ -64,4 +64,6 @@ npm run build
 npm run dev
 ```
 
+局域网开发请使用 `npm run dev -- --host 0.0.0.0`，再从其他设备访问终端显示的 Network 地址；不应把 `--host` 写成 `-- host`。
+
 浏览器视觉验收由用户执行；自动化流程不启动浏览器、Playwright 或 CUA。

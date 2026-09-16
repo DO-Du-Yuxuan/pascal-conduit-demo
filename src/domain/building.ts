@@ -1,3 +1,5 @@
+import { sha256Bytes } from "./hash";
+
 export type Vec3 = [number, number, number];
 
 export type PascalNode = Record<string, unknown> & { id: string; type: string; parentId?: string | null; visible?: boolean };
@@ -19,4 +21,4 @@ export function parseBuilding(raw: unknown): BuildingScene {
 }
 export function levelForNode(scene: BuildingScene, node: PascalNode): string | null { let cursor: PascalNode | undefined = node; const seen = new Set<string>(); while (cursor && !seen.has(cursor.id)) { seen.add(cursor.id); if (cursor.type === "level") return cursor.id; cursor = typeof cursor.parentId === "string" ? scene.nodes[cursor.parentId] : undefined; } return null; }
 export function levelElevation(scene: BuildingScene, levelId: string | null): number { if (!levelId) return 0; const index = scene.levelIds.indexOf(levelId); return index < 0 ? 0 : index * 3.2; }
-export function sceneFingerprint(raw: ArrayBuffer | Uint8Array): Promise<string> { const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw); const source = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer; return crypto.subtle.digest("SHA-256", source).then((hash) => [...new Uint8Array(hash)].map((value) => value.toString(16).padStart(2, "0")).join("")); }
+export function sceneFingerprint(raw: ArrayBuffer | Uint8Array): Promise<string> { return sha256Bytes(raw instanceof Uint8Array ? raw : new Uint8Array(raw)); }

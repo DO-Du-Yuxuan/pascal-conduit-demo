@@ -67,6 +67,7 @@ import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoS
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
+import { sha256Text } from "./domain/hash";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
 import { makeProjectWritable, migrateOverlayOwnership, overlayBelongsToProject, projectDocument, readProjectIdentity } from "./domain/workspace";
 import { validateBeam } from "./domain/beams";
@@ -282,8 +283,7 @@ function App() {
   };
   const load = async (text: string, name: string, useDemoRequirements = false) => {
     try {
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-      const sha256 = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const sha256 = await sha256Text(text);
       const rawProject = JSON.parse(text) as Record<string, unknown>;
       const importedProject = projectDocument(rawProject, name, sha256);
       const currentProjectId = data ? readProjectIdentity(data.raw) : null;
@@ -428,8 +428,7 @@ function App() {
     const current = projectDocument(data.raw as Record<string, unknown>, file, sourceSha);
     const writable = makeProjectWritable(current);
     const projectText = JSON.stringify(writable.raw, null, 2);
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(projectText));
-    const revisionSha256 = Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    const revisionSha256 = await sha256Text(projectText);
     const exported = { ...writable, revisionSha256 };
     const nextParsed = parseProject(exported.raw);
     nextParsed.diagnostics = [...nextParsed.diagnostics, ...inspectNodes(nextParsed.nodes)];
