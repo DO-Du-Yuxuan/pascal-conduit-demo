@@ -6,7 +6,7 @@ Status columns: `P` parse recognition, `R` raw preservation, `T` transform, `F` 
 
 | Kind | Upstream Schema / Definition | Important variants or enums | Expected strategy | P | R | T | F | I/D/X | Current gap |
 |---|---|---|---|---|---|---|---|---|---|
-| beam (Demo extension) | not Pascal Core | Level parent; Ceiling hosts; effective elevation basis | authorable Demo building node | complete | complete | n/a | gray selectable footprint | complete/complete/complete | precise snapping and post-create editing are deferred |
+| beam (Demo extension) | not Pascal Core | Level parent; Ceiling hosts; effective elevation basis; Overlay device-face evidence | authorable Demo building node | complete | complete | n/a | gray selectable footprint | complete/complete/complete | not a structural analysis, code, or approval model |
 | site | `schema/nodes/site.ts` / `site/definition.ts` | surface polygon, terrain | container | partial | complete | n/a | intentionally hidden | partial/partial/none | none for plan container |
 | building | `schema/nodes/building.ts` / `building/definition.ts` | — | container | partial | complete | n/a | intentionally hidden | partial/partial/none | none for plan container |
 | elevator | `schema/nodes/elevator.ts` / `elevator/definition.ts` FP | shaft solid/glass; door center/left/right | standalone, source-dependent | partial | complete | none | none | partial/partial/none | building-scoped level projection |

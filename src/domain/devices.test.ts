@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
-import { createEmptyOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
+import { createEmptyOverlay, DEVICE_TYPES, parseOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 
@@ -57,6 +57,27 @@ describe("network devices and rooted circuits", () => {
     const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.sprinklerDirection).toBe("upright");
+  });
+
+  it("mounts every device type on exposed Beam faces with face-derived frames and ports", () => {
+    const faces = [
+      { surface: "bottom", normal: [0, -1, 0] as [number, number, number], u: [0, 0, 1] as [number, number, number], v: [1, 0, 0] as [number, number, number] },
+      { surface: "side-a", normal: [0, 0, -1] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number] },
+      { surface: "end-a", normal: [-1, 0, 0] as [number, number, number], u: [0, 0, 1] as [number, number, number], v: [0, 1, 0] as [number, number, number] },
+    ];
+    for (const face of faces) for (const type of DEVICE_TYPES) {
+      const position: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: face.surface, normal: face.normal, levelId: "L0", basis: { u: face.u, v: face.v } } };
+      const device = createNetworkDevice(type, position);
+      expect(device.position.attachment).toMatchObject({ hostId: "beam-a", hostKind: "beam", surface: face.surface });
+      expect(device.frame?.front).toEqual(face.normal);
+      expect(device.frame?.right).toEqual(position.attachment?.basis?.u);
+      expect(device.frame?.up).toEqual(position.attachment?.basis?.v);
+      expect(device.orientation).toEqual(face.normal);
+      expect(device.ports.every((port) => port.position.attachment?.hostId === "beam-a")).toBe(true);
+      expect(parseOverlay({ ...createEmptyOverlay("a", "b"), devices: [device] }).devices[0]).toMatchObject({ position: { attachment: { hostKind: "beam", surface: face.surface } } });
+    }
+    const top: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: "top", normal: [0, 1, 0], levelId: "L0" } };
+    for (const type of DEVICE_TYPES) expect(() => createNetworkDevice(type, top)).toThrow();
   });
 
   it("creates a sensor point without conduit ports or systems", () => {

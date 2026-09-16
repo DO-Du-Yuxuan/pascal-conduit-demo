@@ -17,7 +17,7 @@ import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCa
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, nudgeBeamLaterally, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamClearances, editBeamClearance, snapBeamPoint, type BeamSnap } from "../domain/beam-positioning";
-import { beamRouteDiagnostics, revalidateBeamPenetrations } from "../domain/beam-routing";
+import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments, revalidateBeamPenetrations } from "../domain/beam-routing";
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { projectRayToActiveWall } from "./active-host";
@@ -319,12 +319,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   const deleteSelectedObjects = () => {
     if (selectedBeam) {
-      const hostedDevice = overlay.devices.some((device) => device.position.attachment?.hostId === selectedBeam.id || device.mount?.kind === "host" && device.mount.attachment.hostId === selectedBeam.id);
-      if (hostedDevice) { setStatus("Beam 仍承载设备，不能删除。 "); return; }
+      const hostedDevices = overlay.devices.filter((device) => device.position.attachment?.hostId === selectedBeam.id && isValidBeamAttachment(scene?.nodes ?? {}, device.position));
+      if (hostedDevices.length) { setStatus(`Beam 仍承载 ${hostedDevices.length} 个设备：${hostedDevices.map((device) => device.name || device.id).join("、")}，不能删除。`); return; }
       const current = useOverlayStore.getState(), project = current.project;
       if (!project?.raw.nodes || typeof project.raw.nodes !== "object") return;
       const { [selectedBeam.id]: _removed, ...nodes } = project.raw.nodes as Record<string, unknown>;
-      commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, { ...overlay, penetrations: overlay.penetrations.filter((penetration) => penetration.hostId !== selectedBeam.id) }, true, current.dirty);
+      const penetrations = overlay.penetrations.filter((penetration) => penetration.hostId !== selectedBeam.id), nextOverlay = penetrations.length === overlay.penetrations.length ? overlay : { ...overlay, penetrations };
+      commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, nextOverlay, true, current.dirty || nextOverlay !== current.overlay);
       onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
     }
     const ids = [...new Set(selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
@@ -487,7 +488,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const current = useOverlayStore.getState(), project = current.project;
     if (!project || !project.raw.nodes || typeof project.raw.nodes !== "object") return;
     const nextProject = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as Record<string, unknown>), [result.beam.id]: result.beam } } };
-    commitSharedWorkspace(nextProject, revalidateBeamPenetrations({ ...scene.nodes, [result.beam.id]: result.beam }, current.overlay ?? overlay), true, current.dirty);
+    const editedNodes = { ...scene.nodes, [result.beam.id]: result.beam }, currentOverlay = current.overlay ?? overlay, nextOverlay = revalidateBeamPenetrations(editedNodes, revalidateBeamAttachments(editedNodes, currentOverlay));
+    commitSharedWorkspace(nextProject, nextOverlay, true, current.dirty || nextOverlay !== currentOverlay);
   };
   const onSurfaceMove = (hit: ThreeDSurfaceHit | null) => {
     if (tool === "beam") { setBeamPointer(hit ? { point: hit.point, shiftKey: hit.shiftKey, levelId: hit.attachment.levelId } : null); return; }

@@ -23,15 +23,15 @@ export type DeviceDefinition = {
 };
 
 export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
-  "strong-panel": { label: "强电箱", systems: ["receptacle", "lighting"], hostKinds: ["wall"], sizeMm: [500, 600, 120], portRole: "source", source: true, canInsertMidSegment: false },
-  "weak-panel": { label: "弱电箱", systems: ["network"], hostKinds: ["wall"], sizeMm: [350, 400, 100], portRole: "source", source: true, canInsertMidSegment: false },
-  "fire-inlet": { label: "入户消防水点", systems: ["sprinkler"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [120, 120, 120], portRole: "source", source: true, canInsertMidSegment: false },
-  socket: { label: "插座", systems: ["receptacle"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  luminaire: { label: "灯具", systems: ["lighting"], hostKinds: ["ceiling"], sizeMm: [300, 300, 40], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
-  "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
-  sensor: { label: "传感器", systems: [], hostKinds: ["wall", "slab", "ceiling"], sizeMm: [80, 80, 30], portRole: "sink", source: false, canInsertMidSegment: false },
+  "strong-panel": { label: "强电箱", systems: ["receptacle", "lighting"], hostKinds: ["wall", "beam"], sizeMm: [500, 600, 120], portRole: "source", source: true, canInsertMidSegment: false },
+  "weak-panel": { label: "弱电箱", systems: ["network"], hostKinds: ["wall", "beam"], sizeMm: [350, 400, 100], portRole: "source", source: true, canInsertMidSegment: false },
+  "fire-inlet": { label: "入户消防水点", systems: ["sprinkler"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [120, 120, 120], portRole: "source", source: true, canInsertMidSegment: false },
+  socket: { label: "插座", systems: ["receptacle"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  luminaire: { label: "灯具", systems: ["lighting"], hostKinds: ["ceiling", "beam"], sizeMm: [300, 300, 40], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  "network-outlet": { label: "网络面板", systems: ["network"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
+  "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall", "beam"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
+  sensor: { label: "传感器", systems: [], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [80, 80, 30], portRole: "sink", source: false, canInsertMidSegment: false },
 };
 
 export const systemCanBranch = (system: RoutingSystem) => system !== "network";
@@ -57,10 +57,16 @@ function sourcePortPosition(position: RoutePoint, index: number): RoutePoint {
   return { ...clonePoint(position), position: position.position.map((value, axis) => value + u[axis] * offsetU + v[axis] * offsetV) as Vec3 };
 }
 
-function deviceFrame(position: RoutePoint, tangent?: Vec3): DeviceFrame {
+export function deviceFrame(position: RoutePoint, tangent?: Vec3): DeviceFrame {
   const hostFront = position.attachment?.hostKind === "wall" ? position.attachment.normal : undefined;
   const fallbackFront = tangent && Math.abs(tangent[1]) < .96 ? normalize(cross(tangent, [0, 1, 0])) : [0, 0, 1] as Vec3;
   const front = normalize(hostFront ?? position.attachment?.normal ?? fallbackFront);
+  const basis = position.attachment?.hostKind === "beam" ? position.attachment.basis : undefined;
+  if (basis) {
+    const upCandidate = subtract(basis.v, scale(front, dot(basis.v, front)));
+    const rightCandidate = subtract(basis.u, scale(front, dot(basis.u, front)));
+    if (Math.hypot(...upCandidate) > 1e-6 && Math.hypot(...rightCandidate) > 1e-6) return { front, up: normalize(upCandidate), right: normalize(rightCandidate) };
+  }
   const preferredUp: Vec3 = [0, 1, 0];
   const projectedUp = subtract(preferredUp, scale(front, dot(preferredUp, front)));
   const up = Math.hypot(...projectedUp) > 1e-6 ? normalize(projectedUp) : normalize(cross(front, [1, 0, 0]));
@@ -88,17 +94,18 @@ function boxPorts(id: string, position: RoutePoint, frame: DeviceFrame, sizeMm: 
 
 function luminairePorts(id: string, position: RoutePoint, frame: DeviceFrame, sizeMm: [number, number, number], system: RoutingSystem): NetworkPort[] {
   const radius = sizeMm[0] / 2000;
-  // A luminaire is always a horizontal disk.  Its service holes belong to
-  // that disk plane (world X/Z), never to the disk normal/world Y.
-  const horizontalRight = normalize([frame.right[0], 0, frame.right[2]]);
-  const horizontalForward = normalize(cross([0, 1, 0], horizontalRight));
-  return [horizontalRight, scale(horizontalRight, -1), horizontalForward, scale(horizontalForward, -1)].map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
+  // A floating or Ceiling luminaire remains a horizontal disk. On a Beam it
+  // instead follows the selected exposed face's frame, including side/end faces.
+  const directions = position.attachment?.hostKind === "beam"
+    ? [frame.right, scale(frame.right, -1), frame.up, scale(frame.up, -1)]
+    : (() => { const horizontalRight = normalize([frame.right[0], 0, frame.right[2]]), horizontalForward = normalize(cross([0, 1, 0], horizontalRight)); return [horizontalRight, scale(horizontalRight, -1), horizontalForward, scale(horizontalForward, -1)]; })();
+  return directions.map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
 }
 
 function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number] } = {}): NetworkDevice {
   const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind, sizeMm = options.sizeMm ?? definition.sizeMm;
-  if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind))) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
-  const id = nextId(deviceType), frame = deviceFrame(position, options.tangent), orientation = deviceType === "sprinkler-head" ? [0, 1, 0] as Vec3 : frame.front;
+  if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind) || hostKind === "beam" && position.attachment?.surface === "top")) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
+  const id = nextId(deviceType), frame = deviceFrame(position, options.tangent), orientation = frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
     if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, systemIndex), orientation, system, "source")];
     if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, sizeMm, system, definition.portRole);

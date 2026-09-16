@@ -86,12 +86,58 @@ const exposedFace = (point: RoutePoint, volume: BeamVolume) => {
   if (!attachment || attachment.hostKind !== "beam" || attachment.hostId !== volume.beam.id || attachment.surface === "top") return false;
   const p = local(volume, point.position), tolerance = .006;
   const face = attachment.surface;
-  return (face === "bottom" && Math.abs(p[1] - volume.bottom) < tolerance)
-    || (face === "side-a" && Math.abs(p[0] + volume.halfWidth) < tolerance)
-    || (face === "side-b" && Math.abs(p[0] - volume.halfWidth) < tolerance)
-    || (face === "end-a" && Math.abs(p[2] + volume.halfLength) < tolerance)
-    || (face === "end-b" && Math.abs(p[2] - volume.halfLength) < tolerance);
+  const withinWidth = Math.abs(p[0]) <= volume.halfWidth + tolerance, withinLength = Math.abs(p[2]) <= volume.halfLength + tolerance, withinHeight = p[1] >= volume.bottom - tolerance && p[1] <= volume.top + tolerance;
+  return (face === "bottom" && withinWidth && withinLength && Math.abs(p[1] - volume.bottom) < tolerance)
+    || (face === "side-a" && withinLength && withinHeight && Math.abs(p[0] + volume.halfWidth) < tolerance)
+    || (face === "side-b" && withinLength && withinHeight && Math.abs(p[0] - volume.halfWidth) < tolerance)
+    || (face === "end-a" && withinWidth && withinHeight && Math.abs(p[2] + volume.halfLength) < tolerance)
+    || (face === "end-b" && withinWidth && withinHeight && Math.abs(p[2] - volume.halfLength) < tolerance);
 };
+
+/** Whether retained Overlay evidence still touches one exposed physical Beam face. */
+export function isValidBeamAttachment(nodes: Record<string, NodeData>, point: RoutePoint): boolean {
+  const attachment = point.attachment;
+  if (!attachment || attachment.hostKind !== "beam") return false;
+  const volume = validBeamVolumes(nodes).find((item) => item.beam.id === attachment.hostId);
+  return Boolean(volume && exposedFace(point, volume));
+}
+
+const detachInvalidBeamPoint = (nodes: Record<string, NodeData>, point: RoutePoint): RoutePoint => point.attachment?.hostKind === "beam" && !isValidBeamAttachment(nodes, point)
+  ? { ...point, attachment: undefined }
+  : point;
+
+/**
+ * Beam edits never move devices or conduit. They only remove attachment
+ * evidence that no longer reaches the edited physical face, leaving the
+ * retained point explicitly unhosted for the user to resolve.
+ */
+export function revalidateBeamAttachments(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument): ConduitOverlayDocument {
+  let changed = false;
+  const point = (candidate: RoutePoint) => {
+    const next = detachInvalidBeamPoint(nodes, candidate);
+    changed ||= next !== candidate;
+    return next;
+  };
+  const devices = overlay.devices.map((device) => {
+    const position = point(device.position), ports = device.ports.map((port) => ({ ...port, position: point(port.position) }));
+    const mount = device.mount?.kind === "host" && device.mount.attachment.hostKind === "beam" && !isValidBeamAttachment(nodes, device.position) ? undefined : device.mount;
+    changed ||= position !== device.position || ports.some((port, index) => port.position !== device.ports[index].position) || mount !== device.mount;
+    return position === device.position && ports.every((port, index) => port.position === device.ports[index].position) && mount === device.mount ? device : { ...device, position, ports, mount };
+  });
+  const segments = overlay.segments.map((segment) => {
+    const start = point(segment.start), end = point(segment.end);
+    return start === segment.start && end === segment.end ? segment : { ...segment, start, end };
+  });
+  const fittings = overlay.fittings.map((fitting) => {
+    const position = point(fitting.position), ports = fitting.ports.map((port) => ({ ...port, position: point(port.position) }));
+    return position === fitting.position && ports.every((port, index) => port.position === fitting.ports[index].position) ? fitting : { ...fitting, position, ports };
+  });
+  const junctionBoxes = overlay.junctionBoxes.map((box) => {
+    const position = point(box.position), ports = box.ports.map((port) => ({ ...port, position: point(port.position) }));
+    return position === box.position && ports.every((port, index) => port.position === box.ports[index].position) ? box : { ...box, position, ports };
+  });
+  return changed ? { ...overlay, devices, segments, fittings, junctionBoxes } : overlay;
+}
 
 const faceName = (point: RoutePoint, volume: BeamVolume) => exposedFace(point, volume) ? point.attachment!.surface : null;
 const outwardDeparture = (from: RoutePoint, toward: RoutePoint, volume: BeamVolume) => {

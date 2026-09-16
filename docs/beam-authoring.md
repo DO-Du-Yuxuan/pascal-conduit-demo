@@ -43,3 +43,11 @@ The existing Tab workflow also serves Beams: it freezes the incoming conduit dir
 When a Beam is edited, the Overlay revalidates its explicit passages against the new physical prism; holes whose exit no longer lies on the frozen ray or whose linked route has disappeared are removed, leaving any newly ordinary Beam intersection to the normal red collision rule. This is a demonstrative construction record, not structural approval.
 
 The governing durable choice is [ADR 0003](adr/0003-author-demo-beams-in-project-json.md).
+
+## Devices and safe Beam changes
+
+Every current Demo device type may mount on a Beam bottom, side, or end face; the ceiling-adjacent top remains unavailable. Its Overlay attachment retains the Beam id, face, normal, local basis and Level, so export/import preserves the authored relationship. Device frames, presentation, and ports use that face evidence (including a luminaire on a Beam side or end), rather than assuming a horizontal Ceiling plane.
+
+Editing a Beam is one workspace transaction. It preserves every mounted device, port, conduit point, and connected route at its existing world coordinate. Attachments that no longer touch an exposed Beam face are cleared rather than followed, stretched, rerouted, or locally reconnected; valid attachments remain unchanged. A Beam with one or more still-valid mounted devices cannot be deleted and names those devices in the rejection. Once those hosts are moved or deleted, Beam deletion keeps the remaining conduit geometry and removes only that Beam's orphaned penetrations.
+
+This is authoring and construction-record evidence only. The Demo does not determine member loads, reinforcement, safe hole zones, code compliance, or structural approval.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBeam } from "./beams";
-import { beamRouteDiagnostics, projectBeamPenetrationExit, revalidateBeamPenetrations, validBeamVolumes } from "./beam-routing";
+import { beamRouteDiagnostics, projectBeamPenetrationExit, revalidateBeamAttachments, revalidateBeamPenetrations, validBeamVolumes } from "./beam-routing";
+import { createNetworkDevice } from "./devices";
 import { createEmptyOverlay } from "./overlay";
 import { planRoute } from "./routing";
 import type { RoutePoint } from "./overlay";
@@ -61,5 +62,24 @@ describe("Beam routing obstacle", () => {
     expect(revalidateBeamPenetrations(nodes, overlay).penetrations).toHaveLength(1);
     expect(revalidateBeamPenetrations({ ...nodes, beam: { ...beam, start: [3, 0], end: [4, 0] } }, overlay).penetrations).toHaveLength(0);
     expect(revalidateBeamPenetrations({ ...base }, overlay).penetrations).toHaveLength(0);
+  });
+  it("unhosts stale Beam devices and conduit points without changing their world geometry", () => {
+    const device = createNetworkDevice("socket", onBottom(0, 0));
+    const segment = { id: "route", type: "conduit-segment" as const, system: "receptacle" as const, diameterMm: 20, start: onBottom(.5, 0), end: free(.5, 2, 0), createdAt: "now" };
+    const overlay = { ...createEmptyOverlay("a", "b"), devices: [device], segments: [segment] };
+    expect(revalidateBeamAttachments(nodes, overlay)).toBe(overlay);
+    const movedNodes = { ...nodes, beam: { ...beam, start: [3, 0], end: [4, 0] } };
+    const revalidated = revalidateBeamAttachments(movedNodes, overlay);
+    expect(revalidated.devices[0]).toMatchObject({ position: { position: device.position.position, attachment: undefined }, mount: undefined });
+    expect(revalidated.devices[0].ports.map((port) => port.position.position)).toEqual(device.ports.map((port) => port.position.position));
+    expect(revalidated.segments[0]).toMatchObject({ start: { position: segment.start.position, attachment: undefined }, end: segment.end });
+  });
+  it("unhosts a point outside a still-valid Beam face after a length edit", () => {
+    const device = createNetworkDevice("sensor", onBottom(.8, 0));
+    const overlay = { ...createEmptyOverlay("a", "b"), devices: [device] };
+    const shortened = { ...nodes, beam: { ...beam, end: [0, 0] } };
+    expect(validBeamVolumes(shortened)).toHaveLength(1);
+    const revalidated = revalidateBeamAttachments(shortened, overlay);
+    expect(revalidated.devices[0]).toMatchObject({ position: { position: device.position.position, attachment: undefined }, mount: undefined });
   });
 });
