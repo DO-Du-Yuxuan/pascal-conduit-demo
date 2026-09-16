@@ -12,7 +12,7 @@ import { isFrontmostSurfaceEvent } from "./surface-picking";
 import { subtractBeamPenetrations, subtractHorizontalChases, subtractWallChases } from "./chase-geometry";
 import { validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 
-export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean };
+export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean; ctrlKey?: boolean };
 type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; beamPreview?: BeamNode | null; beamEditing?: boolean; onBeamDrag?: (id: string, edit: BeamEdit, commit: boolean) => void; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
 type Point = [number, number, number];
 const EMPTY_CHASES: SurfaceChase[] = [];
@@ -81,7 +81,7 @@ function Beam({ node, selected, editable = true, onSelect, levelY, preview = fal
     ];
     const face = candidates.sort((a, b) => a.distance - b.distance)[0];
     if (!face || Math.abs(p[1] - (levelY + top)) < face.distance) return null; // ceiling-adjacent top is never a conduit host
-    return { point: p, attachment: { hostId: node.id, hostKind: "beam", surface: face.surface, normal: face.normal, levelId: node.parentId ?? null, localPosition: [across, p[1] - levelY, along], basis: { u: face.u, v: face.v } }, shiftKey: event.nativeEvent.shiftKey };
+    return { point: p, attachment: { hostId: node.id, hostKind: "beam", surface: face.surface, normal: face.normal, levelId: node.parentId ?? null, localPosition: [across, p[1] - levelY, along], basis: { u: face.u, v: face.v } }, shiftKey: event.nativeEvent.shiftKey, ctrlKey: event.nativeEvent.ctrlKey || event.nativeEvent.metaKey };
   };
   const handle = (kind: "start" | "end", point: Point) => selected && editable && !preview ? <mesh data-beam-handle={kind} aria-label={`Beam ${kind} handle`} position={point} onPointerDown={(event) => { event.stopPropagation(); setDragging(kind); (event.currentTarget as Element).setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (dragging === kind) onDrag?.({ [kind]: dragPoint(event) }, false); }} onPointerUp={(event) => { if (dragging === kind) { onDrag?.({ [kind]: dragPoint(event) }, true); setDragging(null); } }}><sphereGeometry args={[Math.max(.07, width * .35), 12, 8]} /><meshBasicMaterial color="#f59e0b" /></mesh> : null;
   const y = levelY + top - height / 2;
@@ -124,7 +124,7 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
     const surface = attachment.hostKind === "ceiling"
       ? normal[1] < 0 ? "ceiling-face" : "ceiling-back"
       : normal[1] < 0 ? "bottom" : "top";
-    return { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, surface, normal, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey };
+    return { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, surface, normal, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey, ctrlKey: event.nativeEvent.ctrlKey || event.nativeEvent.metaKey };
   };
   return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
     <primitive object={geometry} attach="geometry" />
@@ -187,7 +187,7 @@ function Wall({ node, hostId, levelId, openings, chases = EMPTY_CHASES, penetrat
     const normal: Vec3 = front ? frontNormal : [-frontNormal[0], 0, -frontNormal[2]];
     const declaredSide = front ? node.frontSide : node.backSide;
     const wallSide = declaredSide === "exterior" ? "exterior" : "interior";
-    return { point: p, attachment: { hostId, hostKind: "wall", surface: wallSide, normal, levelId, localPosition: [(p[0] - start[0]) * tangent[0] + (p[2] - start[2]) * tangent[2], p[1] - y, (p[0] - start[0]) * normal[0] + (p[2] - start[2]) * normal[2]], basis: { u: tangent, v: [0, 1, 0] }, curveT, wallSide }, shiftKey: event.nativeEvent.shiftKey };
+    return { point: p, attachment: { hostId, hostKind: "wall", surface: wallSide, normal, levelId, localPosition: [(p[0] - start[0]) * tangent[0] + (p[2] - start[2]) * tangent[2], p[1] - y, (p[0] - start[0]) * normal[0] + (p[2] - start[2]) * normal[2]], basis: { u: tangent, v: [0, 1, 0] }, curveT, wallSide }, shiftKey: event.nativeEvent.shiftKey, ctrlKey: event.nativeEvent.ctrlKey || event.nativeEvent.metaKey };
   };
   return <group position={[(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2]} rotation={[0, -Math.atan2(end[2] - start[2], end[0] - start[0]), 0]}>
     {parts.map((part, index) => <WallPartMesh key={index} diagnosticKey={`${hostId}:${curveT ?? "line"}:${index}`} part={part} start={start} end={end} wallY={y} thickness={thickness} chases={chases} selected={selected} translucent={wallMode === "translucent"} hit={hit} onSelect={onSelect} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />)}

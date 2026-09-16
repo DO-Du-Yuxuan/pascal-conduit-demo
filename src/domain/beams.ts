@@ -1,7 +1,7 @@
 import type { NodeData } from "../types";
 
 export type BeamElevation = { meters: number; basis: "explicit-ceiling-height" | "derived-default-2700mm" };
-export type BeamNode = NodeData & { type: "beam"; name: string; start: [number, number]; end: [number, number]; width: number; height: number; ceilingIds: string[]; effectiveCeilingElevation: BeamElevation };
+export type BeamNode = NodeData & { type: "beam"; name: string; start: [number, number]; end: [number, number]; width: number; height: number; ceilingIds: string[]; effectiveCeilingElevation: BeamElevation; explicitCeilingCrossing?: true };
 export type BeamValidation = { valid: boolean; beam: BeamNode | null; diagnostics: string[] };
 
 export const DEFAULT_BEAM_WIDTH_METERS = .3;
@@ -80,20 +80,23 @@ export function validateBeam(raw: unknown, nodes: Record<string, NodeData>): Bea
     if (new Set(ceilingIds).size !== ceilingIds.length || ceilingIds.length !== intersectedIds.size || ceilingIds.some((id) => !intersectedIds.has(id))) diagnostics.push("Beam 必须完整且唯一地记录与其轴线相交、位于同一 Level 的 Ceiling。");
     if (!hosts.length) diagnostics.push("Beam 轴线必须与至少一个 Ceiling 相交。");
     const elevations = new Set(hosts.map((host) => host.elevation.meters));
-    if (elevations.size > 1) diagnostics.push("Beam 不能跨越不同有效标高的 Ceiling。");
-    if (new Set(hosts.map((host) => host.elevation.basis)).size > 1) diagnostics.push("Beam 不能混用明确和推导的 Ceiling 标高依据。");
-    const resolved = hosts[0]?.elevation;
+    if (elevations.size > 1 && value.explicitCeilingCrossing !== true) diagnostics.push("Beam 不能跨越不同有效标高的 Ceiling。");
+    if (new Set(hosts.map((host) => host.elevation.basis)).size > 1 && value.explicitCeilingCrossing !== true) diagnostics.push("Beam 不能混用明确和推导的 Ceiling 标高依据。");
+    const source = value.explicitCeilingCrossing ? resolveBeamCeilings(nodes, parentId, start!, start!)[0] : hosts[0];
+    const resolved = source?.elevation;
     if (resolved && (resolved.meters !== elevation!.meters || resolved.basis !== elevation!.basis)) diagnostics.push("Beam 记录的 Ceiling 标高或依据与宿主 Ceiling 不一致。");
   }
   if (diagnostics.length) return { valid: false, beam: null, diagnostics };
   return { valid: true, beam: value as BeamNode, diagnostics: [] };
 }
 
-export function createBeam(nodes: Record<string, NodeData>, input: { id: string; name: string; levelId: string; start: [number, number]; end: [number, number]; width?: number; height?: number }): BeamValidation {
+export function createBeam(nodes: Record<string, NodeData>, input: { id: string; name: string; levelId: string; start: [number, number]; end: [number, number]; width?: number; height?: number; explicitCeilingCrossing?: boolean }): BeamValidation {
   const hosts = resolveBeamCeilings(nodes, input.levelId, input.start, input.end), elevations = [...new Set(hosts.map((host) => host.elevation.meters))];
   if (!hosts.length) return { valid: false, beam: null, diagnostics: ["Beam 必须与至少一个 Ceiling 相交。"] };
-  if (elevations.length !== 1) return { valid: false, beam: null, diagnostics: ["Beam 不能跨越不同有效标高的 Ceiling。"] };
-  if (new Set(hosts.map((host) => host.elevation.basis)).size !== 1) return { valid: false, beam: null, diagnostics: ["Beam 不能混用明确和推导的 Ceiling 标高依据。"] };
-  const elevation = hosts[0]!.elevation, beam: BeamNode = { id: input.id, type: "beam", parentId: input.levelId, name: input.name, start: input.start, end: input.end, width: input.width ?? DEFAULT_BEAM_WIDTH_METERS, height: input.height ?? DEFAULT_BEAM_HEIGHT_METERS, ceilingIds: hosts.map((host) => host.id), effectiveCeilingElevation: elevation };
+  if (elevations.length !== 1 && !input.explicitCeilingCrossing) return { valid: false, beam: null, diagnostics: ["Beam 不能跨越不同有效标高的 Ceiling。"] };
+  if (new Set(hosts.map((host) => host.elevation.basis)).size !== 1 && !input.explicitCeilingCrossing) return { valid: false, beam: null, diagnostics: ["Beam 不能混用明确和推导的 Ceiling 标高依据。"] };
+  const source = input.explicitCeilingCrossing ? resolveBeamCeilings(nodes, input.levelId, input.start, input.start)[0] : hosts[0];
+  if (!source) return { valid: false, beam: null, diagnostics: ["Beam 起点必须位于有效 Ceiling。"] };
+  const elevation = source.elevation, beam: BeamNode = { id: input.id, type: "beam", parentId: input.levelId, name: input.name, start: input.start, end: input.end, width: input.width ?? DEFAULT_BEAM_WIDTH_METERS, height: input.height ?? DEFAULT_BEAM_HEIGHT_METERS, ceilingIds: hosts.map((host) => host.id), effectiveCeilingElevation: elevation, ...(input.explicitCeilingCrossing ? { explicitCeilingCrossing: true } : {}) };
   return validateBeam(beam, { ...nodes, [beam.id]: beam });
 }

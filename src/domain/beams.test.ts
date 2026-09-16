@@ -6,6 +6,10 @@ describe("Demo Beam", () => {
   it("creates a valid angled Beam from same-elevation Ceiling hosts", () => { const result = createBeam(nodes, { id: "beam-1", name: "梁 1", levelId: "level", start: [0, 1], end: [3, 3] }); expect(result).toMatchObject({ valid: true, beam: { width: .3, height: .5, effectiveCeilingElevation: { meters: 3, basis: "explicit-ceiling-height" } } }); });
   it("retains derived elevation evidence", () => { const result = createBeam(nodes, { id: "beam-1", name: "梁 1", levelId: "level", start: [5, 1], end: [7, 3] }); expect(result.beam?.effectiveCeilingElevation).toEqual({ meters: DERIVED_CEILING_ELEVATION_METERS, basis: "derived-default-2700mm" }); });
   it("rejects hostless and conflicting-height spans without creating a Beam", () => { expect(createBeam(nodes, { id: "none", name: "梁", levelId: "level", start: [10, 0], end: [11, 0] }).valid).toBe(false); expect(createBeam(nodes, { id: "mixed", name: "梁", levelId: "level", start: [1, 1], end: [7, 1] }).diagnostics).toContain("Beam 不能跨越不同有效标高的 Ceiling。"); });
+  it("permits only an explicit elevation crossing and retains the start Ceiling elevation", () => {
+    const result = createBeam(nodes, { id: "cross", name: "跨越梁", levelId: "level", start: [1, 1], end: [7, 1], explicitCeilingCrossing: true });
+    expect(result).toMatchObject({ valid: true, beam: { explicitCeilingCrossing: true, effectiveCeilingElevation: { meters: 3, basis: "explicit-ceiling-height" } } });
+  });
   it("permits gaps but rejects mixed elevation evidence and incomplete imported host identities", () => {
     const { derived: _derived, ...gapBase } = nodes, gapNodes = { ...gapBase, same: { id: "same", type: "ceiling", parentId: "level", height: 3, polygon: [[6, 0], [8, 0], [8, 4], [6, 4]] } };
     const result = createBeam(gapNodes, { id: "gap", name: "梁", levelId: "level", start: [1, 1], end: [7, 1] });

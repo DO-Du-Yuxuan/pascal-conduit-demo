@@ -30,7 +30,7 @@ type ViewPreset = ThreeDViewPreset;
 type LevelMode = ThreeDLevelMode;
 type WallMode = ThreeDWallMode;
 type Tool = ConduitTool | "beam";
-type BeamPointer = { point: [number, number, number]; shiftKey: boolean; levelId?: string | null };
+type BeamPointer = { point: [number, number, number]; shiftKey: boolean; ctrlKey?: boolean; levelId?: string | null };
 type BranchStart = { segmentId: string; point: RoutePoint };
 type DeviceRouteStart = { circuit: Circuit; port: NetworkPort; overlay: ConduitOverlayDocument };
 type AppliedConstruction = { surfaceChases: SurfaceChase[]; penetrations: Penetration[] };
@@ -292,7 +292,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") { chooseTool("draw"); setStatus("已切换到画管模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "d") { chooseTool("point"); setStatus("已切换到点位模式。"); return; }
       if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") { if (controlBinding) return; event.preventDefault(); deleteSelectedObjects(); return; }
-      if (event.key === "Shift" && !event.repeat) { event.preventDefault(); orthogonalDirection.current = null; setOrthogonal((value) => !value); return; }
+      if (tool === "beam" && event.key === "Shift" && !event.repeat) { event.preventDefault(); orthogonalDirection.current = null; setOrthogonal((value) => !value); setStatus("Orthogonal lock 已切换。 "); return; }
       if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
       if (event.key === "Escape") { if (controlBinding) { cancelControlBinding(); return; } if (tool === "select") { selectWhileBrowsing(null); return; } if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; } if (penetrationSession) { setPenetrationSession(null); setCursor(null); return; } setBranchStart(null); setBranchEnd(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
       if (event.key === "Enter") { event.preventDefault(); if (controlBinding?.kind === "edit") { finishControlGroupEdit(); return; } finishCurrentRoute("confirmed-only"); }
@@ -472,7 +472,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setStatus(`${first?.message ?? "当前路径无效。"}${ids}`);
   }, [previewPlan?.canCommit, previewPlan?.diagnostics[0]?.code, previewPlan?.diagnostics[0]?.objectIds?.join(":")]);
   const beamCandidate = (start: ThreeDSurfaceHit, hit: BeamPointer, id = "beam-preview") => scene && start.attachment.hostKind === "ceiling"
-    ? (() => { const levelId = start.attachment.levelId ?? "", rawStart: [number, number] = [start.point[0], start.point[2]], constrainedEnd = constrainBeamEnd(rawStart, [hit.point[0], hit.point[2]], hit.shiftKey), snappedStart = snapBeamPoint(scene.nodes, levelId, rawStart), snappedEnd = snapBeamPoint(scene.nodes, levelId, constrainedEnd); return createBeam(scene.nodes, { id, name: "预览梁", levelId, start: snappedStart?.point ?? rawStart, end: snappedEnd?.point ?? constrainedEnd, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000 }); })()
+    ? (() => { const levelId = start.attachment.levelId ?? "", rawStart: [number, number] = [start.point[0], start.point[2]], constrainedEnd = constrainBeamEnd(rawStart, [hit.point[0], hit.point[2]], orthogonal), snappedStart = snapBeamPoint(scene.nodes, levelId, rawStart), snappedEnd = snapBeamPoint(scene.nodes, levelId, constrainedEnd); return createBeam(scene.nodes, { id, name: "预览梁", levelId, start: snappedStart?.point ?? rawStart, end: snappedEnd?.point ?? constrainedEnd, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000, explicitCeilingCrossing: hit.ctrlKey }); })()
     : null;
   const commitBeam = (end: BeamPointer) => {
     if (!beamStart) return;
@@ -502,7 +502,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commitSharedWorkspace(nextProject, nextOverlay, true, current.dirty || nextOverlay !== currentOverlay);
   };
   const onSurfaceMove = (hit: ThreeDSurfaceHit | null) => {
-    if (tool === "beam") { setBeamPointer(hit ? { point: hit.point, shiftKey: hit.shiftKey, levelId: hit.attachment.levelId } : null); return; }
+    if (tool === "beam") { setBeamPointer(hit ? { point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey, levelId: hit.attachment.levelId } : null); return; }
     if (!hit) { rawSurfaceHit.current = null; surfaceOccluded.current = true; if (!worldAxis) scheduleCursor(null); return; }
     surfaceOccluded.current = false;
     rawSurfaceHit.current = hit;
@@ -524,7 +524,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
     if (tool === "beam") {
       if (!beamStart) { if (hit.attachment.hostKind !== "ceiling" || !hit.attachment.levelId) { setStatus("Beam 必须从 Ceiling 下表面开始。 "); return; } setBeamStart(hit); setBeamPointer(hit); setStatus("已确定梁起点；移动鼠标预览，第二次单击创建。Shift 约束水平正交。 "); return; }
-      commitBeam({ point: hit.point, shiftKey: hit.shiftKey }); return;
+      commitBeam({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
     }
     if (tool === "point") { try { commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, routePoint(hit))] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;

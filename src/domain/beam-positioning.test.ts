@@ -9,6 +9,7 @@ describe("Beam physical positioning", () => {
     expect(snapBeamPoint(nodes, "level", [3, .13])?.target).toMatchObject({ id: "left", kind: "wall" });
     expect(snapBeamPoint(nodes, "level", [6.15, 2])?.target).toMatchObject({ id: "column", kind: "column" });
     expect(snapBeamPoint(nodes, "level", [3, 1], .05)).toBeNull();
+    expect(snapBeamPoint(nodes, "level", [3, -1.9], .15)?.target).toMatchObject({ id: "ceiling", kind: "ceiling-edge" });
   });
   it("uses tessellated physical curved-Wall faces and existing angled Beam faces, never their centrelines", () => {
     const curved = { ...nodes, curve: { id: "curve", type: "wall", parentId: "level", start: [0, 6], end: [4, 6], curveOffset: 1, thickness: .2 } };

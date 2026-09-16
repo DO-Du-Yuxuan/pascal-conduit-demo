@@ -2,7 +2,7 @@ import type { NodeData } from "../types";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
 import { editBeam, quantizeBeamMeters, validateBeam, type BeamNode, type BeamValidation } from "./beams";
 
-export type BeamSurfaceKind = "wall" | "column" | "beam";
+export type BeamSurfaceKind = "wall" | "column" | "beam" | "ceiling-edge";
 export type BeamSurface = { id: string; kind: BeamSurfaceKind; face: "side-a" | "side-b" | "end-a" | "end-b"; start: [number, number]; end: [number, number] };
 export type BeamSnap = { point: [number, number]; distance: number; target: BeamSurface };
 export type BeamClearanceEdge = "left" | "right" | "start" | "end";
@@ -60,6 +60,10 @@ export const beamAuthoringSurfaces = (nodes: Record<string, NodeData>, levelId: 
   if (node.type === "wall") return wallSurfaces(node);
   if (node.type === "column") return columnSurfaces(node);
   if (node.type === "beam") { const valid = validateBeam(node, nodes).beam; return valid ? beamSurfaces(valid) : []; }
+  if (node.type === "ceiling" && Array.isArray(node.polygon)) {
+    const polygon = node.polygon.filter(point) as [number, number][];
+    return polygon.length >= 3 ? polygon.map((start, index) => ({ id: node.id, kind: "ceiling-edge" as const, face: "side-a" as const, start, end: polygon[(index + 1) % polygon.length]! })) : [];
+  }
   return [];
 });
 export function snapBeamPoint(nodes: Record<string, NodeData>, levelId: string, candidate: [number, number], tolerance = .15, exceptId?: string): BeamSnap | null {
