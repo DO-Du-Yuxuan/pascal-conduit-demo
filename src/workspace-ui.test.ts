@@ -162,4 +162,13 @@ describe("conduit workspace UI contract", () => {
     expect(pascalSceneSource).toContain("onPointerMove");
     expect(source).not.toContain("Beam 属性（3D）");
   });
+
+  it("keeps physical Beam snap identities and clearance inputs in the transient 3D workflow", () => {
+    expect(threeDSource).toContain("snapBeamPoint");
+    expect(threeDSource).toContain("梁表面捕捉");
+    expect(threeDSource).toContain("snapBeamEdit");
+    expect(threeDSource).toContain("selectedBeamClearances");
+    expect(threeDSource).toContain('aria-label={`Beam ${clearance.edge} clearance`}');
+    expect(source).not.toContain("Beam left clearance");
+  });
 });

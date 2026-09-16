@@ -24,4 +24,10 @@ Selecting a Beam in 3D exposes independent endpoint handles plus direct fields f
 
 All coordinates and dimensions are quantized to 5 mm, including negative positions and angled members. Invalid hostless or contradictory-elevation candidates remain transient and do not change project JSON, Overlay, dirty state, or history. Normal intersections with Walls, Columns, and other Beams remain legal building geometry and never create conduit collision or penetration data. 2D remains inspection-only.
 
+## Physical positioning references
+
+Beam authoring snaps only to exposed physical surfaces of Walls (including supported curved-wall segments), Columns, and existing Beams. It never offers a Wall/Column centreline, Beam centreline, or a synthetic endpoint target. The transient 3D cue names the selected target kind and id, and snaps the Beam axis point to the physical face rather than halfway into a solid.
+
+Selected Beams show only reliable physical-face witnesses: left/right dimensions look for the nearest parallel Wall or Beam face, while start/end dimensions look for the first Wall or Beam face along the Beam axis. Missing witnesses are omitted. These dimensions recompute for preview geometry, including angled endpoint changes; their direct millimetre fields commit at 5 mm precision. A side-clearance edit translates the complete Beam, while an end-clearance edit moves only that endpoint. These selected-only dimensions are not written to project JSON or Overlay and never appear in 2D.
+
 The governing durable choice is [ADR 0003](adr/0003-author-demo-beams-in-project-json.md).

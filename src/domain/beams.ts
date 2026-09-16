@@ -37,9 +37,10 @@ export const constrainBeamEnd = (start: [number, number], end: [number, number],
 };
 export const quantizeBeamMeters = (value: number) => Math.round(value / BEAM_EDIT_INCREMENT_METERS) * BEAM_EDIT_INCREMENT_METERS;
 
-export type BeamEdit = { name?: string; start?: [number, number]; end?: [number, number]; width?: number; height?: number };
+export type BeamEdit = { name?: string; start?: [number, number]; end?: [number, number]; width?: number; height?: number; /** A physical face supplies the already 5 mm-parameterized plan point. */ surfaceResolved?: boolean };
 export function editBeam(nodes: Record<string, NodeData>, beam: BeamNode, edit: BeamEdit): BeamValidation {
-  const start = (edit.start ?? beam.start).map(quantizeBeamMeters) as [number, number], end = (edit.end ?? beam.end).map(quantizeBeamMeters) as [number, number];
+  const resolvePlan = edit.surfaceResolved ? (value: number) => value : quantizeBeamMeters;
+  const start = (edit.start ?? beam.start).map(resolvePlan) as [number, number], end = (edit.end ?? beam.end).map(resolvePlan) as [number, number];
   const width = quantizeBeamMeters(edit.width ?? beam.width), height = quantizeBeamMeters(edit.height ?? beam.height);
   return createBeam(nodes, { id: beam.id, name: edit.name?.trim() || beam.name, levelId: beam.parentId!, start, end, width, height });
 }
