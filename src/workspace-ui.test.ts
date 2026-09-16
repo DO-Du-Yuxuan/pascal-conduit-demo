@@ -135,4 +135,15 @@ describe("conduit workspace UI contract", () => {
     expect(pascalSceneSource).toContain('raycast={() => null}');
     expect(pascalSceneSource).toContain("<MeshEdges geometry={geometry}");
   });
+
+  it("keeps Beam authoring isolated from Overlay editing while exposing both view layers", () => {
+    expect(threeDSource).toContain('beam: "梁"');
+    expect(threeDSource).toContain("const beamPreview = beamStart && beamPointer");
+    expect(threeDSource).toContain("commitSharedWorkspace(nextProject, current.overlay, true, current.dirty)");
+    expect(threeDSource).toContain("tool === \"beam\" ? \"select\" : tool");
+    expect(pascalSceneSource).toContain("layers.beams && beamPreview");
+    expect(source).toContain('beams: "梁"');
+    expect(source).toContain("<BeamFootprint");
+    expect(source).not.toContain("BeamFootprint.*尺寸");
+  });
 });

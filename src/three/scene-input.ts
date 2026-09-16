@@ -67,6 +67,11 @@ function sceneBounds(nodes: Record<string, NodeData>): ThreeDBounds {
     if (["slab", "ceiling", "zone"].includes(node.type) && Array.isArray(node.polygon)) {
       for (const point of node.polygon) if (Array.isArray(point) && finite(point[0]) && finite(point[1])) extendPoint(raw, point[0], node.type === "ceiling" && finite(node.height) ? node.height : 0, point[2] ?? point[1]);
     }
+    if (node.type === "beam" && Array.isArray(node.start) && Array.isArray(node.end) && finite(node.start[0]) && finite(node.start[1]) && finite(node.end[0]) && finite(node.end[1])) {
+      const top = typeof node.effectiveCeilingElevation === "object" && node.effectiveCeilingElevation && finite(node.effectiveCeilingElevation.meters) ? node.effectiveCeilingElevation.meters : 0;
+      extendPoint(raw, node.start[0], Math.max(0, top - (finite(node.height) ? node.height : 0)), node.start[1]);
+      extendPoint(raw, node.end[0], Math.max(0, top), node.end[1]);
+    }
     if (node.type === "item") {
       const transform = resolveItemPlanTransform(node.id, nodes), dimensions = finalDimensions(node);
       if (transform.status === "ok") {

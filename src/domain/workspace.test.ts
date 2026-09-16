@@ -59,7 +59,17 @@ describe("workspace project lifecycle", () => {
     expect(state).toMatchObject({ projectDirty: false, overlayDirty: true });
   });
 
-  it("rejects imported building-node changes through the explicit empty allowlist", () => {
+  it("permits a Demo Beam transaction and restores it through workspace undo and redo", () => {
+    const project = projectDocument(raw({ nodes: { level: { id: "level", type: "level" }, ceiling: { id: "ceiling", type: "ceiling", parentId: "level", polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] } } }), "one.json", "one");
+    const state = createWorkspace(project, createEmptyOverlay("one.json", "one"));
+    const beam = { id: "beam", type: "beam", parentId: "level", name: "梁 1", start: [0, 1], end: [3, 1], width: .3, height: .5, ceilingIds: ["ceiling"], effectiveCeilingElevation: { meters: 2.7, basis: "derived-default-2700mm" } };
+    const changed = commitWorkspaceTransaction(state, { project: { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as object), beam } } } });
+    expect(changed).toMatchObject({ status: "committed", state: { projectDirty: true, project: { raw: { nodes: { beam } } } } });
+    expect(undoWorkspaceTransaction(changed.state).project?.raw.nodes).not.toHaveProperty("beam");
+    expect(redoWorkspaceTransaction(undoWorkspaceTransaction(changed.state)).project?.raw.nodes).toHaveProperty("beam");
+  });
+
+  it("rejects imported building-node changes through the explicit Beam-only allowlist", () => {
     const project = projectDocument(raw(), "one.json", "one");
     const state = createWorkspace(project, createEmptyOverlay("one.json", "one"));
     const edited = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as object), level: { id: "level", type: "level", name: "edited" } } } };

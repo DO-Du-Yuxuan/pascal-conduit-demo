@@ -2,7 +2,7 @@ import type { ConduitOverlayDocument } from "./overlay";
 
 /** The Demo owns this extension; it deliberately does not reuse a Pascal Core field. */
 export const PROJECT_ID_FIELD = "pascalConduitProjectId";
-export const EDITABLE_PROJECT_NODE_KINDS: ReadonlySet<"beam"> = new Set();
+export const EDITABLE_PROJECT_NODE_KINDS: ReadonlySet<"beam"> = new Set(["beam"]);
 
 export type ProjectDocument = {
   fileName: string;
@@ -73,9 +73,9 @@ function changedProjectNodeKinds(before: ProjectDocument | null, after: ProjectD
 }
 
 /**
- * The only project mutation currently permitted is the identity extension.
- * Later authoring slices may add `beam` to the allowlist, but imported nodes
- * can never become writable merely because they are present in source JSON.
+ * The identity extension and Demo Beam nodes are the only project mutations
+ * permitted here. Imported Pascal nodes never become writable merely because
+ * they are present in source JSON.
  */
 export function commitWorkspaceTransaction(state: WorkspaceState, transaction: WorkspaceTransaction): WorkspaceTransactionResult {
   const next: WorkspaceSnapshot = {

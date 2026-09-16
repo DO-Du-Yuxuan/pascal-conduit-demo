@@ -1,5 +1,6 @@
 import {projectSchema,nodeSchema,zoneNodeSchema,doorNodeSchema} from './schema'; import {Diagnostic,NodeData,Parsed} from '../types';
 import { isSdiSpaceFunctionCode } from '../space-functions/sdi-space-functions';
+import { validateBeam } from '../domain/beams';
 export function parseProject(raw:unknown):Parsed {
   const d:Diagnostic[]=[]; const top=projectSchema.safeParse(raw);
   if(!top.success) return {nodes:{},raw,diagnostics:[{severity:'error',code:'missing_nodes',message:'顶层缺少有效的 nodes 对象',sourcePath:'nodes'}]};
@@ -19,6 +20,10 @@ export function parseProject(raw:unknown):Parsed {
     if(data.type!=='zone'&&Object.prototype.hasOwnProperty.call(data,'spaceFunctionCode')){delete data.spaceFunctionCode; d.push({severity:'warning',code:'space_function_code_on_non_zone',message:'spaceFunctionCode 仅适用于 Zone；非 Zone 节点上的该字段已忽略',nodeId:id,sourcePath:`nodes.${id}.spaceFunctionCode`});}
     if(data.type!=='door'&&Object.prototype.hasOwnProperty.call(data,'isPrimaryEntrance')){delete data.isPrimaryEntrance; d.push({severity:'warning',code:'primary_entrance_on_non_door',message:'isPrimaryEntrance 仅适用于 Door；非 Door 节点上的该字段已忽略',nodeId:id,sourcePath:`nodes.${id}.isPrimaryEntrance`});}
     nodes[id]=data;
+  }
+  for (const node of Object.values(nodes)) if (node.type==='beam') {
+    const validation=validateBeam(node,nodes);
+    if(!validation.valid) for(const message of validation.diagnostics)d.push({severity:'warning',code:'invalid_beam',message,nodeId:node.id,sourcePath:`nodes.${node.id}`});
   }
   return {nodes,raw,diagnostics:d};
 }

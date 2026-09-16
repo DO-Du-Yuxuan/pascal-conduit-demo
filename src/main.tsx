@@ -69,6 +69,7 @@ import ThreeDWorkspace from "./three/ThreeDWorkspace";
 import { useOverlayStore } from "./domain/store";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
 import { makeProjectWritable, migrateOverlayOwnership, overlayBelongsToProject, projectDocument, readProjectIdentity } from "./domain/workspace";
+import { validateBeam } from "./domain/beams";
 import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, visibleTwoDCanvasIds, type WorkspaceViewMode } from "./domain/workspace-layout";
 import { evaluateS1Gate, measureS1FunctionalRelationshipPairs, type S1FunctionalRelationshipMeasurement, type S1FunctionalRelationshipReport, type S1GateResult } from "./evaluation/s1";
@@ -94,6 +95,7 @@ type Visibility = {
   zones: boolean;
   slabs: boolean;
   walls: boolean;
+  beams: boolean;
   shelves: boolean;
   stairs: boolean;
   openings: boolean;
@@ -126,6 +128,7 @@ const visibilityDefault: Visibility = {
   zones: true,
   slabs: true,
   walls: true,
+  beams: true,
   shelves: true,
   stairs: true,
   openings: true,
@@ -778,7 +781,7 @@ function App() {
     <div className="visibility">{Object.entries(entries).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={visibility[key as keyof Visibility]} onChange={() => toggleVisibility(key as keyof Visibility)} />{label}</label>)}{footer}</div>
   </details>;
   const layerControls = <>
-    {layerGroup("建筑图层", { walls: "墙体", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
+    {layerGroup("建筑图层", { walls: "墙体", beams: "梁", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
     {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduitSensor: "传感器", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler, sensor: visibility.conduitSensor })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler, conduitSensor: next.sensor ?? true })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
@@ -1516,6 +1519,7 @@ function Plan({
           {visibility.slabs && rendered.filter((n) => n.type === "slab" && n.visible !== false).map((n) => <Slab key={n.id} node={n} selected={selectedId === n.id} onSelect={onSelect} />)}
           {visibility.zones &&
             zones.map((n) => <Polygon key={n.id} node={n} onSelect={onSelect} />)}
+          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={n.id} node={n} selected={selectedId === n.id} onSelect={onSelect} />)}
           {visibility.walls &&
             exactWalls.map((n) => (
                 <Wall
@@ -1816,6 +1820,14 @@ function Slab({ node, selected, onSelect }: { node: NodeData; selected: boolean;
   if (!geometry) return null;
   return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#fafaf9"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#d2d2cf"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
 }
+function BeamFootprint({ node, selected, onSelect }: { node: NodeData; selected: boolean; onSelect: (id: string) => void }) {
+  const start = Array.isArray(node.start) ? node.start : [], end = Array.isArray(node.end) ? node.end : [], width = Number(node.width);
+  if (!Number.isFinite(start[0]) || !Number.isFinite(start[1]) || !Number.isFinite(end[0]) || !Number.isFinite(end[1]) || !Number.isFinite(width) || width <= 0) return null;
+  const dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz);
+  if (length < 1e-8) return null;
+  const x = (start[0] + end[0]) / 2, z = (start[1] + end[1]) / 2, rotation = Math.atan2(dz, dx) * 180 / Math.PI;
+  return <g data-selectable="beam" transform={`translate(${x} ${z}) rotate(${rotation})`} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" /></g>;
+}
 function Wall({
   node,
   footprint,
@@ -2110,6 +2122,7 @@ function GenericNodeInspector({ node, nodes, unit }: { node: NodeData; nodes: Re
   const rows = baseNodeRows(node, nodes);
   if (node.type === "level") rows.splice(1, 0, ["名称", node.name || "未命名"], ["子节点", String(Object.values(nodes).filter((candidate) => candidate.parentId === node.id).length)]);
   if (node.type === "wall") { const length = Array.isArray(node.start) && Array.isArray(node.end) ? Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]) : null; rows.push(["长度", length === null ? "未解析" : formatPanelLength(length, unit)], ["墙厚", formatPanelLength(node.thickness ?? .1, unit)], ["几何", Number.isFinite(node.curveOffset) && node.curveOffset !== 0 ? "曲墙" : "直墙"]); }
+  if (node.type === "beam") { const length = Array.isArray(node.start) && Array.isArray(node.end) ? Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]) : null, elevation = node.effectiveCeilingElevation as { meters?: number; basis?: string } | undefined; rows.push(["长度", length === null ? "未解析" : formatPanelLength(length, unit)], ["截面 W/H", `${formatPanelLength(node.width ?? 0, unit)} / ${formatPanelLength(node.height ?? 0, unit)}`], ["Ceiling", Array.isArray(node.ceilingIds) ? node.ceilingIds.join("、") : "—"], ["顶标高", elevation?.meters ? `${formatPanelLength(elevation.meters, unit)} (${elevation.basis === "derived-default-2700mm" ? "推导 2700 mm" : "明确 Ceiling 高度"})` : "未解析"]); }
   if (node.type === "door" || node.type === "window") rows.push(["宿主墙", node.wallId ? nodes[node.wallId]?.name || "墙体" : "未关联"], ["尺寸 W/H", `${formatPanelLength(node.width ?? .9, unit)} / ${formatPanelLength(node.height ?? 2, unit)}`], ["类型", node.type === "door" ? node.doorType ?? "hinged" : node.windowType ?? "window"], ["开口", node.openingKind ?? "door/window"]);
   if (node.type === "zone") { const points = zonePoints(node), area = Math.abs(points.reduce((sum, point, index) => { const next = points[(index + 1) % points.length]; return sum + point.x * next.z - point.z * next.x; }, 0) / 2); rows.push(["面积", points.length > 2 ? formatArea(area, unit) : "未解析"], ["轮廓点", String(points.length)]); }
   if (node.type === "stair") rows.push(["楼梯类型", node.stairType ?? "straight"], ["宽度", Number.isFinite(node.width) ? formatPanelLength(node.width, unit) : "—"], ["级数", String(node.stepCount ?? node.steps?.length ?? "—")]);
