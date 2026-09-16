@@ -6,6 +6,10 @@
 
 The 3D **梁** tool starts on a Ceiling underside. Click once to fix the plan axis start, move to see a transient full-volume solid, then click again to create one rectangular Beam. Free angles are allowed; holding Shift on the pointer constrains the current segment horizontally or vertically. Escape first cancels an unfinished Beam and then returns to selection; after a successful creation the tool remains active.
 
+## Layout reference plane
+
+The Beam tool also has one Overlay-owned **Layout reference plane** per Level. It is visible by default, derives its height from the largest valid Ceiling polygon on that Level (or the identified 2700 mm fallback), and can be hidden or given an explicit millimetre height in the Beam panel. These settings survive Overlay export/import and do not enter Pascal project JSON. The plane supplies only the active two-click interaction coordinates: accepted Beams still validate against Ceiling geometry and retain their Ceiling ids, elevation and basis. Changing the plane never moves an existing Beam or device point. When a transient Beam is shown it is deliberately non-pickable, so it cannot intercept the second authoring click.
+
 The model keeps metres. The UI exposes width and height in millimetres, beginning at 300 × 500 mm and retaining the last section used during the browser session. These are authoring defaults, never structural standards. Names are generated as `梁 1`, `梁 2`, and so on.
 
 A Beam has a stable id, readable name, direct Level parent, finite start/end plan points, positive width and height, intersected Ceiling ids, and `{ meters, basis }` effective Ceiling elevation. An explicit Ceiling height supplies `explicit-ceiling-height`; otherwise the record honestly stores the `derived-default-2700mm` basis. A Beam may span multiple same-elevation Ceilings and gaps, but must intersect at least one Ceiling and cannot cross conflicting effective elevations.
