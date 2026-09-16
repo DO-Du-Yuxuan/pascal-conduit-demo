@@ -16,6 +16,12 @@ Invalid imported Beam records remain in raw project JSON and receive parser diag
 
 3D renders a selectable oriented gray solid on a default-on Beam layer. The 2D building layer renders only its selectable gray footprint: no persistent dimension text and no 2D editing. Creating a Beam is one project workspace transaction, so shared undo/redo restores the project document and its independent dirty state.
 
-Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis. This slice does not snap to physical edges, edit Beam geometry, route conduit onto/around Beams, model penetrations, or mount devices; those additions are intentionally deferred.
+Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis. This slice does not snap to physical edges, route conduit onto/around Beams, model penetrations, or mount devices; those additions are intentionally deferred.
+
+## 3D geometry editing
+
+Selecting a Beam in 3D exposes independent endpoint handles plus direct fields for name, width, height, and length. Dragging its body translates the whole member in the Ceiling plane without changing its span, direction, or section. The two lateral 5 mm controls translate the whole member perpendicular to its own axis without changing its span or section. An endpoint edit changes only that endpoint, so it may change length and direction. Values commit on Enter or blur; every accepted edit is one project workspace history entry and recomputes Ceiling identities, effective elevation, and its explicit/derived basis.
+
+All coordinates and dimensions are quantized to 5 mm, including negative positions and angled members. Invalid hostless or contradictory-elevation candidates remain transient and do not change project JSON, Overlay, dirty state, or history. Normal intersections with Walls, Columns, and other Beams remain legal building geometry and never create conduit collision or penetration data. 2D remains inspection-only.
 
 The governing durable choice is [ADR 0003](adr/0003-author-demo-beams-in-project-json.md).

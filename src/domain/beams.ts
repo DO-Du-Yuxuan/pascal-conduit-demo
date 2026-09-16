@@ -7,6 +7,7 @@ export type BeamValidation = { valid: boolean; beam: BeamNode | null; diagnostic
 export const DEFAULT_BEAM_WIDTH_METERS = .3;
 export const DEFAULT_BEAM_HEIGHT_METERS = .5;
 export const DERIVED_CEILING_ELEVATION_METERS = 2.7;
+export const BEAM_EDIT_INCREMENT_METERS = .005;
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const planPoint = (value: unknown): [number, number] | null => Array.isArray(value) && finite(value[0]) && finite(value[1]) ? [value[0], value[1]] : null;
@@ -33,6 +34,23 @@ export const constrainBeamEnd = (start: [number, number], end: [number, number],
   if (!orthogonal) return end;
   const dx = end[0] - start[0], dz = end[1] - start[1];
   return Math.abs(dx) >= Math.abs(dz) ? [end[0], start[1]] : [start[0], end[1]];
+};
+export const quantizeBeamMeters = (value: number) => Math.round(value / BEAM_EDIT_INCREMENT_METERS) * BEAM_EDIT_INCREMENT_METERS;
+
+export type BeamEdit = { name?: string; start?: [number, number]; end?: [number, number]; width?: number; height?: number };
+export function editBeam(nodes: Record<string, NodeData>, beam: BeamNode, edit: BeamEdit): BeamValidation {
+  const start = (edit.start ?? beam.start).map(quantizeBeamMeters) as [number, number], end = (edit.end ?? beam.end).map(quantizeBeamMeters) as [number, number];
+  const width = quantizeBeamMeters(edit.width ?? beam.width), height = quantizeBeamMeters(edit.height ?? beam.height);
+  return createBeam(nodes, { id: beam.id, name: edit.name?.trim() || beam.name, levelId: beam.parentId!, start, end, width, height });
+}
+export const translateBeam = (nodes: Record<string, NodeData>, beam: BeamNode, delta: [number, number]) => editBeam(nodes, beam, { start: [beam.start[0] + delta[0], beam.start[1] + delta[1]], end: [beam.end[0] + delta[0], beam.end[1] + delta[1]] });
+export const nudgeBeamLaterally = (nodes: Record<string, NodeData>, beam: BeamNode, distance: number) => {
+  const dx = beam.end[0] - beam.start[0], dz = beam.end[1] - beam.start[1], length = Math.hypot(dx, dz);
+  return length < 1e-8 ? { valid: false, beam: null, diagnostics: ["Beam 轴线无效，不能横向移动。"] } : translateBeam(nodes, beam, [-dz / length * distance, dx / length * distance]);
+};
+export const resizeBeamLength = (nodes: Record<string, NodeData>, beam: BeamNode, length: number) => {
+  const dx = beam.end[0] - beam.start[0], dz = beam.end[1] - beam.start[1], current = Math.hypot(dx, dz);
+  return current < 1e-8 ? { valid: false, beam: null, diagnostics: ["Beam 轴线无效，不能改变长度。"] } : editBeam(nodes, beam, { end: [beam.start[0] + dx / current * length, beam.start[1] + dz / current * length] });
 };
 
 export function resolveBeamCeilings(nodes: Record<string, NodeData>, levelId: string, start: [number, number], end: [number, number]) {

@@ -146,4 +146,20 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("<BeamFootprint");
     expect(source).not.toContain("BeamFootprint.*尺寸");
   });
+
+  it("exposes 3D-only Beam geometry controls and endpoint handles", () => {
+    expect(threeDSource).toContain("Beam 属性（3D）");
+    expect(threeDSource).toContain("左移 5 mm");
+    expect(threeDSource).toContain("commitBeamEdit");
+    expect(threeDSource).toContain("onBeamDrag={(id, edit, commit)");
+    expect(threeDSource).toContain("beamEditPreview ?? beamPreview");
+    expect(threeDSource).toContain("selectedBeam.start.join");
+    expect(threeDSource).not.toContain('addEventListener("beam-drag"');
+    expect(pascalSceneSource).toContain('kind: "start" | "end"');
+    expect(pascalSceneSource).toContain('sphereGeometry args={[Math.max(.07, width * .35)');
+    expect(pascalSceneSource).toContain("setBodyDrag");
+    expect(pascalSceneSource).toContain("const rendered = beamPreview?.id === node.id ? beamPreview : node");
+    expect(pascalSceneSource).toContain("onPointerMove");
+    expect(source).not.toContain("Beam 属性（3D）");
+  });
 });

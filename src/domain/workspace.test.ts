@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseProject } from "../parser/parse";
 import { createEmptyOverlay } from "./overlay";
 import { PROJECT_ID_FIELD, commitWorkspaceTransaction, createWorkspace, hasUnsavedWorkspaceChanges, importProjectRevision, makeProjectWritable, markWorkspaceDocumentExported, migrateOverlayOwnership, overlayBelongsToProject, projectDocument, redoWorkspaceTransaction, undoWorkspaceTransaction } from "./workspace";
 
@@ -67,6 +68,19 @@ describe("workspace project lifecycle", () => {
     expect(changed).toMatchObject({ status: "committed", state: { projectDirty: true, project: { raw: { nodes: { beam } } } } });
     expect(undoWorkspaceTransaction(changed.state).project?.raw.nodes).not.toHaveProperty("beam");
     expect(redoWorkspaceTransaction(undoWorkspaceTransaction(changed.state)).project?.raw.nodes).toHaveProperty("beam");
+  });
+
+  it("keeps edited Beam project evidence reversible and leaves its Overlay sidecar byte-for-byte equivalent", () => {
+    const project = projectDocument(raw({ nodes: { level: { id: "level", type: "level" }, ceiling: { id: "ceiling", type: "ceiling", parentId: "level", polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] }, beam: { id: "beam", type: "beam", parentId: "level", name: "梁 1", start: [0, 1], end: [3, 1], width: .3, height: .5, ceilingIds: ["ceiling"], effectiveCeilingElevation: { meters: 2.7, basis: "derived-default-2700mm" } } } }), "one.json", "one");
+    const overlay = createEmptyOverlay("one.json", "one");
+    const state = createWorkspace(project, overlay);
+    const editedBeam = { ...(project.raw.nodes as any).beam, name: "入口梁", start: [.005, 1.005], end: [3.005, 1.005], width: .305, height: .495 };
+    const changed = commitWorkspaceTransaction(state, { project: { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as object), beam: editedBeam } } } }).state;
+    expect(changed.overlay).toEqual(overlay);
+    expect(undoWorkspaceTransaction(changed).project?.raw.nodes).toMatchObject({ beam: { name: "梁 1", width: .3 } });
+    expect(redoWorkspaceTransaction(undoWorkspaceTransaction(changed)).project?.raw.nodes).toMatchObject({ beam: editedBeam });
+    const reimported = parseProject(JSON.parse(JSON.stringify(changed.project!.raw)));
+    expect(reimported.nodes.beam).toMatchObject(editedBeam);
   });
 
   it("rejects imported building-node changes through the explicit Beam-only allowlist", () => {
