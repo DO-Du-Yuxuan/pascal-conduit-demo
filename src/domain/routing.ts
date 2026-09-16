@@ -22,7 +22,7 @@ const fittingType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkl
 const isElectrical = (system: RoutingSystem) => system !== "sprinkler";
 const selectPortDirection = (ports: NetworkPort[], direction: Vec3, used = new Set<string>()) => ports.filter((port) => !used.has(port.id)).sort((left, right) => dot(right.direction, direction) - dot(left.direction, direction))[0];
 
-export type RouteDiagnostic = { code: "bend_clearance" | "route_collision" | "self_collision" | "branch_clearance"; message: string; objectIds?: string[]; point?: Vec3 };
+export type RouteDiagnostic = { code: "bend_clearance" | "route_collision" | "self_collision" | "branch_clearance" | "beam_collision"; message: string; objectIds?: string[]; point?: Vec3 };
 export type PenetrationRequest = { host: HostAttachment; entry: RoutePoint; exit: RoutePoint; direction: Vec3 };
 export type PlannedRoute = { system: RoutingSystem; diameterMm: number; mode: SurfaceMode; points: RoutePoint[]; segments: RouteSegment[]; fittings: RouteFitting[]; junctionBoxes: JunctionBox[]; surfaceChases: SurfaceChase[]; penetrations: Penetration[]; diagnostics: RouteDiagnostic[]; canCommit: boolean };
 export type ConstructionVisualParameters = { chaseWidthMm: number; chaseDepthMm: number; penetrationDiameterMm: number };

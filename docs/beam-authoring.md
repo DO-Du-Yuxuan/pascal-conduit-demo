@@ -30,4 +30,10 @@ Beam authoring snaps only to exposed physical surfaces of Walls (including suppo
 
 Selected Beams show only reliable physical-face witnesses: left/right dimensions look for the nearest parallel Wall or Beam face, while start/end dimensions look for the first Wall or Beam face along the Beam axis. Missing witnesses are omitted. These dimensions recompute for preview geometry, including angled endpoint changes; their direct millimetre fields commit at 5 mm precision. A side-clearance edit translates the complete Beam, while an end-clearance edit moves only that endpoint. These selected-only dimensions are not written to project JSON or Overlay and never appear in 2D.
 
+## Conduit hosts and collision (current slice)
+
+The exposed **bottom**, two **sides**, and two **ends** of a valid Beam are ordinary conduit hosts. Every attachment records the Beam id, named face, outward normal, local basis, Level, and local position; the Ceiling-adjacent top is intentionally not pickable. Existing guided drawing, bends, turns, and completion therefore work across adjacent Beam faces and between Beam and other hosts without changing the source building model.
+
+Beam-face conduit is exposed surface work: it never creates a `surface-chase`. Independently of what the cursor ray hit, valid Beam prisms participate in analytic route collision checks for surface, suspended, and world-axis segments. A full run truthfully attached to one exposed Beam face is legal; entry into the member volume is a red blocking conflict unless an active explicit penetration bypass owns that Beam. Invalid imported Beams are excluded from both hosting and collision. Building-member intersections (Beam/Wall, Beam/Column, Beam/Beam) remain building geometry, not conduit conflicts.
+
 The governing durable choice is [ADR 0003](adr/0003-author-demo-beams-in-project-json.md).

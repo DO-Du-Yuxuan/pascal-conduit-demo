@@ -17,6 +17,7 @@ import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCa
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, nudgeBeamLaterally, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamClearances, editBeamClearance, snapBeamPoint, type BeamSnap } from "../domain/beam-positioning";
+import { beamRouteDiagnostics } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { projectRayToActiveWall } from "./active-host";
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
@@ -340,7 +341,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       : planRoute(system, diameterMm, surfaceMode, points, constructionParameters, explicitPenetrations, { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
     if (!plan) throw new Error("目标分支管段不存在。");
     const ignoredDeviceIds = new Set([deviceRouteStart?.port.owner.id, junctionRouteStart?.box.id, ignoredDeviceId].filter((id): id is string => Boolean(id)));
-    return withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined);
+    const collisionChecked = withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined);
+    const diagnostics = [...collisionChecked.diagnostics, ...beamRouteDiagnostics(scene?.nodes ?? {}, collisionChecked, penetrationSession?.host.hostId)];
+    return { ...collisionChecked, diagnostics, canCommit: diagnostics.length === 0 };
   };
   const resolveEffectiveCursor = (raw: RoutePoint | null): RoutePoint | null => {
     if (!raw || !draft.length) return raw;
@@ -587,7 +590,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const exportOverlay = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "conduit-overlay.json"; anchor.click(); URL.revokeObjectURL(url); setOverlayDirty(false); markOverlayExported(); };
   const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); orthogonalDirection.current = null; };
-  const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); };
+  const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); if (next !== "select") onSelect(null); };
   const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || deviceRouteStart || junctionRouteStart || endpointRouteStart);
   const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
   const onPointerRay = (origin: [number, number, number], direction: [number, number, number], shiftKey = false) => {

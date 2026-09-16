@@ -23,7 +23,7 @@ const pointer = (type: string, x: number, z: number) => {
 
 function Harness({ onCommit }: { onCommit: (edit: BeamEdit) => void }) {
   const [preview, setPreview] = useState<BeamNode | null>(null);
-  return <PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={new Set()} levelMode="stacked" wallMode="up" selectedId="beam" beamPreview={preview} onSelect={() => undefined} onBeamDrag={(_id, edit, commit) => {
+  return <PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={new Set()} levelMode="stacked" wallMode="up" selectedId="beam" beamPreview={preview} beamEditing onSelect={() => undefined} onBeamDrag={(_id, edit, commit) => {
     const candidate = { ...beam, ...edit } as BeamNode;
     setPreview(commit ? null : candidate);
     if (commit) onCommit(edit);
