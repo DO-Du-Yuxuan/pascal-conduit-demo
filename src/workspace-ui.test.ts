@@ -171,4 +171,13 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain('aria-label={`Beam ${clearance.edge} clearance`}');
     expect(source).not.toContain("Beam left clearance");
   });
+
+  it("keeps Beam lock, modifier and pointer feedback discoverable", () => {
+    expect(threeDSource).toContain("beam-orthogonal-lock");
+    expect(threeDSource).toContain("aria-pressed={orthogonal}");
+    expect(threeDSource).toContain('data-beam-pointer-state={beamPointerState}');
+    expect(threeDSource).toContain("Explicit Ceiling elevation crossing");
+    expect(threeDSource).toContain("event.nativeEvent.ctrlKey || event.nativeEvent.metaKey");
+    expect(styles).toContain(".beam-pointer-feedback");
+  });
 });

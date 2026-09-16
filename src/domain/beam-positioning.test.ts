@@ -36,6 +36,10 @@ describe("Beam physical positioning", () => {
     expect(snapBeamPoint({ ...nodes, column: { ...nodes.column, position: undefined } }, "level", [6, 2], .3)).toBeNull();
     expect(snapBeamPoint({ ...nodes, column: { ...nodes.column, position: undefined }, left: { ...nodes.left, thickness: undefined }, start: { ...nodes.start, thickness: undefined } }, "level", [0, 0], .3)).toBeNull();
   });
+  it("keeps Ceiling polygon edges endpoint-only and outside clearance evidence", () => {
+    const beam = createBeam(nodes, { id: "beam", name: "梁", levelId: "level", start: [1, 1], end: [5, 1], width: .3 }).beam!;
+    expect(beamClearances({ ...nodes, beam }, beam).every((item) => item.witness.kind !== "ceiling-edge")).toBe(true);
+  });
   it("preserves an endpoint resolved along an angled physical face through the Beam edit constructor", () => {
     const obstacle = createBeam(nodes, { id: "obstacle", name: "障碍梁", levelId: "level", start: [6, 1], end: [8, 3], width: .4 }).beam!;
     const beam = createBeam({ ...nodes, obstacle }, { id: "beam", name: "梁", levelId: "level", start: [1, 1], end: [5, 1] }).beam!;

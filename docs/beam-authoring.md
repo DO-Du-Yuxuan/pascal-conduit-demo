@@ -4,13 +4,15 @@
 
 ## First authoring slice
 
-The 3D **梁** tool starts on a Ceiling underside. Click once to fix the plan axis start, move to see a transient full-volume solid, then click again to create one rectangular Beam. Free angles are allowed; holding Shift on the pointer constrains the current segment horizontally or vertically. Escape first cancels an unfinished Beam and then returns to selection; after a successful creation the tool remains active.
+The 3D **梁** tool starts on a Ceiling underside. Click once to fix the plan axis start, move to see a transient full-volume solid, then click again to create one rectangular Beam. Free angles are allowed; **Orthogonal lock** controls world-X/world-Z constraint rather than a hold-only pointer modifier. Escape first cancels an unfinished Beam and then returns to selection; after a successful creation the tool remains active.
 
 ## Layout reference plane
 
 The Beam tool also has one Overlay-owned **Layout reference plane** per Level. It is visible by default, derives its height from the largest valid Ceiling polygon on that Level (or the identified 2700 mm fallback), and can be hidden or given an explicit millimetre height in the Beam panel. These settings survive Overlay export/import and do not enter Pascal project JSON. The plane supplies only the active two-click interaction coordinates: accepted Beams still validate against Ceiling geometry and retain their Ceiling ids, elevation and basis. Changing the plane never moves an existing Beam or device point. When a transient Beam is shown it is deliberately non-pickable, so it cannot intercept the second authoring click.
 
-Beam authoring uses a persistent **Orthogonal lock** state. Shift toggles that state while the Beam tool is active; when on, the live candidate resolves to world X or Z from the confirmed start, and when off it remains freely angled. Endpoints may use only physical Wall, Column, existing Beam faces, or a Ceiling polygon edge; centrelines are not targets. A normal candidate cannot cross into a Ceiling region with a different effective elevation. Ctrl on Windows/Linux, or Command on macOS, makes that exceptional crossing explicit: the committed Beam remains one straight member at its start Ceiling elevation and records that explicit crossing rather than stepping or adopting the target height.
+Beam authoring uses a persistent **Orthogonal lock** state. Its panel control is visible whenever the Beam tool is active; Shift toggles the same state and gives immediate pointer-adjacent feedback. When on, the live candidate resolves to world X or Z from the confirmed start, and when off it remains freely angled. Endpoints may use only physical Wall, Column, existing Beam faces, or a Ceiling polygon edge; centrelines are not targets. A normal candidate cannot cross into a Ceiling region with a different effective elevation. Ctrl on Windows/Linux, or Command on macOS, makes that exceptional crossing explicit: the committed Beam remains one straight member at its start Ceiling elevation and records that explicit crossing rather than stepping or adopting the target height.
+
+The pointer feedback is semantic rather than a hidden status line: a white crosshair means a valid free point, green names a physical Surface snap, orange names an explicit elevation crossing and retained elevation, and red supplies the current validation reason. Legal transient Beams remain translucent gray-blue; crossing and invalid previews use translucent orange and red respectively. Committed Beams are solid gray, and selection is solid orange. Surface snaps retain a Wall's small established visual overlap while keeping its axis point on the physical face; Ceiling-edge endpoints stop exactly on the edge. Ceiling edges are endpoint targets only, never Beam-clearance witnesses.
 
 The model keeps metres. The UI exposes width and height in millimetres, beginning at 300 × 500 mm and retaining the last section used during the browser session. These are authoring defaults, never structural standards. Names are generated as `梁 1`, `梁 2`, and so on.
 
@@ -22,7 +24,7 @@ Invalid imported Beam records remain in raw project JSON and receive parser diag
 
 3D renders a selectable oriented gray solid on a default-on Beam layer. The 2D building layer renders only its selectable gray footprint: no persistent dimension text and no 2D editing. Creating a Beam is one project workspace transaction, so shared undo/redo restores the project document and its independent dirty state.
 
-Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis. This slice does not snap to physical edges, route conduit onto/around Beams, model penetrations, or mount devices; those additions are intentionally deferred.
+Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis, including explicit elevation-crossing evidence. The Layout reference plane and all conduit/device/construction data remain Overlay-owned and never become Beam hosts in project JSON.
 
 ## 3D geometry editing
 
@@ -32,7 +34,7 @@ All coordinates and dimensions are quantized to 5 mm, including negative positio
 
 ## Physical positioning references
 
-Beam authoring snaps only to exposed physical surfaces of Walls (including supported curved-wall segments), Columns, and existing Beams. It never offers a Wall/Column centreline, Beam centreline, or a synthetic endpoint target. The transient 3D cue names the selected target kind and id, and snaps the Beam axis point to the physical face rather than halfway into a solid.
+Beam authoring snaps only to exposed physical surfaces of Walls (including supported curved-wall segments), Columns, existing Beams, and Ceiling polygon edges. It never offers a Wall/Column centreline, Beam centreline, or a synthetic endpoint target. The transient 3D cue names the selected target kind and id, and snaps the Beam axis point to the physical face rather than halfway into a solid.
 
 Selected Beams show only reliable physical-face witnesses: left/right dimensions look for the nearest parallel Wall or Beam face, while start/end dimensions look for the first Wall or Beam face along the Beam axis. Missing witnesses are omitted. These dimensions recompute for preview geometry, including angled endpoint changes; their direct millimetre fields commit at 5 mm precision. A side-clearance edit translates the complete Beam, while an end-clearance edit moves only that endpoint. These selected-only dimensions are not written to project JSON or Overlay and never appear in 2D.
 

@@ -88,7 +88,8 @@ export function beamClearances(nodes: Record<string, NodeData>, beam: BeamNode):
     { edge: "start", origin: beam.start, direction: scale(axis, -1), parallel: false },
     { edge: "end", origin: beam.end, direction: axis, parallel: false },
   ];
-  const surfaces = beamAuthoringSurfaces(nodes, beam.parentId!, beam.id).filter((surface) => surface.kind !== "column");
+  // Ceiling edges are endpoint-only authoring targets, never clearance witnesses.
+  const surfaces = beamAuthoringSurfaces(nodes, beam.parentId!, beam.id).filter((surface) => surface.kind !== "column" && surface.kind !== "ceiling-edge");
   return queries.flatMap((query) => {
     const hits = surfaces.flatMap((witness) => { const tangent = normalized(subtract(witness.end, witness.start)); if (!tangent || (query.parallel ? Math.abs(cross(tangent, axis)) > 1e-5 : Math.abs(dot(tangent, axis)) > 1e-5)) return []; const meters = rayHit(query.origin, query.direction, witness); return meters === null ? [] : [{ meters, witness }]; }).sort((a, b) => a.meters - b.meters || a.witness.kind.localeCompare(b.witness.kind) || a.witness.id.localeCompare(b.witness.id));
     const hit = hits[0]; return hit ? [{ edge: query.edge, meters: quantizeBeamMeters(hit.meters), witness: hit.witness }] : [];

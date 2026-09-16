@@ -29,7 +29,7 @@ export const segmentIntersectsPolygon = (start: [number, number], end: [number, 
 const levelFor = (nodes: Record<string, NodeData>, node: NodeData): string | null => { let current: NodeData | undefined = node; const seen = new Set<string>(); while (current && !seen.has(current.id)) { seen.add(current.id); if (current.type === "level") return current.id; current = current.parentId ? nodes[current.parentId] : undefined; } return null; };
 const ceilingElevation = (node: NodeData): BeamElevation => finite(node.height) && node.height > 0 ? { meters: node.height, basis: "explicit-ceiling-height" } : { meters: DERIVED_CEILING_ELEVATION_METERS, basis: "derived-default-2700mm" };
 
-/** The authoring tool keeps diagonals unless the current pointer holds Shift. */
+/** Orthogonal lock projects a live authoring candidate onto its dominant world axis. */
 export const constrainBeamEnd = (start: [number, number], end: [number, number], orthogonal: boolean): [number, number] => {
   if (!orthogonal) return end;
   const dx = end[0] - start[0], dz = end[1] - start[1];
@@ -95,8 +95,10 @@ export function createBeam(nodes: Record<string, NodeData>, input: { id: string;
   if (!hosts.length) return { valid: false, beam: null, diagnostics: ["Beam 必须与至少一个 Ceiling 相交。"] };
   if (elevations.length !== 1 && !input.explicitCeilingCrossing) return { valid: false, beam: null, diagnostics: ["Beam 不能跨越不同有效标高的 Ceiling。"] };
   if (new Set(hosts.map((host) => host.elevation.basis)).size !== 1 && !input.explicitCeilingCrossing) return { valid: false, beam: null, diagnostics: ["Beam 不能混用明确和推导的 Ceiling 标高依据。"] };
-  const source = input.explicitCeilingCrossing ? resolveBeamCeilings(nodes, input.levelId, input.start, input.start)[0] : hosts[0];
+  const crossesElevation = elevations.length !== 1 || new Set(hosts.map((host) => host.elevation.basis)).size !== 1;
+  const explicitCeilingCrossing = Boolean(input.explicitCeilingCrossing && crossesElevation);
+  const source = explicitCeilingCrossing ? resolveBeamCeilings(nodes, input.levelId, input.start, input.start)[0] : hosts[0];
   if (!source) return { valid: false, beam: null, diagnostics: ["Beam 起点必须位于有效 Ceiling。"] };
-  const elevation = source.elevation, beam: BeamNode = { id: input.id, type: "beam", parentId: input.levelId, name: input.name, start: input.start, end: input.end, width: input.width ?? DEFAULT_BEAM_WIDTH_METERS, height: input.height ?? DEFAULT_BEAM_HEIGHT_METERS, ceilingIds: hosts.map((host) => host.id), effectiveCeilingElevation: elevation, ...(input.explicitCeilingCrossing ? { explicitCeilingCrossing: true } : {}) };
+  const elevation = source.elevation, beam: BeamNode = { id: input.id, type: "beam", parentId: input.levelId, name: input.name, start: input.start, end: input.end, width: input.width ?? DEFAULT_BEAM_WIDTH_METERS, height: input.height ?? DEFAULT_BEAM_HEIGHT_METERS, ceilingIds: hosts.map((host) => host.id), effectiveCeilingElevation: elevation, ...(explicitCeilingCrossing ? { explicitCeilingCrossing: true } : {}) };
   return validateBeam(beam, { ...nodes, [beam.id]: beam });
 }
