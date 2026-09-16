@@ -46,6 +46,8 @@ Overlay 当前版本为 `2.3`，新增稳定 `projectId` 归属，同时保留 S
 
 Beam 作者工具每层提供 Overlay-owned 的 Layout reference plane，可在天花图层隐藏时继续作为交互面；它不写入项目 JSON，也不会移动既有梁或点位。梁工具显示可切换的正交锁定（Shift 同步切换）、物理 Surface snap、自由/捕捉/显式 Ceiling 标高跨越/无效的语义反馈；Ctrl（Windows/Linux）或 Command（macOS）只在按住时允许跨越不同 Ceiling 标高，并始终保留起点 Ceiling 标高。详见 [Demo Beam 作者工具](docs/beam-authoring.md)。
 
+同一 Layout reference plane 也服务于灯具、喷淋头和传感器的新水平点位预览与放置；点位保存的仍是独立的 Installation reference plane 关系，而不是一个虚构的 Ceiling/Layout 宿主。隐藏共享平面不会移动现有点位，并会提示作者改用可见的合法实体宿主；墙面专用设备的宿主规则不变。
+
 画管仍由用户逐点确认：空格保持选择工具，Shift 控制宿主面正交，方向键锁定世界 X/Y/Z，Enter 只完成已确认的点。吸附候选仅包括兼容设备端口、开放管端、合法分支位置和宿主边角；约束不共线时只提供辅助对齐，不建立虚假连接。本 MVP 不提供数字管长输入或自动布管。
 
 ## 2D 施工图画布

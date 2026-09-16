@@ -180,4 +180,12 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("event.nativeEvent.ctrlKey || event.nativeEvent.metaKey");
     expect(styles).toContain(".beam-pointer-feedback");
   });
+
+  it("uses the shared Layout reference plane for eligible horizontal device points", () => {
+    expect(threeDSource).toContain("const eligibleLayoutPoint");
+    expect(threeDSource).toContain("const sharedPointPlane");
+    expect(threeDSource).toContain("sharedPointPlane.elevationMm");
+    expect(threeDSource).toContain("never a fake");
+    expect(threeDSource).toContain("Layout reference plane 已隐藏");
+  });
 });

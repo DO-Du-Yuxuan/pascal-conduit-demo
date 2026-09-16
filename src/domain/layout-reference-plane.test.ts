@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { NodeData } from "../types";
 import { createEmptyOverlay, parseOverlay } from "./overlay";
 import { defaultLayoutReferencePlane, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "./layout-reference-plane";
+import { createReferencePlaneDevice } from "./devices";
 
 const nodes = {
   level: { id: "level", type: "level", level: 0 },
@@ -24,5 +25,14 @@ describe("Layout reference plane", () => {
     const legacy = { ...overlay } as Record<string, unknown>;
     delete legacy.layoutReferencePlanes;
     expect(parseOverlay(legacy).layoutReferencePlanes).toEqual([]);
+  });
+
+  it("keeps eligible point mounts distinct and stable while a shared plane changes", () => {
+    const base = createEmptyOverlay("source.json", "sha"), first = { levelId: "level", visible: true, elevationMm: 2800, basis: "largest-area-ceiling" as const, sourceCeilingId: "large" };
+    const device = createReferencePlaneDevice("luminaire", [1, 2.8, 1], "level", first.elevationMm);
+    const placed = { ...base, layoutReferencePlanes: [first], devices: [device] };
+    const edited = { ...placed, layoutReferencePlanes: replaceLayoutReferencePlane(placed.layoutReferencePlanes, { levelId: "level", visible: false, elevationMm: 3150, basis: "explicit" }) };
+    expect(edited.devices[0]).toMatchObject({ position: { position: [1, 2.8, 1] }, mount: { kind: "reference-plane", levelId: "level", elevationMm: 2800 } });
+    expect(parseOverlay(JSON.parse(JSON.stringify(edited))).devices[0]?.mount).toMatchObject({ kind: "reference-plane", levelId: "level", elevationMm: 2800 });
   });
 });
