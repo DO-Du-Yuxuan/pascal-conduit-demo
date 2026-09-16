@@ -37,6 +37,7 @@ type OverlayState = {
 };
 
 const clone = (value: ConduitOverlayDocument) => structuredClone(value);
+const previewSignature = (preview: RoutePreviewSnapshot | null) => preview ? JSON.stringify(preview) : "";
 const snapshotOverlayHistory = (workspace: WorkspaceState) => workspace.undoStack.map((snapshot) => snapshot.overlay).filter((overlay): overlay is ConduitOverlayDocument => Boolean(overlay));
 const syncWorkspace = (workspace: WorkspaceState, preview: RoutePreviewSnapshot | null) => ({ workspace, project: workspace.project, overlay: workspace.overlay, undoStack: snapshotOverlayHistory(workspace), redoStack: workspace.redoStack.map((snapshot) => snapshot.overlay).filter((overlay): overlay is ConduitOverlayDocument => Boolean(overlay)), projectDirty: workspace.projectDirty, dirty: workspace.overlayDirty, preview });
 
@@ -84,6 +85,8 @@ export const useOverlayStore = create<OverlayState>((set, get) => ({
     set(syncWorkspace(redoWorkspaceTransaction(current.workspace), current.preview));
   },
   // Preview is ephemeral UI state: no clone, history entry, dirty flag or export.
-  publishPreview: (preview) => set({ preview }),
-  clearPreview: () => set({ preview: null }),
+  // Its producer may re-render with new object identities but identical geometry;
+  // avoid waking 2D subscribers in that case.
+  publishPreview: (preview) => set((state) => previewSignature(state.preview) === previewSignature(preview) ? state : { preview }),
+  clearPreview: () => set((state) => state.preview ? { preview: null } : state),
 }));

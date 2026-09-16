@@ -2,11 +2,21 @@
 
 这是独立的管线编辑 Demo。它以 `pascal-layout-auditor` 的 Parser、二维画布和只读 3D Viewer 为底座，但不展示、不运行或写入任何 G1/G2/G3/G4/S1 评价结论。
 
-默认建筑底图是用户提供的 `sample-data/default-layout.json`，SHA-256：`32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167`。它默认加载且 Overlay 为空；不再使用 Bellevue 作为 Demo。
+默认建筑底图是用户提供的 `sample-data/default-layout.json`，SHA-256：`48526ac17d3b5f6a6ed8f2a63863d8086e53a54762815dbe35ddfc80647d5d1c`。它默认加载且 Overlay 为空；不再使用 Bellevue 作为 Demo。
 
 ## 当前技术文档
 
+- [3D Viewer 边界](docs/3d-readonly-viewer.md)与[Pascal 节点支持范围](docs/pascal-core-support-matrix.md)。
+- [手工 CAD 测量](docs/manual-measurement.md)、[外部尺寸](docs/exterior-dimensions.md)和[平面素材透明边裁切](docs/floorplan-image-crop.md)。
 - [可编辑项目与工作区持久化](docs/editable-project-workspace.md)：稳定项目身份、独立导出、Overlay 归属、脏状态与统一事务历史。
+- [Demo Beam 作者工具](docs/beam-authoring.md)：唯一可编辑建筑节点、Ceiling 标高依据、5 mm 精度的 3D 创建/编辑与只读 2D 足迹。
+- 已采纳的管线路由与灯控建模决策位于 [`docs/adr/`](docs/adr/)。
+
+## Demo 文档合同
+
+`README.md` 是同事与 AI 共同读取的当前能力入口：它记录已经实现的用户行为、数据归属、持久化方式和明确边界，并链接到对应的详细合同。专题文档描述当前行为和实现边界，ADR 记录难以反转的取舍及原因；代码和测试负责验证这些陈述。任何用户可见功能、数据归属、保存格式或边界发生变化时，必须在同一次变更中同步更新 README 和适用的专题文档，不能只改代码。
+
+运行时出现未捕获的界面渲染错误时，Demo 会显示错误名称、信息、调用栈和“刷新并重试”按钮，避免留下无法诊断的空白页。
 
 ## 保留的 Viewer 能力
 
@@ -40,11 +50,13 @@ Overlay 当前版本为 `2.3`，新增稳定 `projectId` 归属，同时保留 S
 
 ## 项目与 Overlay 持久化
 
-项目 JSON 顶层 `pascalConduitProjectId` 是 Demo 的稳定身份扩展，首次导出可写项目时生成一次；内容 SHA 仅标识某个修订版。项目 JSON 与独立 Overlay 分别导出，项目导出始终下载新文件而不会覆盖导入源文件。导入相同项目身份的新修订会保留并重验 Overlay，导入不同身份会建立新 Overlay；两份文档的脏状态独立，任一未导出时关闭或替换工作区会提示。所有导入建筑节点仍为只读，唯一例外是文档化的 Demo `beam` 扩展：3D 可从 Ceiling 下表面创建直线矩形梁，并用端点/梁体拖动、真实墙/柱/梁表面捕捉及物理面净距字段以 5 mm 精度编辑；其底面、侧面和端面可承载明装管线和全部当前点位（顶面不可选且梁面不生成槽）；设备几何和端口按所选梁面定向。编辑梁保持既有设备与管线的世界坐标，只清除不再接触梁面的宿主关系，不自动重连、拉伸或改线；仍承载设备的梁拒绝删除并显示设备身份，解除宿主后删除只清理其穿孔。有效梁实体对表面、悬空和世界轴向管线执行独立的阻塞碰撞检查；项目 JSON 保留 Level/Ceiling 关系和明确或 2700 mm 推导的标高依据；Overlay 从不承载梁几何。Beam、设备与穿孔记录只是 Demo 作者信息，不判断荷载、配筋、安全开孔区、规范合规或结构审批。
+梁的选择编辑采用点位同款的场景物理尺寸线：不能拖拽梁体或端点；场景显示梁实体边缘到最近两组不平行墙面/相邻梁面的尺寸线，面板对应“平面净距”数值以 5 mm 精度整体平移梁，不改变长度或角度。可靠平行见证存在时仍显示沿梁的左右/起终点净距字段。宽度不会再改变任何端点操纵器，因为梁没有端点操纵器。
+
+项目 JSON 顶层 `pascalConduitProjectId` 是 Demo 的稳定身份扩展，首次导出可写项目时生成一次；内容 SHA 仅标识某个修订版。项目 JSON 与独立 Overlay 分别导出，项目导出始终下载新文件而不会覆盖导入源文件。导入相同项目身份的新修订会保留并重验 Overlay，导入不同身份会建立新 Overlay；两份文档的脏状态独立，任一未导出时关闭或替换工作区会提示。所有导入建筑节点仍为只读，唯一例外是文档化的 Demo `beam` 扩展：3D 可从 Ceiling 下表面创建直线矩形梁，并用端点/梁体拖动、真实墙/柱/梁表面捕捉及物理面净距字段以 5 mm 精度编辑；其底面、侧面和端面可承载明装管线和全部当前点位（顶面不可选且梁面不生成槽）；从墙面继续绘制时，明确命中的梁面会优先成为下一落点，而不会被投回原墙面；设备几何和端口按所选梁面定向。编辑梁保持既有设备与管线的世界坐标，只清除不再接触梁面的宿主关系，不自动重连、拉伸或改线；仍承载设备的梁拒绝删除并显示设备身份，解除宿主后删除只清理其穿孔。有效梁实体对表面、悬空和世界轴向管线执行独立的阻塞碰撞检查；项目 JSON 保留 Level/Ceiling 关系和明确或 2700 mm 推导的标高依据；Overlay 从不承载梁几何。Beam、设备与穿孔记录只是 Demo 作者信息，不判断荷载、配筋、安全开孔区、规范合规或结构审批。
 
 3D 点位定位采用设备边缘尺寸：选中点位时，场景内会显示最小尺寸线和毫米数值；墙上设备可输入下边缘离地高度，以及到同墙邻近点位或墙端的净距；灯具和喷淋在模型缺少天花、梁时可放到每层默认 `2700 mm` 的安装参考平面，并支持 Ctrl/Command 多选统一改标高。输入框回车或失焦后直接作为一次可撤销操作提交，不需要额外确认按钮。移动已连接设备会短暂高亮并移除相邻管段，保留真实开放管端供用户重新逐点连接，不会自动规划或拉伸旧管。
 
-Beam 作者工具每层提供 Overlay-owned 的 Layout reference plane，可在天花图层隐藏时继续作为交互面；它不写入项目 JSON，也不会移动既有梁或点位。梁工具显示可切换的正交锁定（Shift 同步切换）、物理 Surface snap、自由/捕捉/显式 Ceiling 标高跨越/无效的语义反馈；Ctrl（Windows/Linux）或 Command（macOS）只在按住时允许跨越不同 Ceiling 标高，并始终保留起点 Ceiling 标高。详见 [Demo Beam 作者工具](docs/beam-authoring.md)。
+Beam 作者工具每层提供 Overlay-owned 的 Layout reference plane，可在天花图层隐藏时继续作为交互面；它不写入项目 JSON，也不会移动既有梁或点位。梁起点必须在 Ceiling 区域，终点可自由落点或物理 Surface snap，整根轴线至少须与一个 Ceiling 相交；参考面的确认走 pointer-down，因此不会被相机控制取消。梁工具显示可切换的正交锁定（Shift 同步切换）、物理 Surface snap、自由/捕捉/显式 Ceiling 标高跨越/无效的语义反馈，以及不改变画布高度的创建/拒绝结果；创建或编辑梁保持用户当前相机视角。Ctrl（Windows/Linux）或 Command（macOS）只在按住时允许跨越不同 Ceiling 标高，并始终保留起点 Ceiling 标高。详见 [Demo Beam 作者工具](docs/beam-authoring.md)。
 
 同一 Layout reference plane 也服务于灯具、喷淋头和传感器的新水平点位预览与放置；点位保存的仍是独立的 Installation reference plane 关系，而不是一个虚构的 Ceiling/Layout 宿主。隐藏共享平面不会移动现有点位，并会提示作者改用可见的合法实体宿主；墙面专用设备的宿主规则不变。
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const workspace = readFileSync(new URL("./three/ThreeDWorkspace.tsx", import.meta.url), "utf8");
+const compactWorkspace = workspace.replace(/\s+/g, " ");
 const scene = readFileSync(new URL("./components/ConduitScene.tsx", import.meta.url), "utf8");
 
 describe("device point interaction wiring", () => {
@@ -70,7 +71,7 @@ describe("device point interaction wiring", () => {
   });
 
   it("deletes the current selection when the Delete toolbar button is clicked", () => {
-    expect(workspace).toContain('item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)');
+    expect(compactWorkspace).toContain('item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)');
   });
 
   it("refreshes the keyboard Delete handler when the selection changes", () => {
@@ -88,7 +89,7 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain("重新选择灯具");
     expect(workspace).toContain("解除该路");
     expect(workspace).toContain("replaceLightingControlGroup(overlay, controlBinding.groupId, controlBinding.luminaireDeviceIds)");
-    expect(workspace).toContain("removeLightingControlGroup(overlay, group.id)");
+    expect(compactWorkspace).toMatch(/removeLightingControlGroup\(\s*overlay,\s*group\.id,?\s*\)/);
   });
 
   it("shows selected lighting relationships without rendering permanent physical conduit", () => {

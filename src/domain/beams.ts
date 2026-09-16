@@ -42,7 +42,7 @@ export function editBeam(nodes: Record<string, NodeData>, beam: BeamNode, edit: 
   const resolvePlan = edit.surfaceResolved ? (value: number) => value : quantizeBeamMeters;
   const start = (edit.start ?? beam.start).map(resolvePlan) as [number, number], end = (edit.end ?? beam.end).map(resolvePlan) as [number, number];
   const width = quantizeBeamMeters(edit.width ?? beam.width), height = quantizeBeamMeters(edit.height ?? beam.height);
-  return createBeam(nodes, { id: beam.id, name: edit.name?.trim() || beam.name, levelId: beam.parentId!, start, end, width, height });
+  return createBeam(nodes, { id: beam.id, name: edit.name?.trim() || beam.name, levelId: beam.parentId!, start, end, width, height, explicitCeilingCrossing: beam.explicitCeilingCrossing });
 }
 export const translateBeam = (nodes: Record<string, NodeData>, beam: BeamNode, delta: [number, number]) => editBeam(nodes, beam, { start: [beam.start[0] + delta[0], beam.start[1] + delta[1]], end: [beam.end[0] + delta[0], beam.end[1] + delta[1]] });
 export const nudgeBeamLaterally = (nodes: Record<string, NodeData>, beam: BeamNode, distance: number) => {

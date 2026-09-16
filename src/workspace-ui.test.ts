@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
 const planSource = readFileSync(resolve(process.cwd(), "src/plan/ConduitPlan.tsx"), "utf8");
 const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
+const compactThreeDSource = threeDSource.replace(/\s+/g, " ");
 const pascalSceneSource = readFileSync(resolve(process.cwd(), "src/three/PascalScenePreview.tsx"), "utf8");
 const conduitSceneSource = readFileSync(resolve(process.cwd(), "src/components/ConduitScene.tsx"), "utf8");
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
@@ -62,7 +63,7 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("keeps Canvas camera and controls configuration stable across drawing renders", () => {
-    expect(threeDSource).toContain("camera={projection === \"orthographic\" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA}");
+    expect(compactThreeDSource).toContain("camera={ projection === \"orthographic\" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA }");
     expect(threeDSource).toContain("dpr={CANVAS_DPR}");
     expect(threeDSource).toContain("gl={CANVAS_GL}");
     expect(threeDSource).toContain("mouseButtons={CONTROL_MOUSE_BUTTONS}");
@@ -71,6 +72,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("boundaryEnclosesCamera");
     expect(threeDSource).toContain("boundaryFriction={.12}");
     expect(threeDSource).toContain("minDistance={Math.max(.12, bounds.span * .01)}");
+    expect(threeDSource).toContain("}, [preset]);");
+    expect(threeDSource).not.toContain("}, [bounds, preset]);");
   });
 
   it("coalesces live pointer work and renders the 3D canvas only on demand", () => {
@@ -147,26 +150,36 @@ describe("conduit workspace UI contract", () => {
     expect(source).not.toContain("BeamFootprint.*尺寸");
   });
 
-  it("exposes 3D-only Beam geometry controls and endpoint handles", () => {
+  it("gives Beam reference-plane confirmation an obstacle-independent Canvas pointer-down path", () => {
+    expect(threeDSource).toContain('function BeamPlanePointerCapture');
+    expect(threeDSource).toContain('canvas.addEventListener("pointerdown", onPointerDown, true)');
+    expect(compactThreeDSource).toContain('<BeamPlanePointerCapture y={layoutReferencePlaneY} onPlace={onLayoutReferenceHit} />');
+    expect(threeDSource).toContain('data-beam-authoring-status');
+    expect(threeDSource).not.toContain('const setStatus = (_message: string) => undefined;');
+  });
+
+  it("exposes 3D-only Beam numeric geometry controls and scene dimensions", () => {
     expect(threeDSource).toContain("Beam 属性（3D）");
-    expect(threeDSource).toContain("左移 5 mm");
     expect(threeDSource).toContain("commitBeamEdit");
-    expect(threeDSource).toContain("onBeamDrag={(id, edit, commit)");
+    expect(threeDSource).toContain("梁位置");
+    expect(threeDSource).toContain("editBeamPlanarClearance");
+    expect(threeDSource).toContain('aria-label={`Beam planar clearance ${index + 1}`}');
     expect(threeDSource).toContain("beamEditPreview ?? beamPreview");
     expect(threeDSource).toContain("selectedBeam.start.join");
     expect(threeDSource).not.toContain('addEventListener("beam-drag"');
-    expect(pascalSceneSource).toContain('kind: "start" | "end"');
-    expect(pascalSceneSource).toContain('sphereGeometry args={[Math.max(.07, width * .35)');
-    expect(pascalSceneSource).toContain("setBodyDrag");
+    expect(pascalSceneSource).toContain("function BeamDimensionGuides");
+    expect(pascalSceneSource).toContain('data-beam-clearance-dimension={clearance.edge}');
+    expect(pascalSceneSource).not.toContain("setBodyDrag");
+    expect(pascalSceneSource).not.toContain("data-beam-handle");
     expect(pascalSceneSource).toContain("const rendered = beamPreview?.id === node.id ? beamPreview : node");
     expect(pascalSceneSource).toContain("onPointerMove");
     expect(source).not.toContain("Beam 属性（3D）");
   });
 
-  it("keeps physical Beam snap identities and clearance inputs in the transient 3D workflow", () => {
+  it("keeps physical Beam snap identities for creation and numeric clearance inputs for selection", () => {
     expect(threeDSource).toContain("snapBeamPoint");
     expect(threeDSource).toContain("梁表面捕捉");
-    expect(threeDSource).toContain("snapBeamEdit");
+    expect(threeDSource).not.toContain("snapBeamEdit");
     expect(threeDSource).toContain("selectedBeamClearances");
     expect(threeDSource).toContain('aria-label={`Beam ${clearance.edge} clearance`}');
     expect(source).not.toContain("Beam left clearance");
@@ -176,16 +189,27 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("beam-orthogonal-lock");
     expect(threeDSource).toContain("aria-pressed={orthogonal}");
     expect(threeDSource).toContain('data-beam-pointer-state={beamPointerState}');
+    expect(threeDSource).not.toContain('data-beam-reticle-state={state}');
     expect(threeDSource).toContain("Explicit Ceiling elevation crossing");
     expect(threeDSource).toContain("event.nativeEvent.ctrlKey || event.nativeEvent.metaKey");
     expect(styles).toContain(".beam-pointer-feedback");
   });
 
+  it("confirms the current Beam candidate from either a scene click or Enter", () => {
+    expect(threeDSource).toContain("function confirmBeamEndpoint");
+    expect(threeDSource).toContain('if (tool === "beam" && event.key === "Enter")');
+    expect(threeDSource).toContain("confirmBeamEndpoint();");
+    expect(threeDSource).toContain("confirmBeamEndpoint({ point: hit.point");
+    expect(threeDSource).toContain("confirmBeamEndpoint({ point, shiftKey: false, ctrlKey })");
+  });
+
   it("uses the shared Layout reference plane for eligible horizontal device points", () => {
     expect(threeDSource).toContain("const eligibleLayoutPoint");
     expect(threeDSource).toContain("const sharedPointPlane");
+    expect(threeDSource).toContain("eligibleLayoutPoint && layoutReferencePlane");
+    expect(threeDSource).toContain("布局参考面");
     expect(threeDSource).toContain("sharedPointPlane.elevationMm");
     expect(threeDSource).toContain("never a fake");
-    expect(threeDSource).toContain("Layout reference plane 已隐藏");
+    expect(threeDSource).toContain("布局参考面已关闭");
   });
 });

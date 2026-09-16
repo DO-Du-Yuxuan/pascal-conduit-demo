@@ -49,4 +49,18 @@ describe("overlay history", () => {
     useOverlayStore.getState().load(overlay);
     expect(useOverlayStore.getState().preview).toBeNull();
   });
+
+  it("does not notify subscribers when an equivalent transient preview is republished", () => {
+    const store = useOverlayStore.getState();
+    store.load(createEmptyOverlay("a.json", "a"));
+    const preview = { sourceSha: "a", system: "receptacle" as const, diameterMm: 20, levelId: "L0", points: [{ position: [0, 0, 0] as [number, number, number] }], plan: null };
+    store.publishPreview(preview);
+    let notifications = 0;
+    const unsubscribe = useOverlayStore.subscribe(() => { notifications += 1; });
+    useOverlayStore.getState().publishPreview(structuredClone(preview));
+    useOverlayStore.getState().clearPreview();
+    useOverlayStore.getState().clearPreview();
+    unsubscribe();
+    expect(notifications).toBe(1);
+  });
 });

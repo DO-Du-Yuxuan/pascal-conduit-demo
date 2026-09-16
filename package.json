@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "vitest run",
-    "verify:sample": "shasum -a 256 sample-data/default-layout.json | grep 32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167"
+    "verify:sample": "shasum -a 256 sample-data/default-layout.json | grep 48526ac17d3b5f6a6ed8f2a63863d8086e53a54762815dbe35ddfc80647d5d1c"
   },
   "dependencies": {
     "@pascal-app/core": "0.9.2",

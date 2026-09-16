@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getWallCurveFrameAt } from "../geometry/walls/curve";
-import { beamClearances, editBeamClearance, snapBeamPoint } from "./beam-positioning";
+import { beamClearances, beamPlanarClearances, editBeamClearance, editBeamPlanarClearance, snapBeamPoint } from "./beam-positioning";
 import { createBeam, editBeam } from "./beams";
 
 const nodes: any = { level: { id: "level", type: "level" }, ceiling: { id: "ceiling", type: "ceiling", parentId: "level", polygon: [[-2, -2], [12, -2], [12, 12], [-2, 12]] }, left: { id: "left", type: "wall", parentId: "level", start: [0, 0], end: [10, 0], thickness: .2 }, right: { id: "right", type: "wall", parentId: "level", start: [0, 4], end: [10, 4], thickness: .2 }, start: { id: "start", type: "wall", parentId: "level", start: [0, 0], end: [0, 4], thickness: .2 }, end: { id: "end", type: "wall", parentId: "level", start: [8, 0], end: [8, 4], thickness: .2 }, column: { id: "column", type: "column", parentId: "level", position: [6, 0, 2], width: .4, depth: .4 } };
@@ -27,6 +27,15 @@ describe("Beam physical positioning", () => {
     expect(clearances).toMatchObject([{ edge: "left", meters: 2.75, witness: { id: "right" } }, { edge: "right", meters: .75, witness: { id: "left" } }, { edge: "start", meters: .9, witness: { id: "start" } }, { edge: "end", meters: 2.9, witness: { id: "end" } }]);
     expect(editBeamClearance({ ...nodes, beam }, beam, "left", 2.9026).beam).toMatchObject({ start: [1, .845], end: [5, .845] });
     expect(editBeamClearance({ ...nodes, beam }, beam, "end", 2.0026).beam?.end).toEqual([5.8950000000000005, 1]);
+  });
+  it("gives every angled Beam two point-style planar position dimensions and translates the whole member", () => {
+    const beam = createBeam(nodes, { id: "angled", name: "斜梁", levelId: "level", start: [1, 1], end: [5, 2], width: .3 }).beam!;
+    const clearances = beamPlanarClearances({ ...nodes, beam }, beam);
+    expect(clearances).toHaveLength(2);
+    expect(clearances.map((item) => item.witness.id)).toContain("left");
+    const result = editBeamPlanarClearance({ ...nodes, beam }, beam, clearances[0]!, clearances[0]!.meters + .1026);
+    expect(result.beam).not.toBeNull();
+    expect(Math.hypot(result.beam!.end[0] - result.beam!.start[0], result.beam!.end[1] - result.beam!.start[1])).toBeCloseTo(Math.hypot(4, 1));
   });
   it("omits unreliable source geometry and never uses a Column as a clearance witness", () => {
     const incomplete = { ...nodes, left: { ...nodes.left, thickness: undefined }, column: { ...nodes.column, width: undefined, depth: undefined } };

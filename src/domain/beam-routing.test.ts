@@ -12,6 +12,7 @@ const beam = createBeam(base, { id: "beam", name: "入口梁", levelId: "level",
 const nodes = { ...base, beam };
 const free = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number] });
 const onBottom = (x: number, z: number): RoutePoint => ({ position: [x, 2.5, z], attachment: { hostId: "beam", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "level", localPosition: [z, 2.5, x], basis: { u: [1, 0, 0], v: [0, 0, 1] } } });
+const onSideA = (x: number, y: number): RoutePoint => ({ position: [x, y, -.15], attachment: { hostId: "beam", hostKind: "beam", surface: "side-a", normal: [0, 0, -1], levelId: "level", localPosition: [-.15, y, x], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
 
 describe("Beam routing obstacle", () => {
   it("exposes only valid authored Beam solids", () => {
@@ -28,6 +29,10 @@ describe("Beam routing obstacle", () => {
     const plan = planRoute("receptacle", 20, "surface", [onBottom(-.8, 0), onBottom(.8, 0)]);
     expect(beamRouteDiagnostics(nodes, plan)).toEqual([]);
     expect(plan.surfaceChases).toEqual([]);
+  });
+  it("allows a ceiling route to terminate on an exposed Beam side without treating the endpoint as a collision", () => {
+    const ceilingPoint: RoutePoint = { position: [0, 3, -1], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "level", localPosition: [0, 3, -1], basis: { u: [1, 0, 0], v: [0, 0, 1] } } };
+    expect(beamRouteDiagnostics(nodes, planRoute("receptacle", 20, "surface", [ceilingPoint, onSideA(0, 2.75)]))).toEqual([]);
   });
   it("does not treat the ceiling-adjacent top face as legal contact", () => {
     const top = (x: number): RoutePoint => ({ position: [x, 3, 0], attachment: { ...onBottom(x, 0).attachment!, surface: "top", normal: [0, 1, 0] } });

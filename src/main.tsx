@@ -146,7 +146,7 @@ const visibilityDefault: Visibility = {
 };
 const emptyView: ViewBox = { minX: -5, minZ: -5, width: 10, height: 10 };
 const DEFAULT_CANVAS_ROTATION = 90;
-const DEFAULT_CONDUIT_SOURCE_SHA = "32d135bef65a6a0fdb06485cc24a68a68cd864e9a4322907971c659b26c7e167";
+const DEFAULT_CONDUIT_SOURCE_SHA = "48526ac17d3b5f6a6ed8f2a63863d8086e53a54762815dbe35ddfc80647d5d1c";
 type EvaluationRunState = { running: boolean; progress: number; label: string; lastDurationMs: number | null };
 type S1UiReport = { highFrequencyPathEfficiency: S1HighFrequencyPathReport; highFrequencyPathEfficiencyScoring: S1HighFrequencyPathScoreSummary; spaceOrganization: S1SpaceOrganizationReport; activityZoning: S1ActivityZoningReport; spaceUtilization: S1SpaceUtilizationReport; storageConfiguration: S1StorageConfigurationReport; aggregate: S1AggregateReport };
 const initialEvaluationRunState: EvaluationRunState = { running: false, progress: 0, label: "", lastDurationMs: null };
@@ -155,6 +155,29 @@ const formatPanelLength = (valueMeters: number, unit: MeasurementUnit) => unit =
 const builtInRequirementLoad = loadRequirementHandoffJson(bellevueRequirementText);
 if (!builtInRequirementLoad.ok) throw new Error(builtInRequirementLoad.error);
 const BELLEVUE_DEMO_REQUIREMENTS = builtInRequirementLoad.handoff;
+
+class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("[DEBUG-beam-white-screen]", error, info.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return <main style={{ margin: 24, maxWidth: 900, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+      <h1>页面渲染错误</h1>
+      <p>请截取以下内容并发送给开发者：</p>
+      <pre data-debug-error="beam-white-screen">{`${this.state.error.name}: ${this.state.error.message}\n\n${this.state.error.stack || "未提供调用栈"}`}</pre>
+      <button onClick={() => window.location.reload()}>刷新并重试</button>
+    </main>;
+  }
+}
+
 function App() {
   const [data, setData] = useState<Parsed | null>(null),
     [file, setFile] = useState("未导入文件"),
@@ -2573,4 +2596,4 @@ function CoverageReport({
     </section>
   );
 }
-createRoot(document.getElementById("root")!).render(<App />);
+createRoot(document.getElementById("root")!).render(<DebugErrorBoundary><App /></DebugErrorBoundary>);

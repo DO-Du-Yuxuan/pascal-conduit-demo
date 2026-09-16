@@ -35,4 +35,12 @@ describe("Layout reference plane", () => {
     expect(edited.devices[0]).toMatchObject({ position: { position: [1, 2.8, 1] }, mount: { kind: "reference-plane", levelId: "level", elevationMm: 2800 } });
     expect(parseOverlay(JSON.parse(JSON.stringify(edited))).devices[0]?.mount).toMatchObject({ kind: "reference-plane", levelId: "level", elevationMm: 2800 });
   });
+
+  it("gives every reference-plane point a downward display normal without inventing a Ceiling host", () => {
+    for (const type of ["luminaire", "sprinkler-head", "sensor"] as const) {
+      const device = createReferencePlaneDevice(type, [1, 2.8, 1], "level", 2800);
+      expect(device).toMatchObject({ orientation: [0, -1, 0], frame: { front: [0, -1, 0] }, position: { position: [1, 2.8, 1] } });
+      expect(device.position.attachment).toBeUndefined();
+    }
+  });
 });

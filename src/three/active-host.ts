@@ -72,3 +72,13 @@ export function projectRayToActiveWall(node: NodeData | undefined, active: Route
   const clamped: Vec3 = [best.point[0], Math.max(baseY, Math.min(baseY + height, best.point[1])), best.point[2]];
   return { position: clamped, attachment: { ...attachment, normal: best.normal, localPosition: [best.t, clamped[1] - baseY, sideOffset], basis: { u: best.tangent, v: [0, 1, 0] }, curveT: best.t } };
 }
+
+/**
+ * The active wall normally owns the cursor so a host behind its render hole
+ * cannot steal a wall-mounted route. This seam makes an explicitly hit Beam
+ * face an intentional host transition instead of projecting it back to wall.
+ */
+export function routeCursorFromActiveWall(node: NodeData | undefined, active: RoutePoint, origin: Vec3, direction: Vec3, surfaceHit: RoutePoint | null): RoutePoint | null {
+  if (surfaceHit?.attachment?.hostKind === "beam") return surfaceHit;
+  return projectRayToActiveWall(node, active, origin, direction);
+}

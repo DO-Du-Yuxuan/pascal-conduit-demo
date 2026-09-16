@@ -1,8 +1,44 @@
 # Pascal Conduit Routing
 
-This context describes the language used while interactively drafting conduit routes over a read-only Pascal building model.
+This context describes the language used while interactively editing a Pascal building model and drafting conduit routes over it.
 
 ## Language
+
+**Ceiling**:
+The modeled upper surface of an interior space and a possible host for building elements or device points. It does not by itself mean a suspended or decorative ceiling system.
+_Avoid_: Suspended ceiling, slab, installation reference plane
+
+**Effective ceiling elevation**:
+The elevation supplied by a Ceiling for hosted geometry; it is explicit when the Ceiling records a height and otherwise uses the Demo's identified 2700 mm derived default.
+_Avoid_: Beam height, level elevation, installation reference plane elevation
+
+**Beam**:
+A straight rectangular building member whose longitudinal span is defined by two endpoints and whose cross-section is defined by width and height. Its top follows its source Ceiling's effective elevation, normally across only same-elevation Ceilings unless the author explicitly crosses a Ceiling elevation boundary.
+_Avoid_: Wall, column, conduit support, installation reference plane
+
+**Explicit Ceiling elevation crossing**:
+A deliberate Beam-authoring override held with Ctrl or Command while crossing into a different-elevation Ceiling region. The Beam remains straight and keeps its source Ceiling elevation; the action does not step, split, or retarget the Beam vertically.
+_Avoid_: Automatic elevation change, stepped Beam, Beam penetration
+
+**Beam face**:
+One of a Beam's exposed bottom, side, or end surfaces that can host a surface-routed conduit. The top surface touching a Ceiling is not a Beam face available for conduit routing.
+_Avoid_: Ceiling face, wall face, free-space routing plane
+
+**Beam penetration**:
+A construction opening created where an explicitly penetrating conduit passes through a Beam. It belongs to the conduit construction plan rather than to the Beam's base geometry.
+_Avoid_: Surface route, collision, beam notch
+
+**Beam positioning dimension**:
+A live, editable clearance from a selected Beam side or endpoint to the nearest reliable parallel Wall or neighboring Beam face. Moving the whole Beam preserves its span, while moving one endpoint may change its length and direction; both update their physical witnesses at 5 mm resolution.
+_Avoid_: Beam size, wall centreline distance, text-only annotation
+
+**Unhosted device point**:
+A device point that retains its world position after its former Beam host moves away or changes shape. It remains present but no longer claims a physical host and requires explicit repositioning or reattachment.
+_Avoid_: Beam-following device, deleted device, installation reference plane device
+
+**Project identity**:
+The stable identity shared by successive saved versions of the same building project, independent of any one file version's content fingerprint.
+_Avoid_: File name, content fingerprint, Overlay version
 
 **Device point**:
 A placed device with physical and construction meaning, such as a socket, switch, luminaire, sprinkler head, or distribution panel. It is distinct from the device's connection ports and from conduit route control points.
@@ -27,6 +63,18 @@ _Avoid_: Three-dimensional coordinate equality, auxiliary alignment
 **Installation reference plane**:
 A per-level virtual horizontal plane used to place device points at an explicit elevation when the actual ceiling, beam, or other mounting host is absent from the building model.
 _Avoid_: Ceiling, slab, building host
+
+**Layout reference plane**:
+A per-level horizontal editing surface shared by Beam authoring and eligible horizontal device-point placement. Its independently persisted Overlay setting is visible and enabled by default at the Level's effective Ceiling elevation, may be hidden or moved for editing, and affects only new or uncommitted geometry rather than previously placed objects.
+_Avoid_: Ceiling, building host, Beam elevation, selection plane
+
+**Orthogonal lock**:
+An explicit, visible authoring state that constrains a new Beam preview to the Layout reference plane's world X or Z direction. Shift toggles the state; it is not a hidden hold-only modifier and does not change committed geometry.
+_Avoid_: Surface snap, auxiliary alignment, permanent Beam constraint
+
+**Surface snap**:
+A pointer candidate that resolves a new Beam point to a real Wall, Column, or Beam face and visibly identifies that physical target before confirmation.
+_Avoid_: Auxiliary alignment, centreline snap, visual proximity
 
 **Local reconnection**:
 Manual replacement of only the conduit legs directly adjacent to a moved device point, bounded by the nearest ports, fittings, confirmed route points, or open route endpoints; the rest of the network remains unchanged.

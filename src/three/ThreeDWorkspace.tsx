@@ -1,7 +1,7 @@
 import { CameraControls, CameraControlsImpl } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BackSide, Box3, Vector3 } from "three";
+import { BackSide, Box3, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode } from "../domain/overlay";
 import { migrateOverlayOwnership, overlayBelongsToProject } from "../domain/workspace";
@@ -15,13 +15,13 @@ import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from ".
 import { connectedRouteElementIds } from "../domain/route-selection";
 import { projectRoutePointToDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
-import { constrainBeamEnd, createBeam, editBeam, nudgeBeamLaterally, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
+import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
-import { beamClearances, editBeamClearance, snapBeamPoint, type BeamSnap } from "../domain/beam-positioning";
+import { beamClearances, beamPlanarClearances, editBeamClearance, editBeamPlanarClearance, snapBeamPoint } from "../domain/beam-positioning";
 import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments, revalidateBeamPenetrations } from "../domain/beam-routing";
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
-import { projectRayToActiveWall } from "./active-host";
+import { routeCursorFromActiveWall } from "./active-host";
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
 import { DEFAULT_3D_LAYERS, type ThreeDLevelMode, type ThreeDViewPreset, type ThreeDWallMode, viewStateForPreset } from "./view-state";
 
@@ -90,12 +90,10 @@ function useRafCoalescedDevicePreview(initial: DevicePreview | null) {
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
   return [value, setImmediate, schedule, latest] as const;
 }
-// The footer was intentionally removed from the workspace: status changes
-// must not alter the canvas height while a route is being drawn.
-const setStatus = (_message: string) => undefined;
-
 function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPreset }) {
   const controls = useRef<CameraControlsImpl>(null!);
+  const latestBounds = useRef(bounds);
+  latestBounds.current = bounds;
   const canvas = useThree((state) => state.gl.domElement);
   useEffect(() => {
     const suppressBrowserZoom = (event: WheelEvent) => {
@@ -110,13 +108,17 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
     if (!controls.current) return;
     const extent = Number.MAX_SAFE_INTEGER;
     controls.current.setBoundary(new Box3(new Vector3(-extent, GROUND_CAMERA_CLEARANCE, -extent), new Vector3(extent, extent, extent)));
-    const [x, y, z] = bounds.center, distance = bounds.span * 1.35;
+  }, [bounds]);
+  useEffect(() => {
+    if (!controls.current) return;
+    const currentBounds = latestBounds.current;
+    const [x, y, z] = currentBounds.center, distance = currentBounds.span * 1.35;
     const viewpoints: Record<ViewPreset, [number, number, number, number, number, number]> = {
       exterior: [x + distance, y + distance * .72, z + distance, x, y, z], interior: [x + distance * .55, Math.max(1.6, y), z + distance * .55, x, Math.max(1.35, y), z], floor: [x, y + distance * 1.6, z, x, 0, z], ceiling: [x, Math.max(.7, y - distance * .15), z, x, y + distance * .55, z], top: [x, y + distance * 1.6, z, x, y, z], front: [x, y + distance * .45, z + distance, x, y, z], back: [x, y + distance * .45, z - distance, x, y, z], left: [x - distance, y + distance * .45, z, x, y, z], right: [x + distance, y + distance * .45, z, x, y, z], isometric: [x + distance, y + distance, z + distance, x, y, z],
     };
     const [cameraX, cameraY, cameraZ, targetX, targetY, targetZ] = viewpoints[preset];
     void controls.current.setLookAt(cameraX, cameraY, cameraZ, targetX, targetY, targetZ, false);
-  }, [bounds, preset]);
+  }, [preset]);
   // `infinityDolly` deliberately moves the orbit target after reaching the
   // closest distance. No scene geometry is registered as a collider, so the
   // camera can pass through walls, ceilings, furniture and conduit. The only
@@ -141,18 +143,44 @@ function InstallationPlane({ bounds, y, onPreview, onPlace }: { bounds: ThreeDBo
   return <LayoutPlane bounds={bounds} y={y} onPreview={(position) => onPreview(position)} onPlace={(position) => onPlace(position)} />;
 }
 
-function LayoutPlane({ bounds, y, onPreview, onPlace }: { bounds: ThreeDBounds; y: number; onPreview: (position: [number, number, number] | null, ctrlKey: boolean) => void; onPlace: (position: [number, number, number], ctrlKey: boolean) => void }) {
+function LayoutPlane({ bounds, y, onPreview, onPlace, confirmOnPointerDown = false }: { bounds: ThreeDBounds; y: number; onPreview: (position: [number, number, number] | null, ctrlKey: boolean) => void; onPlace: (position: [number, number, number], ctrlKey: boolean) => void; confirmOnPointerDown?: boolean }) {
   const size = Math.max(4, bounds.span * 1.6);
-  return <mesh name="layout-reference-plane" position={[bounds.center[0], y, bounds.center[2]]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { event.stopPropagation(); onPreview([event.point.x, y, event.point.z], event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }} onPointerOut={() => onPreview(null, false)} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onPlace([event.point.x, y, event.point.z], event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }}>
+  const place = (event: { point: { x: number; z: number }; nativeEvent: MouseEvent }) => onPlace([event.point.x, y, event.point.z], event.nativeEvent.ctrlKey || event.nativeEvent.metaKey);
+  return <mesh name="layout-reference-plane" position={[bounds.center[0], y, bounds.center[2]]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { event.stopPropagation(); onPreview([event.point.x, y, event.point.z], event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }} onPointerOut={() => onPreview(null, false)} onPointerDown={(event) => { if (!confirmOnPointerDown || event.nativeEvent.button !== 0) return; event.stopPropagation(); place(event); }} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); if (!confirmOnPointerDown) place(event); }}>
     <planeGeometry args={[size, size]} /><meshBasicMaterial color="#38bdf8" transparent opacity={.13} depthWrite={false} side={2} />
   </mesh>;
+}
+
+/**
+ * Beam placement cannot depend on which visible mesh wins R3F's hit-test:
+ * the Layout plane is the authoring coordinate system, not a scene object.
+ */
+function BeamPlanePointerCapture({ y, onPlace }: { y: number; onPlace: (position: [number, number, number], ctrlKey: boolean) => void }) {
+  const { camera, gl } = useThree();
+  const latestPlace = useRef(onPlace);
+  useEffect(() => { latestPlace.current = onPlace; }, [onPlace]);
+  useEffect(() => {
+    const canvas = gl.domElement, raycaster = new Raycaster(), pointer = new Vector2(), plane = new Plane(new Vector3(0, 1, 0), -y), intersection = new Vector3();
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return;
+      const bounds = canvas.getBoundingClientRect();
+      pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -((event.clientY - bounds.top) / bounds.height * 2 - 1));
+      raycaster.setFromCamera(pointer, camera);
+      if (!raycaster.ray.intersectPlane(plane, intersection)) return;
+      event.preventDefault(); event.stopImmediatePropagation();
+      latestPlace.current([intersection.x, y, intersection.z], event.ctrlKey || event.metaKey);
+    };
+    canvas.addEventListener("pointerdown", onPointerDown, true);
+    return () => canvas.removeEventListener("pointerdown", onPointerDown, true);
+  }, [camera, gl, y]);
+  return null;
 }
 
 /** A semantic scene reticle; the panel counterpart remains readable over dense geometry. */
 function BeamAuthoringMarker({ pointer, state }: { pointer: BeamPointer | null; state: "free" | "surface-snap" | "crossing" | "invalid" | null }) {
   if (!pointer || !state) return null;
   const color = state === "invalid" ? "#ef4444" : state === "crossing" ? "#f59e0b" : state === "surface-snap" ? "#22c55e" : "#ffffff";
-  return <group data-beam-reticle-state={state} position={[pointer.point[0], pointer.point[1] + .012, pointer.point[2]]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}><mesh><ringGeometry args={[.045, .07, 20]} /><meshBasicMaterial color={color} transparent opacity={.95} /></mesh>{state === "surface-snap" && <mesh><circleGeometry args={[.018, 16]} /><meshBasicMaterial color={color} /></mesh>}</group>;
+  return <group name={`beam-reticle:${state}`} position={[pointer.point[0], pointer.point[1] + .012, pointer.point[2]]} rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}><mesh><ringGeometry args={[.045, .07, 20]} /><meshBasicMaterial color={color} transparent opacity={.95} /></mesh>{state === "surface-snap" && <mesh><circleGeometry args={[.018, 16]} /><meshBasicMaterial color={color} /></mesh>}</group>;
 }
 
 const copy = (overlay: ConduitOverlayDocument) => structuredClone(overlay);
@@ -200,7 +228,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const matchingOverlay = overlayForProject(initialSharedState.overlay, sourceSha, projectId);
   const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
   const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
-  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState({ widthMm: 300, heightMm: 500 }), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [beamEditSnap, setBeamEditSnap] = useState<BeamSnap | null>(null);
+  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState({ widthMm: 300, heightMm: 500 }), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
   const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
@@ -226,12 +254,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const selectedDevice = overlay.devices.find((device) => device.id === selectedId);
   const selectedBeam = scene && selectedId ? validateBeam(scene.nodes[selectedId], scene.nodes).beam : null;
   const selectedBeamClearances = selectedBeam && scene ? beamClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
-  const snapBeamEdit = (edit: BeamEdit) => {
-    if (!selectedBeam || !scene) return edit;
-    if (edit.start && !edit.end) { const snap = snapBeamPoint(scene.nodes, selectedBeam.parentId!, edit.start, .15, selectedBeam.id); setBeamEditSnap(snap); return { ...edit, start: snap?.point ?? edit.start, surfaceResolved: Boolean(snap) }; }
-    if (edit.end && !edit.start) { const snap = snapBeamPoint(scene.nodes, selectedBeam.parentId!, edit.end, .15, selectedBeam.id); setBeamEditSnap(snap); return { ...edit, end: snap?.point ?? edit.end, surfaceResolved: Boolean(snap) }; }
-    return edit;
-  };
+  const selectedBeamPlanarClearances = selectedBeam && scene ? beamPlanarClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
   const selectedDevices = selectedDeviceIds.map((id) => overlay.devices.find((device) => device.id === id)).filter((device): device is NetworkDevice => Boolean(device));
   const selectedHasLuminaire = selectedDevices.some((device) => device.deviceType === "luminaire");
   const boundLuminaireIds = new Set(overlay.lightingControlGroups.flatMap((group) => group.luminaireDeviceIds));
@@ -306,6 +329,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (tool === "beam" && event.key === "Shift" && !event.repeat) { event.preventDefault(); orthogonalDirection.current = null; setOrthogonal((value) => !value); setStatus("Orthogonal lock 已切换。 "); return; }
       if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
       if (event.key === "Escape") { if (controlBinding) { cancelControlBinding(); return; } if (tool === "select") { selectWhileBrowsing(null); return; } if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; } if (penetrationSession) { setPenetrationSession(null); setCursor(null); return; } setBranchStart(null); setBranchEnd(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
+      if (tool === "beam" && event.key === "Enter") { event.preventDefault(); confirmBeamEndpoint(); return; }
       if (event.key === "Enter") { event.preventDefault(); if (controlBinding?.kind === "edit") { finishControlGroupEdit(); return; } finishCurrentRoute("confirmed-only"); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && latestCursor.current?.attachment && draft.length) {
         event.preventDefault();
@@ -314,7 +338,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       }
     };
     window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, controlBinding]);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, controlBinding]);
 
   const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const finishControlGroupEdit = () => {
@@ -453,7 +477,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const activeTargetPort = activeTargetDevice && deviceTargetPorts(activeTargetDevice, system).find((port) => port.id === activeTargetPortId);
   const activeTargetResolution = draft.length && activeTargetPort ? resolveTargetClick(draft[draft.length - 1], { kind: "device-port", point: activeTargetPort.position, targetId: activeTargetPort.id, label: `${activeTargetDevice?.name || DEVICE_DEFAULTS[activeTargetDevice!.deviceType].label}端口`, distancePixels: 0, compatible: true }, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current }) : null;
   const deviceTargetMode = activeTargetResolution?.kind === "connect" ? "connect" : activeTargetResolution?.kind === "confirm-alignment" ? "alignment" : null;
-  const activeBeamSnap = beamEditSnap ?? beamSnapTarget;
+  const activeBeamSnap = beamSnapTarget;
   const snapStatus = (tool === "beam" || selectedBeam) && activeBeamSnap ? `梁表面捕捉 · ${activeBeamSnap.target.kind} · ${activeBeamSnap.target.id}` : !draft.length ? null : activeTargetDevice && activeTargetPort
     ? `设备端口 · ${deviceTargetMode === "connect" ? "连接后结束" : "辅助对齐"}`
     : branchPreview?.valid ? "分支捕捉" : hoverId?.startsWith("open-end:") ? "开放管端 · 捕捉" : null;
@@ -497,6 +521,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commitSharedWorkspace(nextProject, current.overlay, true, current.dirty);
     onSelect(beam.id); setBeamStart(null); setBeamPointer(null); setStatus("已创建 Beam；工具保持开启，可继续绘制。");
   };
+  function confirmBeamEndpoint(fallback?: BeamPointer) {
+    const endpoint = beamPointer ?? fallback;
+    if (!endpoint) { setStatus("请先移动鼠标确定 Beam 终点。 "); return; }
+    commitBeam(endpoint);
+  }
   const previewBeamEdit = (edit: BeamEdit) => {
     if (!selectedBeam || !scene) return;
     setBeamEditPreview(editBeam(scene.nodes, selectedBeam, edit).beam);
@@ -504,7 +533,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const commitBeamEdit = (edit: BeamEdit) => {
     if (!selectedBeam || !scene) return;
     const result = editBeam(scene.nodes, selectedBeam, edit);
-    setBeamEditPreview(null); setBeamEditSnap(null);
+    setBeamEditPreview(null);
     if (!result.valid || !result.beam) { setStatus(result.diagnostics[0] ?? "Beam 编辑无效。"); return; }
     const current = useOverlayStore.getState(), project = current.project;
     if (!project || !project.raw.nodes || typeof project.raw.nodes !== "object") return;
@@ -535,12 +564,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
     if (tool === "beam") {
       if (!beamStart) { if (hit.attachment.hostKind !== "ceiling" || !hit.attachment.levelId) { setStatus("Beam 必须从 Ceiling 下表面开始。 "); return; } setBeamStart(hit); setBeamPointer(hit); setStatus("已确定梁起点；移动鼠标预览，第二次单击创建。Shift 约束水平正交。 "); return; }
-      commitBeam({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
+      confirmBeamEndpoint({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
     }
     if (tool === "point") { try { commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, routePoint(hit))] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
-    const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(latestCursor.current), routePoint(hit));
+    const clickedPoint = routePoint(hit);
+    const point = resolveConfirmedRoutePoint(hit.attachment.hostKind === "beam" ? clickedPoint : resolveEffectiveCursor(latestCursor.current), clickedPoint);
     if (!point) return;
     if (penetrationSession) { const exit = penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
     const constrained = point, candidate = [...draft, constrained];
@@ -549,7 +579,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   const onLayoutReferenceHit = (point: [number, number, number], ctrlKey = false) => {
     if (tool !== "beam" || !activeLevelId) return;
-    if (!beamStart && scene && !beamSourceExistsAt(scene.nodes, activeLevelId, [point[0], point[2]])) { setStatus("Layout reference plane 只能在有效 Ceiling 区域开始 Beam。 "); return; }
+    if (!beamStart && scene && !beamSourceExistsAt(scene.nodes, activeLevelId, [point[0], point[2]])) { setStatus("布局参考面只能在有效 Ceiling 区域开始 Beam。 "); return; }
+    if (beamStart) { confirmBeamEndpoint({ point, shiftKey: false, ctrlKey }); return; }
     onSurfaceHit({ point, shiftKey: false, ctrlKey, attachment: { hostId: `layout-reference-plane:${activeLevelId}`, hostKind: "ceiling", surface: "layout-reference-plane", normal: [0, -1, 0], levelId: activeLevelId } });
   };
   const onStartDeviceRoute = (device: NetworkDevice, portId?: string, targetPoint?: [number, number, number]) => {
@@ -657,7 +688,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const active = draft[draft.length - 1];
     if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
     if ((tool === "draw" || tool === "branch" && branchStart) && active?.attachment?.hostKind === "wall") {
-      const projected = projectRayToActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction);
+      const projected = routeCursorFromActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction, surfaceHit ? routePoint(surfaceHit) : null);
       if (projected) { scheduleCursor(projected); return; }
       if (surfaceHit) scheduleCursor(routePoint(surfaceHit));
       else scheduleCursor(null);
@@ -680,104 +711,1600 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
   if (!scene.rootNodeIds.length) return <section className="three-d-empty"><b>无法建立 3D 场景</b>{scene.diagnostics.map((diagnostic) => <span key={diagnostic.code}>{diagnostic.message}</span>)}</section>;
-  return <section className="three-d-workspace">
+  return (
+    <section className="three-d-workspace">
     <header className="three-d-toolbar">
-      <div className="three-d-group"><b>3D 视图</b>{(["exterior", "interior", "floor", "ceiling"] as const).map((item) => <button className={preset === item ? "active" : ""} onClick={() => choosePreset(item)} key={item}>{({ exterior: "外观", interior: "室内", floor: "地板", ceiling: "天花" } as const)[item]}</button>)}</div>
-      <div className="three-d-group"><span>角度</span>{(["top", "front", "back", "left", "right", "isometric"] as const).map((item) => <button onClick={() => setPreset(item)} key={item}>{({ top: "顶", front: "前", back: "后", left: "左", right: "右", isometric: "等轴" } as const)[item]}</button>)}</div>
-      <div className="three-d-group"><label>投影 <select value={projection} onChange={(event) => setProjection(event.target.value as typeof projection)}><option value="perspective">透视</option><option value="orthographic">正交</option></select></label><label>楼层 <select value={levelMode} onChange={(event) => setLevelMode(event.target.value as LevelMode)}><option value="stacked">叠放</option><option value="exploded">爆炸</option><option value="solo">单层</option></select></label><label>墙体 <select value={wallMode} onChange={(event) => setWallMode(event.target.value as WallMode)}><option value="up">完整</option><option value="cutaway">剖开</option><option value="translucent">半透明</option><option value="down">隐藏</option></select></label></div>
-      <div className="three-d-group three-d-layers">{(Object.entries({ walls: "墙", floors: "地板", ceilings: "天花", beams: "梁", roofs: "屋顶", openings: "门窗", furniture: "家具", zones: "Zone" }) as Array<[keyof ThreeDLayerVisibility, string]>).map(([key, label]) => <label key={key}><input type="checkbox" checked={layers[key]} onChange={() => setLayers((current) => ({ ...current, [key]: !current[key] }))} />{label}</label>)}</div>
+        <div className="three-d-group">
+          <b>3D 视图</b>
+          {(["exterior", "interior", "floor", "ceiling"] as const).map(
+            (item) => (
+              <button
+                className={preset === item ? "active" : ""}
+                onClick={() => choosePreset(item)}
+                key={item}
+              >
+                {
+                  (
+                    {
+                      exterior: "外观",
+                      interior: "室内",
+                      floor: "地板",
+                      ceiling: "天花",
+                    } as const
+                  )[item]
+                }
+              </button>
+            ),
+          )}
+        </div>
+        <div className="three-d-group">
+          <span>角度</span>
+          {(
+            ["top", "front", "back", "left", "right", "isometric"] as const
+          ).map((item) => (
+            <button onClick={() => setPreset(item)} key={item}>
+              {
+                (
+                  {
+                    top: "顶",
+                    front: "前",
+                    back: "后",
+                    left: "左",
+                    right: "右",
+                    isometric: "等轴",
+                  } as const
+                )[item]
+              }
+            </button>
+          ))}
+        </div>
+        <div className="three-d-group">
+          <label>
+            投影{" "}
+            <select
+              value={projection}
+              onChange={(event) =>
+                setProjection(event.target.value as typeof projection)
+              }
+            >
+              <option value="perspective">透视</option>
+              <option value="orthographic">正交</option>
+            </select>
+          </label>
+          <label>
+            楼层{" "}
+            <select
+              value={levelMode}
+              onChange={(event) =>
+                setLevelMode(event.target.value as LevelMode)
+              }
+            >
+              <option value="stacked">叠放</option>
+              <option value="exploded">爆炸</option>
+              <option value="solo">单层</option>
+            </select>
+          </label>
+          <label>
+            墙体{" "}
+            <select
+              value={wallMode}
+              onChange={(event) => setWallMode(event.target.value as WallMode)}
+            >
+              <option value="up">完整</option>
+              <option value="cutaway">剖开</option>
+              <option value="translucent">半透明</option>
+              <option value="down">隐藏</option>
+            </select>
+          </label>
+        </div>
+        <div className="three-d-group three-d-layers">
+          {(
+            Object.entries({
+              walls: "墙",
+              floors: "地板",
+              ceilings: "天花",
+              beams: "梁",
+              roofs: "屋顶",
+              openings: "门窗",
+              furniture: "家具",
+              zones: "Zone",
+            }) as Array<[keyof ThreeDLayerVisibility, string]>
+          ).map(([key, label]) => (
+            <label key={key}>
+              <input
+                type="checkbox"
+                checked={layers[key]}
+                onChange={() =>
+                  setLayers((current) => ({ ...current, [key]: !current[key] }))
+                }
+              />
+              {label}
+            </label>
+          ))}
+        </div>
     </header>
     <div className="three-d-canvas">
-      <aside className={`conduit-panel ${panelCollapsed ? "collapsed" : ""}`} aria-label="管线编辑工具">
+        <aside
+          className={`conduit-panel ${panelCollapsed ? "collapsed" : ""}`}
+          aria-label="管线编辑工具"
+        >
         <div className="conduit-panel-head">
-          {!panelCollapsed && <div><b>{tool === "beam" ? "Beam 编辑" : "管线编辑"}</b><small>{({ select: "选择与属性", draw: "绘制新管线", branch: "从已有管线分支", point: "放置设备点位", beam: "从 Ceiling 下表面绘制梁", delete: "删除网络对象" } as const)[tool]}</small></div>}
-          <button className="conduit-panel-collapse" aria-expanded={!panelCollapsed} onClick={() => setPanelCollapsed((value) => !value)}>{panelCollapsed ? "管线" : "收起"}</button>
+            {!panelCollapsed && (
+              <div>
+                <b>{tool === "beam" ? "Beam 编辑" : "管线编辑"}</b>
+                <small>
+                  {
+                    (
+                      {
+                        select: "选择与属性",
+                        draw: "绘制新管线",
+                        branch: "从已有管线分支",
+                        point: "放置设备点位",
+                        beam: "从 Ceiling 下表面绘制梁",
+                        delete: "删除网络对象",
+                      } as const
+                    )[tool]
+                  }
+                </small>
         </div>
-        {!panelCollapsed && <>
+            )}
+            <button
+              className="conduit-panel-collapse"
+              aria-expanded={!panelCollapsed}
+              onClick={() => setPanelCollapsed((value) => !value)}
+            >
+              {panelCollapsed ? "管线" : "收起"}
+            </button>
+          </div>
+          {!panelCollapsed && (
+            <>
           <nav className="conduit-tool-grid" aria-label="编辑工具">
-            {(["select", "draw", "branch", "point", "beam", "delete"] as Tool[]).map((item) => <button key={item} title={({ select: "选择对象", draw: "绘制管线", branch: "从已有管段拉出分支", point: "放置设备点位", beam: "绘制 Beam", delete: "删除管网对象" } as const)[item]} className={tool === item ? `active tool-${item}` : `tool-${item}`} onClick={() => item === "delete" && (selectedId || selectedDeviceIds.length) ? deleteSelectedObjects() : chooseTool(item)}>{({ select: "选择", draw: "画管", branch: "分支", point: "点位", beam: "梁", delete: "删除" } as const)[item]}</button>)}
+                {(
+                  [
+                    "select",
+                    "draw",
+                    "branch",
+                    "point",
+                    "beam",
+                    "delete",
+                  ] as Tool[]
+                ).map((item) => (
+                  <button
+                    key={item}
+                    title={
+                      (
+                        {
+                          select: "选择对象",
+                          draw: "绘制管线",
+                          branch: "从已有管段拉出分支",
+                          point: "放置设备点位",
+                          beam: "绘制 Beam",
+                          delete: "删除管网对象",
+                        } as const
+                      )[item]
+                    }
+                    className={
+                      tool === item ? `active tool-${item}` : `tool-${item}`
+                    }
+                    onClick={() =>
+                      item === "delete" &&
+                      (selectedId || selectedDeviceIds.length)
+                        ? deleteSelectedObjects()
+                        : chooseTool(item)
+                    }
+                  >
+                    {
+                      (
+                        {
+                          select: "选择",
+                          draw: "画管",
+                          branch: "分支",
+                          point: "点位",
+                          beam: "梁",
+                          delete: "删除",
+                        } as const
+                      )[item]
+                    }
+                  </button>
+                ))}
           </nav>
-          {tool === "beam" && <button type="button" className={orthogonal ? "active beam-orthogonal-lock" : "beam-orthogonal-lock"} aria-pressed={orthogonal} onClick={() => { orthogonalDirection.current = null; setOrthogonal((value) => !value); }}>正交锁定：{orthogonal ? "开启" : "关闭"}</button>}
-          {tool === "beam" && <section className="conduit-tool-options"><b>截面（当前会话）</b><label>宽<span><input type="number" min="1" value={beamSection.widthMm} onChange={(event) => setBeamSection((current) => ({ ...current, widthMm: Math.max(1, Number(event.target.value) || current.widthMm) }))} /> mm</span></label><label>高<span><input type="number" min="1" value={beamSection.heightMm} onChange={(event) => setBeamSection((current) => ({ ...current, heightMm: Math.max(1, Number(event.target.value) || current.heightMm) }))} /> mm</span></label>{layoutReferencePlane && <><b>Layout reference plane</b><label><input type="checkbox" checked={layoutReferencePlane.visible} onChange={(event) => commit({ ...overlay, layoutReferencePlanes: replaceLayoutReferencePlane(overlay.layoutReferencePlanes, { ...layoutReferencePlane, visible: event.target.checked }) })} /> 显示活动 Level 平面</label><label>高度<span><input aria-label="Layout reference plane height" type="number" min="0" value={layoutReferencePlane.elevationMm} onChange={(event) => { const elevationMm = Number(event.target.value); if (Number.isFinite(elevationMm) && elevationMm >= 0) commit({ ...overlay, layoutReferencePlanes: replaceLayoutReferencePlane(overlay.layoutReferencePlanes, { ...layoutReferencePlane, elevationMm, basis: "explicit", sourceCeilingId: undefined }) }); }} /> mm</span></label><small>{layoutReferencePlane.basis === "largest-area-ceiling" ? "基于最大 Ceiling 面积" : layoutReferencePlane.basis === "derived-default-2700mm" ? "推导默认值 2700 mm" : "显式高度"}</small></>}<small>初始值 300 × 500 mm，仅为作者工具默认值，不是结构标准。</small></section>}
-          {tool === "select" && selectedBeam && <section key={`${selectedBeam.id}:${selectedBeam.name}:${selectedBeam.start.join(":")}:${selectedBeam.end.join(":")}:${selectedBeam.width}:${selectedBeam.height}`} className="conduit-tool-options"><b>Beam 属性（3D）</b><label>名称<input defaultValue={selectedBeam.name} onBlur={(event) => commitBeamEdit({ name: event.target.value })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /></label><label>宽<span><input type="number" defaultValue={selectedBeam.width * 1000} onChange={(event) => previewBeamEdit({ width: Number(event.target.value) / 1000 })} onBlur={(event) => commitBeamEdit({ width: Number(event.target.value) / 1000 })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label><label>高<span><input type="number" defaultValue={selectedBeam.height * 1000} onChange={(event) => previewBeamEdit({ height: Number(event.target.value) / 1000 })} onBlur={(event) => commitBeamEdit({ height: Number(event.target.value) / 1000 })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label><label>长度<span><input type="number" defaultValue={Math.hypot(selectedBeam.end[0] - selectedBeam.start[0], selectedBeam.end[1] - selectedBeam.start[1]) * 1000} onChange={(event) => { const result = resizeBeamLength(scene.nodes, selectedBeam, Number(event.target.value) / 1000); if (result.beam) previewBeamEdit({ end: result.beam.end }); }} onBlur={(event) => { const result = resizeBeamLength(scene.nodes, selectedBeam, Number(event.target.value) / 1000); if (result.beam) commitBeamEdit({ end: result.beam.end }); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label><div><button onClick={() => { const result = nudgeBeamLaterally(scene.nodes, selectedBeam, -.005); if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end }); }}>左移 5 mm</button><button onClick={() => { const result = nudgeBeamLaterally(scene.nodes, selectedBeam, .005); if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end }); }}>右移 5 mm</button></div>{selectedBeamClearances.map((clearance) => <label key={clearance.edge}>{({ left: "左侧", right: "右侧", start: "起点", end: "终点" } as const)[clearance.edge]}净距<span><input aria-label={`Beam ${clearance.edge} clearance`} type="number" min="0" defaultValue={clearance.meters * 1000} onChange={(event) => { const result = editBeamClearance(scene.nodes, selectedBeam, clearance.edge, Number(event.target.value) / 1000); if (result.beam) previewBeamEdit({ start: result.beam.start, end: result.beam.end }); }} onBlur={(event) => { const result = editBeamClearance(scene.nodes, selectedBeam, clearance.edge, Number(event.target.value) / 1000); if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end }); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span><small>{clearance.witness.kind} · {clearance.witness.id}</small></label>)}</section>}
+              {tool === "beam" && (
+                <button
+                  type="button"
+                  className={
+                    orthogonal
+                      ? "active beam-orthogonal-lock"
+                      : "beam-orthogonal-lock"
+                  }
+                  aria-pressed={orthogonal}
+                  onClick={() => {
+                    orthogonalDirection.current = null;
+                    setOrthogonal((value) => !value);
+                  }}
+                >
+                  正交锁定：{orthogonal ? "开启" : "关闭"}
+                </button>
+              )}
+              {tool === "beam" && (
+                <section className="conduit-tool-options">
+                  <b>新建梁默认尺寸</b>
+                  <label>
+                    宽
+                    <span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={beamSection.widthMm}
+                        onChange={(event) =>
+                          setBeamSection((current) => ({
+                            ...current,
+                            widthMm: Math.max(
+                              1,
+                              Number(event.target.value) || current.widthMm,
+                            ),
+                          }))
+                        }
+                      />{" "}
+                      mm
+                    </span>
+                  </label>
+                  <label>
+                    高
+                    <span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={beamSection.heightMm}
+                        onChange={(event) =>
+                          setBeamSection((current) => ({
+                            ...current,
+                            heightMm: Math.max(
+                              1,
+                              Number(event.target.value) || current.heightMm,
+                            ),
+                          }))
+                        }
+                      />{" "}
+                      mm
+                    </span>
+                  </label>
+                  {layoutReferencePlane && (
+                    <>
+                      <b>布局参考面</b>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={layoutReferencePlane.visible}
+                          onChange={(event) =>
+                            commit({
+                              ...overlay,
+                              layoutReferencePlanes:
+                                replaceLayoutReferencePlane(
+                                  overlay.layoutReferencePlanes,
+                                  {
+                                    ...layoutReferencePlane,
+                                    visible: event.target.checked,
+                                  },
+                                ),
+                            })
+                          }
+                        />{" "}
+                        显示活动楼层参考面
+                      </label>
+                      <label>
+                        高度
+                        <span>
+                          <input
+                            aria-label="布局参考面高度"
+                            type="number"
+                            min="0"
+                            value={layoutReferencePlane.elevationMm}
+                            onChange={(event) => {
+                              const elevationMm = Number(event.target.value);
+                              if (
+                                Number.isFinite(elevationMm) &&
+                                elevationMm >= 0
+                              )
+                                commit({
+                                  ...overlay,
+                                  layoutReferencePlanes:
+                                    replaceLayoutReferencePlane(
+                                      overlay.layoutReferencePlanes,
+                                      {
+                                        ...layoutReferencePlane,
+                                        elevationMm,
+                                        basis: "explicit",
+                                        sourceCeilingId: undefined,
+                                      },
+                                    ),
+                                });
+                            }}
+                          />{" "}
+                          mm
+                        </span>
+                      </label>
+                      <small>
+                        {layoutReferencePlane.basis === "largest-area-ceiling"
+                          ? "基于最大 Ceiling 面积"
+                          : layoutReferencePlane.basis ===
+                              "derived-default-2700mm"
+                            ? "推导默认值 2700 mm"
+                            : "显式高度"}
+                      </small>
+                    </>
+                  )}
+                  <small>
+                    初始值 300 × 500 mm，仅为作者工具默认值，不是结构标准。
+                  </small>
+                </section>
+              )}
+              {tool === "select" && selectedBeam && (
+                <section
+                  key={`${selectedBeam.id}:${selectedBeam.name}:${selectedBeam.start.join(":")}:${selectedBeam.end.join(":")}:${selectedBeam.width}:${selectedBeam.height}`}
+                  className="conduit-tool-options"
+                >
+                  <b>Beam 属性（3D）</b>
+                  <small>
+                    梁体和端点不可拖动；场景橙色尺寸线对应下面可输入的物理面距离。
+                  </small>
+                  <label>
+                    名称
+                    <input
+                      defaultValue={selectedBeam.name}
+                      onBlur={(event) =>
+                        commitBeamEdit({ name: event.target.value })
+                      }
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") event.currentTarget.blur();
+                      }}
+                    />
+                  </label>
+                  <label>
+                    宽
+                    <span>
+                      <input
+                        type="number"
+                        defaultValue={selectedBeam.width * 1000}
+                        onChange={(event) =>
+                          previewBeamEdit({
+                            width: Number(event.target.value) / 1000,
+                          })
+                        }
+                        onBlur={(event) =>
+                          commitBeamEdit({
+                            width: Number(event.target.value) / 1000,
+                          })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />{" "}
+                      mm
+                    </span>
+                  </label>
+                  <label>
+                    高
+                    <span>
+                      <input
+                        type="number"
+                        defaultValue={selectedBeam.height * 1000}
+                        onChange={(event) =>
+                          previewBeamEdit({
+                            height: Number(event.target.value) / 1000,
+                          })
+                        }
+                        onBlur={(event) =>
+                          commitBeamEdit({
+                            height: Number(event.target.value) / 1000,
+                          })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />{" "}
+                      mm
+                    </span>
+                  </label>
+                  <label>
+                    长度
+                    <span>
+                      <input
+                        type="number"
+                        defaultValue={
+                          Math.hypot(
+                            selectedBeam.end[0] - selectedBeam.start[0],
+                            selectedBeam.end[1] - selectedBeam.start[1],
+                          ) * 1000
+                        }
+                        onChange={(event) => {
+                          const result = resizeBeamLength(
+                            scene.nodes,
+                            selectedBeam,
+                            Number(event.target.value) / 1000,
+                          );
+                          if (result.beam)
+                            previewBeamEdit({ end: result.beam.end });
+                        }}
+                        onBlur={(event) => {
+                          const result = resizeBeamLength(
+                            scene.nodes,
+                            selectedBeam,
+                            Number(event.target.value) / 1000,
+                          );
+                          if (result.beam)
+                            commitBeamEdit({ end: result.beam.end });
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                      />{" "}
+                      mm
+                    </span>
+                  </label>
+                  <b>梁位置</b>
+                  <small>
+                    与点位相同：尺寸线从梁实体边缘量到最近的两组不平行墙面或相邻梁面；修改数值会在平面内整体移动梁。
+                  </small>
+                  {selectedBeamPlanarClearances.map((clearance, index) => (
+                    <label key={`${clearance.witness.id}:${clearance.witness.face}`}>
+                      平面净距 {index + 1}
+                      <span>
+                        <input
+                          aria-label={`Beam planar clearance ${index + 1}`}
+                          type="number"
+                          min="0"
+                          step="5"
+                          defaultValue={clearance.meters * 1000}
+                          onChange={(event) =>
+                            (() => {
+                              const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.target.value) / 1000);
+                              if (result.beam) previewBeamEdit({ start: result.beam.start, end: result.beam.end });
+                            })()
+                          }
+                          onBlur={(event) =>
+                            (() => {
+                              const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.target.value) / 1000);
+                              if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end });
+                              else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
+                            })()
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") event.currentTarget.blur();
+                          }}
+                        />{" "}
+                        mm
+                      </span>
+                      <small>{clearance.witness.kind} · {clearance.witness.id}</small>
+                    </label>
+                  ))}
+                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为定位见证的墙面或相邻梁面。</small>}
+                  {selectedBeamClearances.map((clearance) => (
+                    <label key={clearance.edge}>
+                      {
+                        (
+                          {
+                            left: "左侧",
+                            right: "右侧",
+                            start: "起点",
+                            end: "终点",
+                          } as const
+                        )[clearance.edge]
+                      }
+                      净距
+                      <span>
+                        <input
+                          aria-label={`Beam ${clearance.edge} clearance`}
+                          type="number"
+                          min="0"
+                          defaultValue={clearance.meters * 1000}
+                          onChange={(event) => {
+                            const result = editBeamClearance(
+                              scene.nodes,
+                              selectedBeam,
+                              clearance.edge,
+                              Number(event.target.value) / 1000,
+                            );
+                            if (result.beam)
+                              previewBeamEdit({
+                                start: result.beam.start,
+                                end: result.beam.end,
+                              });
+                          }}
+                          onBlur={(event) => {
+                            const result = editBeamClearance(
+                              scene.nodes,
+                              selectedBeam,
+                              clearance.edge,
+                              Number(event.target.value) / 1000,
+                            );
+                            if (result.beam)
+                              commitBeamEdit({
+                                start: result.beam.start,
+                                end: result.beam.end,
+                              });
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter")
+                              event.currentTarget.blur();
+                          }}
+                        />{" "}
+                        mm
+                      </span>
+                      <small>
+                        {clearance.witness.kind} · {clearance.witness.id}
+                      </small>
+                    </label>
+                  ))}
+                </section>
+              )}
 
-          {(tool === "draw" || tool === "branch") && <section className="conduit-context-section">
-            <div className="conduit-section-title"><b>{tool === "branch" ? "分支设置" : "画管设置"}</b><span>{SYSTEM_DEFAULTS[system].label}</span></div>
-            {tool === "draw" && <div className="conduit-system-grid">{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <button key={key} className={system === key ? "active" : ""} onClick={() => selectSystem(key)}>{SYSTEM_DEFAULTS[key].label}</button>)}</div>}
-            {tool === "branch" && !branchStart && <small>指向已有管段预览分支点，点击后自动继承系统与管径。</small>}
+              {(tool === "draw" || tool === "branch") && (
+                <section className="conduit-context-section">
+                  <div className="conduit-section-title">
+                    <b>{tool === "branch" ? "分支设置" : "画管设置"}</b>
+                    <span>{SYSTEM_DEFAULTS[system].label}</span>
+                  </div>
+                  {tool === "draw" && (
+                    <div className="conduit-system-grid">
+                      {(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map(
+                        (key) => (
+                          <button
+                            key={key}
+                            className={system === key ? "active" : ""}
+                            onClick={() => selectSystem(key)}
+                          >
+                            {SYSTEM_DEFAULTS[key].label}
+                          </button>
+                        ),
+                      )}
+                    </div>
+                  )}
+                  {tool === "branch" && !branchStart && (
+                    <small>
+                      指向已有管段预览分支点，点击后自动继承系统与管径。
+                    </small>
+                  )}
             <div className="conduit-field-row">
-              <label>外径<input disabled={tool === "branch"} type="number" min="5" max="200" value={diameterMm} onChange={(event) => setDiameterMm(Number(event.target.value))} /><i>mm</i></label>
-              <label>敷设<select value={surfaceMode} onChange={(event) => setSurfaceMode(event.target.value as SurfaceMode)}><option value="surface">贴面暗敷</option><option value="suspended">吊顶内明敷</option></select></label>
+                    <label>
+                      外径
+                      <input
+                        disabled={tool === "branch"}
+                        type="number"
+                        min="5"
+                        max="200"
+                        value={diameterMm}
+                        onChange={(event) =>
+                          setDiameterMm(Number(event.target.value))
+                        }
+                      />
+                      <i>mm</i>
+                    </label>
+                    <label>
+                      敷设
+                      <select
+                        value={surfaceMode}
+                        onChange={(event) =>
+                          setSurfaceMode(event.target.value as SurfaceMode)
+                        }
+                      >
+                        <option value="surface">贴面暗敷</option>
+                        <option value="suspended">吊顶内明敷</option>
+                      </select>
+                    </label>
             </div>
             <div className="conduit-mode-row">
-              <button className={orthogonal ? "active" : ""} onClick={() => { orthogonalDirection.current = null; setOrthogonal((value) => !value); }}>{orthogonal ? "正交开启" : "面内自由"}</button>
-              <button className={worldAxis ? "active" : ""} disabled={!worldAxis} onClick={() => setWorldAxis(null)}>{worldAxis ? `世界 ${worldAxis.toUpperCase()} · 取消` : "宿主面"}</button>
+                    <button
+                      className={orthogonal ? "active" : ""}
+                      onClick={() => {
+                        orthogonalDirection.current = null;
+                        setOrthogonal((value) => !value);
+                      }}
+                    >
+                      {orthogonal ? "正交开启" : "面内自由"}
+                    </button>
+                    <button
+                      className={worldAxis ? "active" : ""}
+                      disabled={!worldAxis}
+                      onClick={() => setWorldAxis(null)}
+                    >
+                      {worldAxis
+                        ? `世界 ${worldAxis.toUpperCase()} · 取消`
+                        : "宿主面"}
+                    </button>
+                  </div>
+                  {routeInProgress && (
+                    <div className="conduit-route-actions">
+                      <button
+                        className="primary"
+                        disabled={
+                          Boolean(penetrationSession) ||
+                          displayDraft.length < 2 ||
+                          Boolean(previewPlan && !previewPlan.canCommit)
+                        }
+                        onClick={finishPath}
+                      >
+                        完成路径
+                      </button>
+                      <button onClick={resetRouteSession}>取消</button>
             </div>
-            {routeInProgress && <div className="conduit-route-actions"><button className="primary" disabled={Boolean(penetrationSession) || displayDraft.length < 2 || Boolean(previewPlan && !previewPlan.canCommit)} onClick={finishPath}>完成路径</button><button onClick={resetRouteSession}>取消</button></div>}
-            <small className="conduit-context-hint">{system === "network" && tool === "draw" ? "白色网络管可在空白处直接起画；" : "先选合法来源或开放管端；"}Shift 切正交，Tab 穿透，方向键锁定世界轴。</small>
-          </section>}
+                  )}
+                  <small className="conduit-context-hint">
+                    {system === "network" && tool === "draw"
+                      ? "白色网络管可在空白处直接起画；"
+                      : "先选合法来源或开放管端；"}
+                    Shift 切正交，Tab 穿透，方向键锁定世界轴。
+                  </small>
+                </section>
+              )}
 
-          {tool === "point" && <section className="conduit-context-section">
-            <div className="conduit-section-title"><b>放置点位</b><span>{DEVICE_DEFAULTS[deviceType].label}</span></div>
-            <label className="conduit-full-field">设备<select value={deviceType} onChange={(event) => setDeviceType(event.target.value as NetworkDeviceType)}>
-              <optgroup label="来源设备">{(["strong-panel", "weak-panel", "fire-inlet"] satisfies NetworkDeviceType[]).map((key) => <option key={key} value={key}>{DEVICE_DEFAULTS[key].label}</option>)}</optgroup>
-              <optgroup label="终端点位">{(["socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "sensor"] satisfies NetworkDeviceType[]).map((key) => <option key={key} value={key}>{DEVICE_DEFAULTS[key].label}</option>)}</optgroup>
-            </select></label>
-            {(deviceType === "luminaire" || deviceType === "sprinkler-head" || deviceType === "sensor") && levels.length > 0 && <label className="conduit-full-field">安装楼层<select value={activeLevelId ?? ""} onChange={(event) => setActiveLevelId(event.target.value)}>{levels.map((level) => <option key={level.id} value={level.id}>{level.name || level.id}</option>)}</select></label>}
-            <small className="conduit-context-hint">{eligibleLayoutPoint && !sharedPointPlane ? "Layout reference plane 已隐藏；请在可见 Ceiling 或其他合法物理宿主上放置。" : "移到合法宿主、兼容管段或开放管端后点击放置。"}</small>
-          </section>}
+              {tool === "point" && (
+                <section className="conduit-context-section">
+                  <div className="conduit-section-title">
+                    <b>放置点位</b>
+                    <span>{DEVICE_DEFAULTS[deviceType].label}</span>
+                  </div>
+                  <label className="conduit-full-field">
+                    设备
+                    <select
+                      value={deviceType}
+                      onChange={(event) =>
+                        setDeviceType(event.target.value as NetworkDeviceType)
+                      }
+                    >
+                      <optgroup label="来源设备">
+                        {(
+                          [
+                            "strong-panel",
+                            "weak-panel",
+                            "fire-inlet",
+                          ] satisfies NetworkDeviceType[]
+                        ).map((key) => (
+                          <option key={key} value={key}>
+                            {DEVICE_DEFAULTS[key].label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="终端点位">
+                        {(
+                          [
+                            "socket",
+                            "switch",
+                            "luminaire",
+                            "network-outlet",
+                            "sprinkler-head",
+                            "sensor",
+                          ] satisfies NetworkDeviceType[]
+                        ).map((key) => (
+                          <option key={key} value={key}>
+                            {DEVICE_DEFAULTS[key].label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </label>
+                  {(deviceType === "luminaire" ||
+                    deviceType === "sprinkler-head" ||
+                    deviceType === "sensor") &&
+                    levels.length > 0 && (
+                      <label className="conduit-full-field">
+                        安装楼层
+                        <select
+                          value={activeLevelId ?? ""}
+                          onChange={(event) =>
+                            setActiveLevelId(event.target.value)
+                          }
+                        >
+                          {levels.map((level) => (
+                            <option key={level.id} value={level.id}>
+                              {level.name || level.id}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  {eligibleLayoutPoint && layoutReferencePlane && (
+                    <>
+                      <b>布局参考面</b>
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={layoutReferencePlane.visible}
+                          onChange={(event) =>
+                            commit({
+                              ...overlay,
+                              layoutReferencePlanes:
+                                replaceLayoutReferencePlane(
+                                  overlay.layoutReferencePlanes,
+                                  {
+                                    ...layoutReferencePlane,
+                                    visible: event.target.checked,
+                                  },
+                                ),
+                            })
+                          }
+                        />{" "}
+                        显示活动楼层参考面
+                      </label>
+                      <label>
+                        高度
+                        <span>
+                          <input
+                            aria-label="布局参考面高度"
+                            type="number"
+                            min="0"
+                            value={layoutReferencePlane.elevationMm}
+                            onChange={(event) => {
+                              const elevationMm = Number(event.target.value);
+                              if (
+                                Number.isFinite(elevationMm) &&
+                                elevationMm >= 0
+                              )
+                                commit({
+                                  ...overlay,
+                                  layoutReferencePlanes:
+                                    replaceLayoutReferencePlane(
+                                      overlay.layoutReferencePlanes,
+                                      {
+                                        ...layoutReferencePlane,
+                                        elevationMm,
+                                        basis: "explicit",
+                                        sourceCeilingId: undefined,
+                                      },
+                                    ),
+                                });
+                            }}
+                          />{" "}
+                          mm
+                        </span>
+                      </label>
+                    </>
+                  )}
+                  <small className="conduit-context-hint">
+                    {eligibleLayoutPoint && !sharedPointPlane
+                      ? "布局参考面已关闭；请在可见 Ceiling 或其他合法物理宿主上放置。"
+                      : "移到合法宿主、兼容管段或开放管端后点击放置。"}
+                  </small>
+                </section>
+              )}
 
-          {tool === "delete" && <section className="conduit-context-section conduit-delete-context"><b>删除对象</b><small>可删除的管段、管件或点位会显示红色预览，点击直接删除并可撤销。</small></section>}
+              {tool === "delete" && (
+                <section className="conduit-context-section conduit-delete-context">
+                  <b>删除对象</b>
+                  <small>
+                    可删除的管段、管件或点位会显示红色预览，点击直接删除并可撤销。
+                  </small>
+                </section>
+              )}
 
-          {tool === "select" && <section className="conduit-context-section">
-            <div className="conduit-section-title"><b>对象属性</b>{selectedId && <span>已选择</span>}</div>
-            {!selectedId && <small>点击管段、管件或设备查看属性；Ctrl/Command 多选，双击选中整条连通管道。</small>}
-            {selectedRouteLengths.length > 0 && <div className="conduit-length-summary" aria-label="已选管道长度"><b>已选管道 · {selectedRouteLengths.length}</b><div>{selectedRouteLengths.map((item, index) => <span key={item.id}>{item.label} {index + 1}<strong>{formatRouteLengthMm(item.lengthMm)}</strong></span>)}</div>{selectedRouteLengths.length > 1 && <label>合计<strong>{formatRouteLengthMm(selectedSegmentLengthMm)}</strong></label>}</div>}
-            {controlBinding ? <div className="lighting-control-editor">
-              <b>{controlBinding.kind === "create" ? "选择控制开关" : "重新选择灯具"}</b>
-              <small>{controlBinding.kind === "create" ? `已选择 ${controlBinding.luminaireDeviceIds.length} 盏灯；点击绿色开关完成绑定，Esc 取消。` : `当前选择 ${controlBinding.luminaireDeviceIds.length} 盏灯；点击灯具增减，完成后一次提交。`}</small>
-              <div className="conduit-route-actions">{controlBinding.kind === "edit" && <button className="primary" onClick={finishControlGroupEdit}>完成</button>}<button onClick={cancelControlBinding}>取消</button></div>
-            </div> : selectedHasLuminaire && <div className="lighting-control-editor">
-              <button className="primary" disabled={!selectedOnlyUnboundLuminaires} onClick={() => setControlBinding({ kind: "create", luminaireDeviceIds: [...selectedDeviceIds] })}>绑定开关</button>
-              {!selectedOnlyUnboundLuminaires && <small>只能选择尚未绑定的灯具点位；已有绑定请从对应开关修改。</small>}
-            </div>}
-            {selectedDevice?.deviceType === "switch" && !controlBinding && <div className="lighting-control-groups">
-              <label>开关规格<span>{gangLabel(selectedSwitchGroups.length)}</span></label>
-              {selectedSwitchGroups.length === 0 && <small>尚未绑定灯具。</small>}
-              {selectedSwitchGroups.map((group, index) => <div className="lighting-control-group" key={group.id}><span>第 {index + 1} 路 · {group.luminaireDeviceIds.length} 盏</span><div><button onClick={() => { setControlBinding({ kind: "edit", groupId: group.id, switchDeviceId: group.switchDeviceId, luminaireDeviceIds: [...group.luminaireDeviceIds] }); setSelectedDeviceIds([...group.luminaireDeviceIds]); }}>重新选择灯具</button><button onClick={() => commit(removeLightingControlGroup(overlay, group.id))}>解除该路</button></div></div>)}
-            </div>}
-            {selectedDevice && <><label>名称<input value={selectedDevice.name} onChange={(event) => commit({ ...overlay, devices: overlay.devices.map((device) => device.id === selectedDevice.id ? { ...device, name: event.target.value } : device) })} /></label><label>类型<span>{DEVICE_DEFAULTS[selectedDevice.deviceType].label}</span></label>{selectedDevice.deviceType === "sprinkler-head" && selectedDeviceIds.length === 1 && <label>喷头方向<select value={selectedDevice.sprinklerDirection === "pendent" ? "pendent" : "upright"} onChange={(event) => commit(setSprinklerDirection(overlay, selectedDevice.id, event.target.value as "upright" | "pendent"))}><option value="upright">向上喷</option><option value="pendent">向下喷</option></select></label>}<label>连接端口<span>{selectedDevice.ports.filter((port) => port.connectedSegmentIds.length).length}/{selectedDevice.ports.length}</span></label>
-              <div className="conduit-position-fields" aria-label="设备边缘定位">
-                {selectedDevice.mount?.kind === "reference-plane" && <label>完成地标高<span><input type="number" min="0" value={positionDraft.elevation ?? ""} onChange={(event) => setPositionDraft((value) => ({ ...value, elevation: event.target.value === "" ? undefined : Number(event.target.value) }))} onBlur={(event) => event.target.value !== "" && applyDevicePosition({ elevationMm: Number(event.target.value) })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>}
-                {positionDescription.horizontal && <label>{positionDescription.horizontal.kind === "opening" ? "洞口边净距" : "墙端净距"}<span><input type="number" min="0" value={positionDraft.horizontal ?? ""} onChange={(event) => setPositionDraft((value) => ({ ...value, horizontal: event.target.value === "" ? undefined : Number(event.target.value) }))} onBlur={(event) => event.target.value !== "" && applyDevicePosition({ horizontalClearanceMm: Number(event.target.value) })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>}
-                {positionDescription.vertical?.kind === "finished-floor" && <label>下边缘离地<span><input type="number" min="0" value={positionDraft.vertical ?? ""} onChange={(event) => setPositionDraft((value) => ({ ...value, vertical: event.target.value === "" ? undefined : Number(event.target.value) }))} onBlur={(event) => event.target.value !== "" && applyDevicePosition({ bottomHeightMm: Number(event.target.value) })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>}
-                {positionDescription.planar?.map((reference, index) => <label key={reference.wallId}>平面净距 {index + 1}<span><input type="number" min="0" value={positionDraft.planar?.[reference.wallId] ?? ""} onChange={(event) => setPositionDraft((value) => ({ ...value, planar: { ...value.planar, [reference.wallId]: Number(event.target.value) } }))} onBlur={(event) => event.target.value !== "" && applyDevicePosition({ planarClearanceMm: { [reference.wallId]: Number(event.target.value) } })} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>)}
-                <small>回车或离开输入框即生效{selectedDeviceIds.length > 1 ? `；离地/标高将应用到 ${selectedDeviceIds.length} 个可用点位` : ""}。</small>
+              {tool === "select" && (
+                <section className="conduit-context-section">
+                  <div className="conduit-section-title">
+                    <b>对象属性</b>
+                    {selectedId && <span>已选择</span>}
+                  </div>
+                  {!selectedId && (
+                    <small>
+                      点击管段、管件或设备查看属性；Ctrl/Command
+                      多选，双击选中整条连通管道。
+                    </small>
+                  )}
+                  {selectedRouteLengths.length > 0 && (
+                    <div
+                      className="conduit-length-summary"
+                      aria-label="已选管道长度"
+                    >
+                      <b>已选管道 · {selectedRouteLengths.length}</b>
+                      <div>
+                        {selectedRouteLengths.map((item, index) => (
+                          <span key={item.id}>
+                            {item.label} {index + 1}
+                            <strong>
+                              {formatRouteLengthMm(item.lengthMm)}
+                            </strong>
+                          </span>
+                        ))}
+                      </div>
+                      {selectedRouteLengths.length > 1 && (
+                        <label>
+                          合计
+                          <strong>
+                            {formatRouteLengthMm(selectedSegmentLengthMm)}
+                          </strong>
+                        </label>
+                      )}
               </div>
-              <details className="conduit-object-details"><summary>尺寸与宿主</summary>{(["宽", "高", "深"] as const).map((label, axis) => <label key={label}>{label}<span><input type="number" min="1" value={selectedDevice.sizeMm[axis]} onChange={(event) => { const size = [...selectedDevice.sizeMm] as [number, number, number]; size[axis] = Math.max(1, Number(event.target.value)); commit(resizeDevicePoint(overlay, selectedDevice.id, size)); }} /> mm</span></label>)}<small>{selectedDevice.mount?.kind === "reference-plane" ? `安装参考平面 · ${selectedDevice.mount.levelId}` : selectedDevice.position.attachment?.hostId ?? "悬空管段挂载"}</small></details></>}
-            {selectedSegment && <><label>系统<span>{SYSTEM_DEFAULTS[selectedSegment.system].label}</span></label><label>外径<span><input type="number" value={selectedSegment.diameterMm} onChange={(event) => { const value = Number(event.target.value); if (value > 0) commit({ ...overlay, segments: overlay.segments.map((segment) => segment.id === selectedSegment.id ? { ...segment, diameterMm: value } : segment) }); }} /> mm</span></label></>}
-            {selectedFitting && <label>管件<span>{selectedFitting.fitting === "tee" ? "三通" : selectedFitting.fitting === "coupling" ? "直接接头" : selectedFitting.fitting === "bridge-bend" ? "过桥弯" : selectedFitting.bendStyle === "sweep" ? "圆角大弯" : "弯头"}</span></label>}
-            {selectedBox && <><label>类型<span>86 检修盒</span></label><label>尺寸<span>{selectedBox.sizeMm.join(" × ")} mm</span></label></>}
-            {selectedId && <details className="conduit-object-details"><summary>对象标识</summary><small>{selectedId}</small></details>}
-          </section>}
+                  )}
+                  {controlBinding ? (
+                    <div className="lighting-control-editor">
+                      <b>
+                        {controlBinding.kind === "create"
+                          ? "选择控制开关"
+                          : "重新选择灯具"}
+                      </b>
+                      <small>
+                        {controlBinding.kind === "create"
+                          ? `已选择 ${controlBinding.luminaireDeviceIds.length} 盏灯；点击绿色开关完成绑定，Esc 取消。`
+                          : `当前选择 ${controlBinding.luminaireDeviceIds.length} 盏灯；点击灯具增减，完成后一次提交。`}
+                      </small>
+                      <div className="conduit-route-actions">
+                        {controlBinding.kind === "edit" && (
+                          <button
+                            className="primary"
+                            onClick={finishControlGroupEdit}
+                          >
+                            完成
+                          </button>
+                        )}
+                        <button onClick={cancelControlBinding}>取消</button>
+                      </div>
+                    </div>
+                  ) : (
+                    selectedHasLuminaire && (
+                      <div className="lighting-control-editor">
+                        <button
+                          className="primary"
+                          disabled={!selectedOnlyUnboundLuminaires}
+                          onClick={() =>
+                            setControlBinding({
+                              kind: "create",
+                              luminaireDeviceIds: [...selectedDeviceIds],
+                            })
+                          }
+                        >
+                          绑定开关
+                        </button>
+                        {!selectedOnlyUnboundLuminaires && (
+                          <small>
+                            只能选择尚未绑定的灯具点位；已有绑定请从对应开关修改。
+                          </small>
+                        )}
+                      </div>
+                    )
+                  )}
+                  {selectedDevice?.deviceType === "switch" &&
+                    !controlBinding && (
+                      <div className="lighting-control-groups">
+                        <label>
+                          开关规格
+                          <span>{gangLabel(selectedSwitchGroups.length)}</span>
+                        </label>
+                        {selectedSwitchGroups.length === 0 && (
+                          <small>尚未绑定灯具。</small>
+                        )}
+                        {selectedSwitchGroups.map((group, index) => (
+                          <div
+                            className="lighting-control-group"
+                            key={group.id}
+                          >
+                            <span>
+                              第 {index + 1} 路 ·{" "}
+                              {group.luminaireDeviceIds.length} 盏
+                            </span>
+                            <div>
+                              <button
+                                onClick={() => {
+                                  setControlBinding({
+                                    kind: "edit",
+                                    groupId: group.id,
+                                    switchDeviceId: group.switchDeviceId,
+                                    luminaireDeviceIds: [
+                                      ...group.luminaireDeviceIds,
+                                    ],
+                                  });
+                                  setSelectedDeviceIds([
+                                    ...group.luminaireDeviceIds,
+                                  ]);
+                                }}
+                              >
+                                重新选择灯具
+                              </button>
+                              <button
+                                onClick={() =>
+                                  commit(
+                                    removeLightingControlGroup(
+                                      overlay,
+                                      group.id,
+                                    ),
+                                  )
+                                }
+                              >
+                                解除该路
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  {selectedDevice && (
+                    <>
+                      <label>
+                        名称
+                        <input
+                          value={selectedDevice.name}
+                          onChange={(event) =>
+                            commit({
+                              ...overlay,
+                              devices: overlay.devices.map((device) =>
+                                device.id === selectedDevice.id
+                                  ? { ...device, name: event.target.value }
+                                  : device,
+                              ),
+                            })
+                          }
+                        />
+                      </label>
+                      <label>
+                        类型
+                        <span>
+                          {DEVICE_DEFAULTS[selectedDevice.deviceType].label}
+                        </span>
+                      </label>
+                      {selectedDevice.deviceType === "sprinkler-head" &&
+                        selectedDeviceIds.length === 1 && (
+                          <label>
+                            喷头方向
+                            <select
+                              value={
+                                selectedDevice.sprinklerDirection === "pendent"
+                                  ? "pendent"
+                                  : "upright"
+                              }
+                              onChange={(event) =>
+                                commit(
+                                  setSprinklerDirection(
+                                    overlay,
+                                    selectedDevice.id,
+                                    event.target.value as "upright" | "pendent",
+                                  ),
+                                )
+                              }
+                            >
+                              <option value="upright">向上喷</option>
+                              <option value="pendent">向下喷</option>
+                            </select>
+                          </label>
+                        )}
+                      <label>
+                        连接端口
+                        <span>
+                          {
+                            selectedDevice.ports.filter(
+                              (port) => port.connectedSegmentIds.length,
+                            ).length
+                          }
+                          /{selectedDevice.ports.length}
+                        </span>
+                      </label>
+                      <div
+                        className="conduit-position-fields"
+                        aria-label="设备边缘定位"
+                      >
+                        {selectedDevice.mount?.kind === "reference-plane" && (
+                          <label>
+                            完成地标高
+                            <span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={positionDraft.elevation ?? ""}
+                                onChange={(event) =>
+                                  setPositionDraft((value) => ({
+                                    ...value,
+                                    elevation:
+                                      event.target.value === ""
+                                        ? undefined
+                                        : Number(event.target.value),
+                                  }))
+                                }
+                                onBlur={(event) =>
+                                  event.target.value !== "" &&
+                                  applyDevicePosition({
+                                    elevationMm: Number(event.target.value),
+                                  })
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter")
+                                    event.currentTarget.blur();
+                                }}
+                              />{" "}
+                              mm
+                            </span>
+                          </label>
+                        )}
+                        {positionDescription.horizontal && (
+                          <label>
+                            {positionDescription.horizontal.kind === "opening"
+                              ? "洞口边净距"
+                              : "墙端净距"}
+                            <span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={positionDraft.horizontal ?? ""}
+                                onChange={(event) =>
+                                  setPositionDraft((value) => ({
+                                    ...value,
+                                    horizontal:
+                                      event.target.value === ""
+                                        ? undefined
+                                        : Number(event.target.value),
+                                  }))
+                                }
+                                onBlur={(event) =>
+                                  event.target.value !== "" &&
+                                  applyDevicePosition({
+                                    horizontalClearanceMm: Number(
+                                      event.target.value,
+                                    ),
+                                  })
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter")
+                                    event.currentTarget.blur();
+                                }}
+                              />{" "}
+                              mm
+                            </span>
+                          </label>
+                        )}
+                        {positionDescription.vertical?.kind ===
+                          "finished-floor" && (
+                          <label>
+                            下边缘离地
+                            <span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={positionDraft.vertical ?? ""}
+                                onChange={(event) =>
+                                  setPositionDraft((value) => ({
+                                    ...value,
+                                    vertical:
+                                      event.target.value === ""
+                                        ? undefined
+                                        : Number(event.target.value),
+                                  }))
+                                }
+                                onBlur={(event) =>
+                                  event.target.value !== "" &&
+                                  applyDevicePosition({
+                                    bottomHeightMm: Number(event.target.value),
+                                  })
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter")
+                                    event.currentTarget.blur();
+                                }}
+                              />{" "}
+                              mm
+                            </span>
+                          </label>
+                        )}
+                        {positionDescription.planar?.map((reference, index) => (
+                          <label key={reference.wallId}>
+                            平面净距 {index + 1}
+                            <span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={
+                                  positionDraft.planar?.[reference.wallId] ?? ""
+                                }
+                                onChange={(event) =>
+                                  setPositionDraft((value) => ({
+                                    ...value,
+                                    planar: {
+                                      ...value.planar,
+                                      [reference.wallId]: Number(
+                                        event.target.value,
+                                      ),
+                                    },
+                                  }))
+                                }
+                                onBlur={(event) =>
+                                  event.target.value !== "" &&
+                                  applyDevicePosition({
+                                    planarClearanceMm: {
+                                      [reference.wallId]: Number(
+                                        event.target.value,
+                                      ),
+                                    },
+                                  })
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter")
+                                    event.currentTarget.blur();
+                                }}
+                              />{" "}
+                              mm
+                            </span>
+                          </label>
+                        ))}
+                        <small>
+                          回车或离开输入框即生效
+                          {selectedDeviceIds.length > 1
+                            ? `；离地/标高将应用到 ${selectedDeviceIds.length} 个可用点位`
+                            : ""}
+                          。
+                        </small>
+                      </div>
+                      <details className="conduit-object-details">
+                        <summary>尺寸与宿主</summary>
+                        {(["宽", "高", "深"] as const).map((label, axis) => (
+                          <label key={label}>
+                            {label}
+                            <span>
+                              <input
+                                type="number"
+                                min="1"
+                                value={selectedDevice.sizeMm[axis]}
+                                onChange={(event) => {
+                                  const size = [...selectedDevice.sizeMm] as [
+                                    number,
+                                    number,
+                                    number,
+                                  ];
+                                  size[axis] = Math.max(
+                                    1,
+                                    Number(event.target.value),
+                                  );
+                                  commit(
+                                    resizeDevicePoint(
+                                      overlay,
+                                      selectedDevice.id,
+                                      size,
+                                    ),
+                                  );
+                                }}
+                              />{" "}
+                              mm
+                            </span>
+                          </label>
+                        ))}
+                        <small>
+                          {selectedDevice.mount?.kind === "reference-plane"
+                            ? `安装参考平面 · ${selectedDevice.mount.levelId}`
+                            : (selectedDevice.position.attachment?.hostId ??
+                              "悬空管段挂载")}
+                        </small>
+                      </details>
+                    </>
+                  )}
+                  {selectedSegment && (
+                    <>
+                      <label>
+                        系统
+                        <span>
+                          {SYSTEM_DEFAULTS[selectedSegment.system].label}
+                        </span>
+                      </label>
+                      <label>
+                        外径
+                        <span>
+                          <input
+                            type="number"
+                            value={selectedSegment.diameterMm}
+                            onChange={(event) => {
+                              const value = Number(event.target.value);
+                              if (value > 0)
+                                commit({
+                                  ...overlay,
+                                  segments: overlay.segments.map((segment) =>
+                                    segment.id === selectedSegment.id
+                                      ? { ...segment, diameterMm: value }
+                                      : segment,
+                                  ),
+                                });
+                            }}
+                          />{" "}
+                          mm
+                        </span>
+                      </label>
+                    </>
+                  )}
+                  {selectedFitting && (
+                    <label>
+                      管件
+                      <span>
+                        {selectedFitting.fitting === "tee"
+                          ? "三通"
+                          : selectedFitting.fitting === "coupling"
+                            ? "直接接头"
+                            : selectedFitting.fitting === "bridge-bend"
+                              ? "过桥弯"
+                              : selectedFitting.bendStyle === "sweep"
+                                ? "圆角大弯"
+                                : "弯头"}
+                      </span>
+                    </label>
+                  )}
+                  {selectedBox && (
+                    <>
+                      <label>
+                        类型<span>86 检修盒</span>
+                      </label>
+                      <label>
+                        尺寸<span>{selectedBox.sizeMm.join(" × ")} mm</span>
+                      </label>
+                    </>
+                  )}
+                  {selectedId && (
+                    <details className="conduit-object-details">
+                      <summary>对象标识</summary>
+                      <small>{selectedId}</small>
+                    </details>
+                  )}
+                </section>
+              )}
 
           <details className="conduit-panel-details">
-            <summary><b>管线图层</b></summary>
-            <div className="conduit-details-body conduit-layer-grid">{(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map((key) => <label key={key}><input type="checkbox" checked={overlay.settings.visibleSystems[key]} onChange={() => { setOverlay((current) => ({ ...current, settings: { ...current.settings, visibleSystems: { ...current.settings.visibleSystems, [key]: !current.settings.visibleSystems[key] } } })); setOverlayDirty(true); }} />{SYSTEM_DEFAULTS[key].label}</label>)}<label><input type="checkbox" checked={overlay.settings.sensorVisible} onChange={() => { setOverlay((current) => ({ ...current, settings: { ...current.settings, sensorVisible: !current.settings.sensorVisible } })); setOverlayDirty(true); }} />传感器</label></div>
+                <summary>
+                  <b>管线图层</b>
+                </summary>
+                <div className="conduit-details-body conduit-layer-grid">
+                  {(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map(
+                    (key) => (
+                      <label key={key}>
+                        <input
+                          type="checkbox"
+                          checked={overlay.settings.visibleSystems[key]}
+                          onChange={() => {
+                            setOverlay((current) => ({
+                              ...current,
+                              settings: {
+                                ...current.settings,
+                                visibleSystems: {
+                                  ...current.settings.visibleSystems,
+                                  [key]: !current.settings.visibleSystems[key],
+                                },
+                              },
+                            }));
+                            setOverlayDirty(true);
+                          }}
+                        />
+                        {SYSTEM_DEFAULTS[key].label}
+                      </label>
+                    ),
+                  )}
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={overlay.settings.sensorVisible}
+                      onChange={() => {
+                        setOverlay((current) => ({
+                          ...current,
+                          settings: {
+                            ...current.settings,
+                            sensorVisible: !current.settings.sensorVisible,
+                          },
+                        }));
+                        setOverlayDirty(true);
+                      }}
+                    />
+                    传感器
+                  </label>
+                </div>
           </details>
 
-          <details className="conduit-panel-details conduit-shortcuts"><summary><b>快捷键</b></summary><div className="conduit-details-body"><small>空格选择 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D 点位</small><small>Shift 正交 · Tab 穿透 · ← X / ↑ Y / → Z · ↓ 取消世界轴</small><small>Enter 完成 · Esc 撤销当前步骤</small></div></details>
+              <details className="conduit-panel-details conduit-shortcuts">
+                <summary>
+                  <b>快捷键</b>
+                </summary>
+                <div className="conduit-details-body">
+                  <small>
+                    空格选择 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D
+                    点位
+                  </small>
+                  <small>
+                    Shift 正交 · Tab 穿透 · ← X / ↑ Y / → Z · ↓ 取消世界轴
+                  </small>
+                  <small>Enter 完成 · Esc 撤销当前步骤</small>
+                </div>
+              </details>
 
-          <div className="conduit-utility-grid"><button disabled={!sharedUndoStack.length} onClick={() => { undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } }}>撤销</button><button disabled={!sharedRedoStack.length} onClick={() => { redoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } }}>重做</button><button onClick={() => overlayInput.current?.click()}>导入</button><button className="primary" onClick={exportOverlay}>导出</button></div>
-          <input ref={overlayInput} hidden type="file" accept="application/json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importOverlay(file); event.currentTarget.value = ""; }} />
-        </>}
+              <div className="conduit-utility-grid">
+                <button
+                  disabled={!sharedUndoStack.length}
+                  onClick={() => {
+                    undoSharedWorkspace();
+                    const restored = useOverlayStore.getState();
+                    if (restored.overlay) {
+                      setOverlay(restored.overlay);
+                      setOverlayDirty(restored.dirty);
+                    }
+                  }}
+                >
+                  撤销
+                </button>
+                <button
+                  disabled={!sharedRedoStack.length}
+                  onClick={() => {
+                    redoSharedWorkspace();
+                    const restored = useOverlayStore.getState();
+                    if (restored.overlay) {
+                      setOverlay(restored.overlay);
+                      setOverlayDirty(restored.dirty);
+                    }
+                  }}
+                >
+                  重做
+                </button>
+                <button onClick={() => overlayInput.current?.click()}>
+                  导入
+                </button>
+                <button className="primary" onClick={exportOverlay}>
+                  导出
+                </button>
+              </div>
+              <input
+                ref={overlayInput}
+                hidden
+                type="file"
+                accept="application/json"
+                onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  if (file) void importOverlay(file);
+                  event.currentTarget.value = "";
+                }}
+              />
+            </>
+          )}
       </aside>
-      {beamPointerState && <div className="beam-pointer-feedback" data-beam-pointer-state={beamPointerState} role="status"><span aria-hidden="true">{beamPointerState === "invalid" ? "⊘" : beamPointerState === "crossing" ? "◆" : beamPointerState === "surface-snap" ? "⊙" : "＋"}</span>{beamPointerLabel}</div>}
-  <Canvas key={projection} frameloop="demand" orthographic={projection === "orthographic"} camera={projection === "orthographic" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA} dpr={CANVAS_DPR} gl={CANVAS_GL} onPointerMissed={() => selectWhileBrowsing(null)}><color attach="background" args={["#dfe6e9"]} />
-    {tool === "beam" && layoutReferencePlane?.visible && <LayoutPlane bounds={scene.bounds} y={layoutReferencePlaneY} onPreview={(position, ctrlKey) => setBeamPointer(position ? { point: position, shiftKey: false, ctrlKey, levelId: activeLevelId } : null)} onPlace={onLayoutReferenceHit} />}
+        {beamPointerState && (
+          <div
+            className="beam-pointer-feedback"
+            data-beam-pointer-state={beamPointerState}
+            role="status"
+          >
+            <span aria-hidden="true">
+              {beamPointerState === "invalid"
+                ? "⊘"
+                : beamPointerState === "crossing"
+                  ? "◆"
+                  : beamPointerState === "surface-snap"
+                    ? "⊙"
+                    : "＋"}
+            </span>
+            {beamPointerLabel}
+          </div>
+        )}
+        {tool === "beam" && authoringStatus && (
+          <div
+            className="beam-authoring-status"
+            data-beam-authoring-status
+            role="status"
+          >
+            {authoringStatus}
+          </div>
+        )}
+        <Canvas
+          key={projection}
+          frameloop="demand"
+          orthographic={projection === "orthographic"}
+          camera={
+            projection === "orthographic"
+              ? ORTHOGRAPHIC_CAMERA
+              : PERSPECTIVE_CAMERA
+          }
+          dpr={CANVAS_DPR}
+          gl={CANVAS_GL}
+          onPointerMissed={() => selectWhileBrowsing(null)}
+        >
+          <color attach="background" args={["#dfe6e9"]} />
+          {tool === "beam" && layoutReferencePlane?.visible && (
+            <>
+              <BeamPlanePointerCapture
+                y={layoutReferencePlaneY}
+                onPlace={onLayoutReferenceHit}
+              />
+              <LayoutPlane
+                bounds={scene.bounds}
+                y={layoutReferencePlaneY}
+                onPreview={(position, ctrlKey) =>
+                  setBeamPointer(
+                    position
+                      ? {
+                          point: position,
+                          shiftKey: false,
+                          ctrlKey,
+                          levelId: activeLevelId,
+                        }
+                      : null,
+                  )
+                }
+                onPlace={onLayoutReferenceHit}
+                confirmOnPointerDown
+              />
+            </>
+          )}
     <BeamAuthoringMarker pointer={beamPointer} state={beamPointerState} />
-    {activeLevelId && (sharedPointPlane || selectedDevice?.mount?.kind === "reference-plane") && <InstallationPlane bounds={scene.bounds} y={sharedPointPlane ? layoutReferencePlaneY : referencePlaneY} onPreview={(position) => { if (tool === "point" && sharedPointPlane) scheduleCursor(position ? { position } : null); }} onPlace={(position) => { if (tool !== "point" || !sharedPointPlane) { selectWhileBrowsing(null); return; } const withPlane = ensureInstallationReferencePlane(overlay, activeLevelId, sharedPointPlane.elevationMm); const device = createReferencePlaneDevice(deviceType as "luminaire" | "sprinkler-head" | "sensor", position, activeLevelId, sharedPointPlane.elevationMm); commit({ ...withPlane, devices: [...withPlane.devices, device] }); setCursor(null); onSelect(device.id); setSelectedDeviceIds([device.id]); }} />}
-  <PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={hiddenNodeIds} levelMode={levelMode} wallMode={wallMode} selectedId={selectedId} highlightHostId={tool === "beam" ? beamStart?.attachment.hostId : tool === "draw" || tool === "point" || tool === "branch" && branchStart ? effectiveCursor?.attachment?.hostId : null} previousRoutePoint={draft[draft.length - 1]} penetrationBypassHostId={penetrationSession?.host.hostId} beamPreview={beamEditPreview ?? beamPreview} onBeamDrag={(id, edit, commit) => { if (id !== selectedBeam?.id) return; const snapped = snapBeamEdit(edit); if (commit) commitBeamEdit(snapped); else previewBeamEdit(snapped); }} onSelect={selectWhileBrowsing} overlay={overlay} appliedSurfaceChases={appliedConstruction.surfaceChases} appliedPenetrations={appliedConstruction.penetrations} constructionMode="construction" onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={finishAtCursor} onChaseFallback={reportChaseFallback} /><ConduitScene overlay={renderedOverlay} departingSegments={departingSegments} selectedId={selectedId} selectedSegmentIds={selectedSegmentIds} constructionMode="construction" visibleSystems={overlay.settings.visibleSystems} sensorVisible={overlay.settings.sensorVisible} appliedSurfaceChases={appliedConstruction.surfaceChases} fallbackChaseKeys={chaseFallbacks} draft={displayDraft.map((point) => point.position)} draftColor={overlay.settings.colors[system]} previewPlan={previewPlan} conflictPoints={previewPlan?.diagnostics.flatMap((item) => item.point ? [item.point] : [])} branchPreview={branchPreview} previewHost={effectiveCursor?.attachment} alignmentAssist={Boolean(worldAxis || orthogonal)} deviceTarget={draft.length ? { system, portId: activeTargetPortId, mode: deviceTargetMode } : null} deviceType={deviceType} devicePreview={inlineDevicePreview ?? (tool === "point" && cursor ? { deviceType, point: cursor, valid: cursor.attachment ? DEVICE_DEFAULTS[deviceType].hostKinds.includes(cursor.attachment.hostKind) : deviceType === "luminaire" || deviceType === "sprinkler-head" || deviceType === "sensor" } : null)} controlBinding={controlBinding?.kind ?? null} visibleControlGroups={visibleControlGroups} onControlDevice={onControlDevice} tool={tool === "beam" ? "select" : tool} hoverId={hoverId} onHover={setHoverId} onDeviceTarget={onDeviceTarget} onBranchPreview={(preview) => { if (!preview) { setBranchPreview(null); return; } const radius = preview.kind === "junction-box" ? Math.hypot(...preview.sizeMm) / 2000 : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000; setBranchPreview({ ...preview, valid: preview.valid && validateBranchCandidate(overlay, preview.segmentId, preview.point, radius).length === 0 }); }} onDevicePreview={scheduleInlineDevicePreview} onSelect={selectWhileBrowsing} onSelectRoute={selectWholeRoute} onBranch={(segment, position) => onBranch(segment.id, position)} onInsertDevice={(segment, position) => { const next = insertDeviceOnSegment(overlay, segment.id, deviceType, position); if (next !== overlay) { commit(next); setStatus(`已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能插入当前管段。`); setInlineDevicePreview(null); }} onInsertEndpointDevice={(endpoint) => { const next = placeDeviceAtEndpoint(overlay, endpoint, deviceType); if (next !== overlay) { commit(next); setStatus(`已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`); } else setStatus(`${DEVICE_DEFAULTS[deviceType].label}只能连接当前开放端。`); }} onConnectLegacy={onConnectLegacy} onStartDeviceRoute={onStartDeviceRoute} onStartJunctionRoute={onStartJunctionRoute} onStartEndpoint={onStartEndpoint} onDelete={deleteObject} /><PointerCapture bounds={scene.bounds} onRay={onPointerRay} onEmptyClick={onEmptyCanvasClick} /><Navigation bounds={scene.bounds} preset={preset} /></Canvas>{snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}<div className="three-d-walkthrough-hint">空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成</div>
+          {activeLevelId &&
+            (sharedPointPlane ||
+              selectedDevice?.mount?.kind === "reference-plane") && (
+              <InstallationPlane
+                bounds={scene.bounds}
+                y={sharedPointPlane ? layoutReferencePlaneY : referencePlaneY}
+                onPreview={(position) => {
+                  if (tool === "point" && sharedPointPlane)
+                    scheduleCursor(position ? { position } : null);
+                }}
+                onPlace={(position) => {
+                  if (tool !== "point" || !sharedPointPlane) {
+                    selectWhileBrowsing(null);
+                    return;
+                  }
+                  const withPlane = ensureInstallationReferencePlane(
+                    overlay,
+                    activeLevelId,
+                    sharedPointPlane.elevationMm,
+                  );
+                  const device = createReferencePlaneDevice(
+                    deviceType as "luminaire" | "sprinkler-head" | "sensor",
+                    position,
+                    activeLevelId,
+                    sharedPointPlane.elevationMm,
+                  );
+                  commit({
+                    ...withPlane,
+                    devices: [...withPlane.devices, device],
+                  });
+                  setCursor(null);
+                  onSelect(device.id);
+                  setSelectedDeviceIds([device.id]);
+                }}
+              />
+            )}
+          <PascalScenePreview
+            scene={scene}
+            layers={layers}
+            hiddenNodeIds={hiddenNodeIds}
+            levelMode={levelMode}
+            wallMode={wallMode}
+            selectedId={selectedId}
+            highlightHostId={
+              tool === "beam"
+                ? beamStart?.attachment.hostId
+                : tool === "draw" ||
+                    tool === "point" ||
+                    (tool === "branch" && branchStart)
+                  ? effectiveCursor?.attachment?.hostId
+                  : null
+            }
+            previousRoutePoint={draft[draft.length - 1]}
+            penetrationBypassHostId={penetrationSession?.host.hostId}
+            beamPreview={beamEditPreview ?? beamPreview}
+            onSelect={selectWhileBrowsing}
+            overlay={overlay}
+            appliedSurfaceChases={appliedConstruction.surfaceChases}
+            appliedPenetrations={appliedConstruction.penetrations}
+            constructionMode="construction"
+            onSurfaceHit={onSurfaceHit}
+            onSurfaceMove={onSurfaceMove}
+            onSurfaceFinish={finishAtCursor}
+            onChaseFallback={reportChaseFallback}
+          />
+          <ConduitScene
+            overlay={renderedOverlay}
+            departingSegments={departingSegments}
+            selectedId={selectedId}
+            selectedSegmentIds={selectedSegmentIds}
+            constructionMode="construction"
+            visibleSystems={overlay.settings.visibleSystems}
+            sensorVisible={overlay.settings.sensorVisible}
+            appliedSurfaceChases={appliedConstruction.surfaceChases}
+            fallbackChaseKeys={chaseFallbacks}
+            draft={displayDraft.map((point) => point.position)}
+            draftColor={overlay.settings.colors[system]}
+            previewPlan={previewPlan}
+            conflictPoints={previewPlan?.diagnostics.flatMap((item) =>
+              item.point ? [item.point] : [],
+            )}
+            branchPreview={branchPreview}
+            previewHost={effectiveCursor?.attachment}
+            alignmentAssist={Boolean(worldAxis || orthogonal)}
+            deviceTarget={
+              draft.length
+                ? { system, portId: activeTargetPortId, mode: deviceTargetMode }
+                : null
+            }
+            deviceType={deviceType}
+            devicePreview={
+              inlineDevicePreview ??
+              (tool === "point" && cursor
+                ? {
+                    deviceType,
+                    point: cursor,
+                    valid: cursor.attachment
+                      ? DEVICE_DEFAULTS[deviceType].hostKinds.includes(
+                          cursor.attachment.hostKind,
+                        )
+                      : deviceType === "luminaire" ||
+                        deviceType === "sprinkler-head" ||
+                        deviceType === "sensor",
+                  }
+                : null)
+            }
+            controlBinding={controlBinding?.kind ?? null}
+            visibleControlGroups={visibleControlGroups}
+            onControlDevice={onControlDevice}
+            tool={tool === "beam" ? "select" : tool}
+            hoverId={hoverId}
+            onHover={setHoverId}
+            onDeviceTarget={onDeviceTarget}
+            onBranchPreview={(preview) => {
+              if (!preview) {
+                setBranchPreview(null);
+                return;
+              }
+              const radius =
+                preview.kind === "junction-box"
+                  ? Math.hypot(...preview.sizeMm) / 2000
+                  : SYSTEM_DEFAULTS.sprinkler.diameterMm / 1000;
+              setBranchPreview({
+                ...preview,
+                valid:
+                  preview.valid &&
+                  validateBranchCandidate(
+                    overlay,
+                    preview.segmentId,
+                    preview.point,
+                    radius,
+                  ).length === 0,
+              });
+            }}
+            onDevicePreview={scheduleInlineDevicePreview}
+            onSelect={selectWhileBrowsing}
+            onSelectRoute={selectWholeRoute}
+            onBranch={(segment, position) => onBranch(segment.id, position)}
+            onInsertDevice={(segment, position) => {
+              const next = insertDeviceOnSegment(
+                overlay,
+                segment.id,
+                deviceType,
+                position,
+              );
+              if (next !== overlay) {
+                commit(next);
+                setStatus(
+                  `已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`,
+                );
+              } else
+                setStatus(
+                  `${DEVICE_DEFAULTS[deviceType].label}不能插入当前管段。`,
+                );
+              setInlineDevicePreview(null);
+            }}
+            onInsertEndpointDevice={(endpoint) => {
+              const next = placeDeviceAtEndpoint(overlay, endpoint, deviceType);
+              if (next !== overlay) {
+                commit(next);
+                setStatus(
+                  `已在管段上插入${DEVICE_DEFAULTS[deviceType].label}。`,
+                );
+              } else
+                setStatus(
+                  `${DEVICE_DEFAULTS[deviceType].label}只能连接当前开放端。`,
+                );
+            }}
+            onConnectLegacy={onConnectLegacy}
+            onStartDeviceRoute={onStartDeviceRoute}
+            onStartJunctionRoute={onStartJunctionRoute}
+            onStartEndpoint={onStartEndpoint}
+            onDelete={deleteObject}
+          />
+          <PointerCapture
+            bounds={scene.bounds}
+            onRay={onPointerRay}
+            onEmptyClick={onEmptyCanvasClick}
+          />
+          <Navigation bounds={scene.bounds} preset={preset} />
+        </Canvas>
+        {snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}
+        <div className="three-d-walkthrough-hint">
+          空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z
+          悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成
+        </div>
     </div>
-  </section>;
+    </section>
+  );
 }

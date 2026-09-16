@@ -57,10 +57,10 @@ function sourcePortPosition(position: RoutePoint, index: number): RoutePoint {
   return { ...clonePoint(position), position: position.position.map((value, axis) => value + u[axis] * offsetU + v[axis] * offsetV) as Vec3 };
 }
 
-export function deviceFrame(position: RoutePoint, tangent?: Vec3): DeviceFrame {
+export function deviceFrame(position: RoutePoint, tangent?: Vec3, frontOverride?: Vec3): DeviceFrame {
   const hostFront = position.attachment?.hostKind === "wall" ? position.attachment.normal : undefined;
   const fallbackFront = tangent && Math.abs(tangent[1]) < .96 ? normalize(cross(tangent, [0, 1, 0])) : [0, 0, 1] as Vec3;
-  const front = normalize(hostFront ?? position.attachment?.normal ?? fallbackFront);
+  const front = normalize(frontOverride ?? hostFront ?? position.attachment?.normal ?? fallbackFront);
   const basis = position.attachment?.hostKind === "beam" ? position.attachment.basis : undefined;
   if (basis) {
     const upCandidate = subtract(basis.v, scale(front, dot(basis.v, front)));
@@ -102,10 +102,10 @@ function luminairePorts(id: string, position: RoutePoint, frame: DeviceFrame, si
   return directions.map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
 }
 
-function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number] } = {}): NetworkDevice {
+function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number]; frameFront?: Vec3 } = {}): NetworkDevice {
   const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind, sizeMm = options.sizeMm ?? definition.sizeMm;
   if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind) || hostKind === "beam" && position.attachment?.surface === "top")) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
-  const id = nextId(deviceType), frame = deviceFrame(position, options.tangent), orientation = frame.front;
+  const id = nextId(deviceType), frame = deviceFrame(position, options.tangent, options.frameFront), orientation = frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
     if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, systemIndex), orientation, system, "source")];
     if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, sizeMm, system, definition.portRole);
@@ -120,7 +120,7 @@ export function createNetworkDevice(deviceType: NetworkDeviceType, position: Rou
 }
 
 export function createReferencePlaneDevice(deviceType: "luminaire" | "sprinkler-head" | "sensor", position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
-  return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm } });
+  return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm }, frameFront: [0, -1, 0] });
 }
 
 export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.sizeMm): NetworkDevice {

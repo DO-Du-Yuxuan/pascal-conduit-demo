@@ -16,7 +16,16 @@ const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const length = (value: Vec3) => Math.hypot(...value);
 const normalize = (value: Vec3): Vec3 => { const size = length(value); return size < EPSILON ? [1, 0, 0] : scale(value, 1 / size); };
-const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): RoutePoint => ({ ...copyPoint(start), position: add(start.position, scale(normalize(subtract(end.position, start.position)), distance)) });
+const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): RoutePoint => {
+  const span = length(subtract(end.position, start.position));
+  if (distance <= EPSILON) return copyPoint(start);
+  // Existing non-Beam route construction deliberately carries its starting
+  // host evidence through stock-length parts for legacy penetration planning.
+  // A Beam endpoint is different: collision validation needs its actual face
+  // evidence to distinguish legal surface contact from entering the solid.
+  if (end.attachment?.hostKind === "beam" && distance >= span - EPSILON) return copyPoint(end);
+  return { ...copyPoint(start), position: add(start.position, scale(normalize(subtract(end.position, start.position)), distance)) };
+};
 const segmentType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-segment" as const : "conduit-segment" as const;
 const fittingType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-fitting" as const : "conduit-fitting" as const;
 const isElectrical = (system: RoutingSystem) => system !== "sprinkler";
