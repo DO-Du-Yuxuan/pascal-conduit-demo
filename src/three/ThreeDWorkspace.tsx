@@ -371,7 +371,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const { [selectedBeam.id]: _removed, ...nodes } = project.raw.nodes as Record<string, unknown>;
       const penetrations = overlay.penetrations.filter((penetration) => penetration.hostId !== selectedBeam.id), nextOverlay = penetrations.length === overlay.penetrations.length ? overlay : { ...overlay, penetrations };
       commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, nextOverlay, true, current.dirty || nextOverlay !== current.overlay);
-      onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
+      setBeamEditPreview(null); onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
     }
     const ids = [...new Set(selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
@@ -1151,9 +1151,6 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     </span>
                   </label>
                   <b>梁位置</b>
-                  <small>
-                    与点位相同：尺寸线从梁实体边缘量到最近的两组不平行墙面或相邻梁面；修改数值会在平面内整体移动梁。
-                  </small>
                   {selectedBeamPlanarClearances.map((clearance, index) => (
                     <label key={`${clearance.witness.id}:${clearance.witness.face}`}>
                       平面净距 {index + 1}
@@ -1164,26 +1161,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           min="0"
                           step="5"
                           defaultValue={clearance.meters * 1000}
-                          onChange={(event) =>
-                            (() => {
-                              const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.target.value) / 1000);
-                              if (result.beam) previewBeamEdit({ start: result.beam.start, end: result.beam.end });
-                            })()
-                          }
-                          onBlur={(event) =>
-                            (() => {
-                              const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.target.value) / 1000);
-                              if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end });
-                              else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
-                            })()
-                          }
                           onKeyDown={(event) => {
-                            if (event.key === "Enter") event.currentTarget.blur();
+                            if (event.key !== "Enter") return;
+                            const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.currentTarget.value) / 1000);
+                            if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end });
+                            else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
                           }}
                         />{" "}
                         mm
                       </span>
-                      <small>{clearance.witness.kind} · {clearance.witness.id}</small>
                     </label>
                   ))}
                   {!selectedBeamPlanarClearances.length && <small>附近没有可作为定位见证的墙面或相邻梁面。</small>}
@@ -1206,42 +1192,24 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           type="number"
                           min="0"
                           defaultValue={clearance.meters * 1000}
-                          onChange={(event) => {
+                          onKeyDown={(event) => {
+                            if (event.key !== "Enter") return;
                             const result = editBeamClearance(
                               scene.nodes,
                               selectedBeam,
                               clearance.edge,
-                              Number(event.target.value) / 1000,
-                            );
-                            if (result.beam)
-                              previewBeamEdit({
-                                start: result.beam.start,
-                                end: result.beam.end,
-                              });
-                          }}
-                          onBlur={(event) => {
-                            const result = editBeamClearance(
-                              scene.nodes,
-                              selectedBeam,
-                              clearance.edge,
-                              Number(event.target.value) / 1000,
+                              Number(event.currentTarget.value) / 1000,
                             );
                             if (result.beam)
                               commitBeamEdit({
                                 start: result.beam.start,
                                 end: result.beam.end,
                               });
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter")
-                              event.currentTarget.blur();
+                            else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
                           }}
                         />{" "}
                         mm
                       </span>
-                      <small>
-                        {clearance.witness.kind} · {clearance.witness.id}
-                      </small>
                     </label>
                   ))}
                 </section>

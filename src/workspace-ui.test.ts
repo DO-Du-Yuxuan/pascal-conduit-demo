@@ -185,6 +185,21 @@ describe("conduit workspace UI contract", () => {
     expect(source).not.toContain("Beam left clearance");
   });
 
+  it("clears a deleted Beam preview and commits Beam positioning only on Enter", () => {
+    const deleteBeamSource = threeDSource.slice(
+      threeDSource.indexOf("const deleteSelectedObjects"),
+      threeDSource.indexOf("const applyDevicePosition"),
+    );
+    const beamPositionSource = threeDSource.slice(
+      threeDSource.indexOf("<b>梁位置</b>"),
+      threeDSource.indexOf("{(tool === \"draw\""),
+    );
+    expect(deleteBeamSource).toContain("setBeamEditPreview(null)");
+    expect(beamPositionSource).not.toContain("onChange=");
+    expect(beamPositionSource).not.toContain("onBlur=");
+    expect(beamPositionSource).not.toContain("clearance.witness.kind");
+  });
+
   it("keeps Beam lock, modifier and pointer feedback discoverable", () => {
     expect(threeDSource).toContain("beam-orthogonal-lock");
     expect(threeDSource).toContain("aria-pressed={orthogonal}");
