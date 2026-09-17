@@ -133,6 +133,16 @@ describe('2D point annotations', () => {
     expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000),lane:d.lane}))).toEqual([{basis:'wall-end',value:800,lane:0},{basis:'device-center',value:400,lane:0},{basis:'device-center',value:600,lane:0},{basis:'wall-end',value:2200,lane:0}]);
   });
 
+  it('anchors wall-device symbols and witnesses on the attached physical wall face',()=>{
+    const overlay=createEmptyOverlay('a','sha'),wall={...nodes.w,thickness:.2},wallNodes={...nodes,w:wall};
+    overlay.devices=[{...device('surface',1),position:{position:[1,.3,0] as [number,number,number],attachment:host()}}];
+    const [from,to]=buildPointPositionDimensions(wallNodes,overlay,'l0');
+    expect(from.center).toEqual([1,.1]);
+    expect(from.reference).toEqual([0,.1]);
+    expect(to.center).toEqual([1,.1]);
+    expect(to.reference).toEqual([4,.1]);
+  });
+
   it('splits a same-wall chain at an opening instead of dimensioning through it',()=>{
     const overlay=createEmptyOverlay('a','sha');overlay.devices=[device('left',1),device('right',3)];
     const withDoor={...nodes,door:{id:'door',type:'door',parentId:'w',wallId:'w',position:[2,1,0],width:1}} as Record<string,NodeData>;
