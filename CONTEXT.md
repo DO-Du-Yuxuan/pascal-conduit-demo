@@ -29,7 +29,7 @@ A construction opening created where an explicitly penetrating conduit passes th
 _Avoid_: Surface route, collision, beam notch
 
 **Beam positioning dimension**:
-A live, editable clearance from a selected Beam side or endpoint to the nearest reliable parallel Wall or neighboring Beam face. Moving the whole Beam preserves its span, while moving one endpoint may change its length and direction; both update their physical witnesses at 5 mm resolution.
+One live, editable clearance from the nearest long side of a selected Beam to a reachable parallel physical Wall face, perpendicular to the Beam span. It moves the whole Beam without changing its length or direction and updates its physical witness at 5 mm resolution.
 _Avoid_: Beam size, wall centreline distance, text-only annotation
 
 **Unhosted device point**:

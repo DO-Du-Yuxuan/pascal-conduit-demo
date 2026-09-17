@@ -17,7 +17,7 @@ import { projectRoutePointToDirection, resolveOrthogonalBeamHit, resolveOrthogon
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
-import { beamClearances, beamPlanarClearances, editBeamClearance, editBeamPlanarClearance, snapBeamPoint } from "../domain/beam-positioning";
+import { beamPlanarClearances, editBeamPlanarClearance, snapBeamPoint } from "../domain/beam-positioning";
 import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments, revalidateBeamPenetrations } from "../domain/beam-routing";
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
@@ -253,8 +253,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const selectedBox = overlay.junctionBoxes.find((box) => box.id === selectedId);
   const selectedDevice = overlay.devices.find((device) => device.id === selectedId);
   const selectedBeam = scene && selectedId ? validateBeam(scene.nodes[selectedId], scene.nodes).beam : null;
-  const selectedBeamClearances = selectedBeam && scene ? beamClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
   const selectedBeamPlanarClearances = selectedBeam && scene ? beamPlanarClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
+  const selectedBeamPositionLabel = selectedBeam ? (() => {
+    const dx = Math.abs(selectedBeam.end[0] - selectedBeam.start[0]), dz = Math.abs(selectedBeam.end[1] - selectedBeam.start[1]);
+    return dz < 1e-7 ? "Z 向净距" : dx < 1e-7 ? "X 向净距" : "垂直梁净距";
+  })() : "梁位置净距";
   const selectedDevices = selectedDeviceIds.map((id) => overlay.devices.find((device) => device.id === id)).filter((device): device is NetworkDevice => Boolean(device));
   const selectedHasLuminaire = selectedDevices.some((device) => device.deviceType === "luminaire");
   const boundLuminaireIds = new Set(overlay.lightingControlGroups.flatMap((group) => group.luminaireDeviceIds));
@@ -1152,11 +1155,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                   </label>
                   <b>梁位置</b>
                   {selectedBeamPlanarClearances.map((clearance) => (
-                    <label key={`${clearance.axis}:${clearance.witness.id}:${clearance.witness.face}`}>
-                      {clearance.axis === "x" ? "X 向净距" : "Y 向净距"}
+                    <label key={`${clearance.witness.id}:${clearance.witness.face}`}>
+                      {selectedBeamPositionLabel}
                       <span>
                         <input
-                          aria-label={`Beam ${clearance.axis} clearance`}
+                          aria-label="Beam cross-axis clearance"
                           type="number"
                           min="0"
                           step="5"
@@ -1172,46 +1175,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       </span>
                     </label>
                   ))}
-                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为 X/Y 定位见证的墙实体表面。</small>}
-                  {selectedBeamClearances.map((clearance) => (
-                    <label key={clearance.edge}>
-                      {
-                        (
-                          {
-                            left: "左侧",
-                            right: "右侧",
-                            start: "起点",
-                            end: "终点",
-                          } as const
-                        )[clearance.edge]
-                      }
-                      净距
-                      <span>
-                        <input
-                          aria-label={`Beam ${clearance.edge} clearance`}
-                          type="number"
-                          min="0"
-                          defaultValue={clearance.meters * 1000}
-                          onKeyDown={(event) => {
-                            if (event.key !== "Enter") return;
-                            const result = editBeamClearance(
-                              scene.nodes,
-                              selectedBeam,
-                              clearance.edge,
-                              Number(event.currentTarget.value) / 1000,
-                            );
-                            if (result.beam)
-                              commitBeamEdit({
-                                start: result.beam.start,
-                                end: result.beam.end,
-                              });
-                            else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
-                          }}
-                        />{" "}
-                        mm
-                      </span>
-                    </label>
-                  ))}
+                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为横向定位见证的平行墙实体表面。</small>}
                 </section>
               )}
 

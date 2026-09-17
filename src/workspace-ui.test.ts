@@ -163,13 +163,13 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("commitBeamEdit");
     expect(threeDSource).toContain("梁位置");
     expect(threeDSource).toContain("editBeamPlanarClearance");
-    expect(threeDSource).toContain('aria-label={`Beam ${clearance.axis} clearance`}');
-    expect(threeDSource).toContain('clearance.axis === "x" ? "X 向净距" : "Y 向净距"');
+    expect(threeDSource).toContain('aria-label="Beam cross-axis clearance"');
+    expect(threeDSource).toContain('return dz < 1e-7 ? "Z 向净距" : dx < 1e-7 ? "X 向净距" : "垂直梁净距"');
     expect(threeDSource).toContain("beamEditPreview ?? beamPreview");
     expect(threeDSource).toContain("selectedBeam.start.join");
     expect(threeDSource).not.toContain('addEventListener("beam-drag"');
-    expect(pascalSceneSource).toContain("function BeamDimensionGuides");
-    expect(pascalSceneSource).toContain('data-beam-clearance-dimension={clearance.edge}');
+    expect(pascalSceneSource).toContain("function BeamPlanarDimensionGuides");
+    expect(pascalSceneSource).toContain('data-beam-planar-dimension="cross-axis"');
     expect(pascalSceneSource).not.toContain("setBodyDrag");
     expect(pascalSceneSource).not.toContain("data-beam-handle");
     expect(pascalSceneSource).toContain("const rendered = beamPreview?.id === node.id ? beamPreview : node");
@@ -181,8 +181,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("snapBeamPoint");
     expect(threeDSource).toContain("梁表面捕捉");
     expect(threeDSource).not.toContain("snapBeamEdit");
-    expect(threeDSource).toContain("selectedBeamClearances");
-    expect(threeDSource).toContain('aria-label={`Beam ${clearance.edge} clearance`}');
+    expect(threeDSource).toContain("selectedBeamPlanarClearances");
+    expect(threeDSource).toContain('aria-label="Beam cross-axis clearance"');
     expect(source).not.toContain("Beam left clearance");
   });
 

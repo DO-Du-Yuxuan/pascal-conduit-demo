@@ -30,25 +30,25 @@ describe("Beam physical positioning", () => {
     expect(editBeamClearance({ ...nodes, beam }, beam, "left", 2.9026).beam).toMatchObject({ start: [1, .845], end: [5, .845] });
     expect(editBeamClearance({ ...nodes, beam }, beam, "end", 2.0026).beam?.end).toEqual([5.8950000000000005, 1]);
   });
-  it("uses global X/Y rays from a Beam's outer corners to Wall faces, never diagonal nearest segments", () => {
+  it("uses one perpendicular position witness for an angled Beam, never an axial or diagonal nearest segment", () => {
     const beam = createBeam(nodes, { id: "angled", name: "斜梁", levelId: "level", start: [1, 1], end: [5, 2], width: .3 }).beam!;
-    const clearances = beamPlanarClearances({ ...nodes, beam }, beam);
-    expect(clearances).toHaveLength(2);
-    expect(clearances.map((item) => item.axis).sort()).toEqual(["x", "y"]);
-    expect(clearances.every((item) => item.witness.kind === "wall" && (item.direction[0] === 0 || item.direction[1] === 0))).toBe(true);
-    expect(clearances.find((item) => item.axis === "x")).toMatchObject({ witness: { id: "start" }, direction: [-1, 0], meters: .865 });
-    expect(clearances.find((item) => item.axis === "y")).toMatchObject({ witness: { id: "left" }, direction: [0, -1], meters: .755 });
-    const result = editBeamPlanarClearance({ ...nodes, beam }, beam, clearances.find((item) => item.axis === "x")!, 1.0026);
+    const normal: [number, number] = [-1 / Math.sqrt(17), 4 / Math.sqrt(17)];
+    const parallelWall = { id: "parallel", type: "wall", parentId: "level", start: [1 + normal[0] * 2, 1 + normal[1] * 2], end: [5 + normal[0] * 2, 2 + normal[1] * 2], thickness: .2 };
+    const clearances = beamPlanarClearances({ ...nodes, parallelWall, beam }, beam);
+    expect(clearances).toHaveLength(1);
+    expect(clearances[0]).toMatchObject({ witness: { id: "parallel", kind: "wall" } });
+    expect(Math.abs(clearances[0]!.direction[0] * 4 + clearances[0]!.direction[1])).toBeLessThan(1e-8);
+    const result = editBeamPlanarClearance({ ...nodes, parallelWall, beam }, beam, clearances[0]!, 1.0026);
     expect(result.beam).not.toBeNull();
     expect(Math.hypot(result.beam!.end[0] - result.beam!.start[0], result.beam!.end[1] - result.beam!.start[1])).toBeCloseTo(Math.hypot(4, 1));
   });
-  it("omits unreliable source geometry and never uses a Column as a clearance witness", () => {
+  it("uses Pascal's default Wall thickness when source thickness is omitted and never uses a Column as a clearance witness", () => {
     const incomplete = { ...nodes, left: { ...nodes.left, thickness: undefined }, column: { ...nodes.column, width: undefined, depth: undefined } };
-    expect(snapBeamPoint(incomplete, "level", [3, 0], .2)).toBeNull();
+    expect(snapBeamPoint(incomplete, "level", [3, .03], .2)?.point).toEqual([3, .05]);
     const beam = createBeam(nodes, { id: "beam", name: "梁", levelId: "level", start: [1, 2], end: [5, 2], width: .3 }).beam!;
     expect(beamClearances({ ...nodes, beam }, beam).some((item) => item.witness.kind === "column")).toBe(false);
     expect(snapBeamPoint({ ...nodes, column: { ...nodes.column, position: undefined } }, "level", [6, 2], .3)).toBeNull();
-    expect(snapBeamPoint({ ...nodes, column: { ...nodes.column, position: undefined }, left: { ...nodes.left, thickness: undefined }, start: { ...nodes.start, thickness: undefined } }, "level", [0, 0], .3)).toBeNull();
+    expect(snapBeamPoint({ ...nodes, column: { ...nodes.column, position: undefined }, left: { ...nodes.left, thickness: undefined }, start: { ...nodes.start, thickness: undefined } }, "level", [0, 0], .3)?.target).toMatchObject({ id: "left", kind: "wall" });
   });
   it("keeps Ceiling polygon edges endpoint-only and outside clearance evidence", () => {
     const beam = createBeam(nodes, { id: "beam", name: "梁", levelId: "level", start: [1, 1], end: [5, 1], width: .3 }).beam!;
