@@ -921,7 +921,7 @@ function App() {
                 onUpdateCallout={(id,update) => { if(conduitOverlay)commitConduitOverlay(updateManualCallout(conduitOverlay,id,update)); }}
                 onDeleteCallout={(id) => { if(conduitOverlay)commitConduitOverlay(deleteManualCallout(conduitOverlay,id));setSelectedCalloutId(current=>current===id?null:current); }}
                 onSelectCallout={(id) => { setSelectedId(null);setSelectedDimension(null);setSelectedManualId(null);setSelectedCalloutId(id); }}
-                onUpdatePointPositionDimensionLabel={(id, position) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, pointPositionDimensionLabelPositions: { ...conduitOverlay.pointPositionDimensionLabelPositions, [id]: position } }); }}
+                onUpdatePointPositionDimensionLabel={(id, position, lineOffset) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, pointPositionDimensionLabelPositions: { ...conduitOverlay.pointPositionDimensionLabelPositions, [id]: position }, pointPositionDimensionLineOffsets: { ...conduitOverlay.pointPositionDimensionLineOffsets, [id]: lineOffset } }); }}
                 onUpdateConstructionAnnotationLabel={(id, label, signature) => { if (conduitOverlay) commitConduitOverlay({ ...conduitOverlay, constructionAnnotationLabelPositions: { ...conduitOverlay.constructionAnnotationLabelPositions, [id]: label }, constructionAnnotationLabelPlacementSignatures: { ...conduitOverlay.constructionAnnotationLabelPlacementSignatures, [id]: signature } }); }}
                 onUpdate={updateCanvas}
                 onRemove={removeCanvas}
@@ -1069,7 +1069,7 @@ function CanvasPanel({
   onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
-  onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
+  onUpdatePointPositionDimensionLabel: (id: string, position: number, lineOffset: number) => void;
   onUpdateConstructionAnnotationLabel: (id: string, label: [number, number], signature: string) => void;
   onUpdate: (id: number, u: Partial<CanvasState>) => void;
   onRemove: (id: number) => void;
@@ -1338,7 +1338,7 @@ function Plan({
   onUpdateCallout: (id: string, update: Partial<Pick<ManualCallout,'text'|'label'>>) => void;
   onDeleteCallout: (id: string) => void;
   onSelectCallout: (id: string) => void;
-  onUpdatePointPositionDimensionLabel: (id: string, position: number) => void;
+  onUpdatePointPositionDimensionLabel: (id: string, position: number, lineOffset: number) => void;
   onUpdateConstructionAnnotationLabel: (id: string, label: [number, number], signature: string) => void;
 }) {
   const drag = useRef<{ x: number; y: number; box: ViewBox; moved: boolean } | null>(null), suppressClick = useRef(false), planRef = useRef<HTMLDivElement>(null), svgRef = useRef<SVGSVGElement>(null), sceneRef = useRef<SVGGElement>(null), viewBoxRef = useRef(viewBox), setViewBoxRef = useRef(setViewBox), safariGesture = useRef<{ scale: number } | null>(null),
@@ -1581,7 +1581,7 @@ function Plan({
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
           <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
-          {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} onLabelPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
+          {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} lineOffsets={conduitOverlay?.pointPositionDimensionLineOffsets} onPositionChange={onUpdatePointPositionDimensionLabel} lineSnapTolerance={12 / constructionPlan.scale} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           <ManualCallouts callouts={visibleCallouts} preview={calloutTarget&&calloutHover?{anchor:calloutTarget.anchor,label:calloutHover}:null} rotation={rotation} annotationScale={pointAnnotationScale} selectedId={selectedCalloutId} autoEditId={autoEditCalloutId} onSelect={onSelectCallout} onUpdate={onUpdateCallout} onDelete={onDeleteCallout} onEditFinished={()=>setAutoEditCalloutId(null)} onMoveStart={(id,event)=>{event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);const item=visibleCallouts.find(callout=>callout.id===id);if(item)setCalloutDrag({id,label:item.label,pointerId:event.pointerId});onSelectCallout(id);}} onMove={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;const point=eventWorldPoint(event);if(point)setCalloutDrag({...calloutDrag,label:point});}} onMoveEnd={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);onUpdateCallout(calloutDrag.id,{label:eventWorldPoint(event)??calloutDrag.label});setCalloutDrag(null);}}/>
           <ManualMeasurements measurements={manualMeasurements} preview={measurementMode !== "off" && measurementStart && measurementHover ? { mode: activeMeasurementMode, start: measurementStart, end: measurementHover } : null} unit={measurementUnit} viewRotation={rotation} selectedId={selectedManualId} onSelect={onSelectManual} onDelete={onDeleteManual} />

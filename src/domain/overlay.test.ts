@@ -57,7 +57,9 @@ describe("Conduit overlay", () => {
   it("round-trips persisted point-position dimension label placements", () => {
     const overlay = createEmptyOverlay("dimensions.json", "abc");
     overlay.pointPositionDimensionLabelPositions = { "socket-a:position:0:start": .2 };
+    overlay.pointPositionDimensionLineOffsets = { "socket-a:position:0:start": .46 };
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).pointPositionDimensionLabelPositions).toEqual(overlay.pointPositionDimensionLabelPositions);
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).pointPositionDimensionLineOffsets).toEqual(overlay.pointPositionDimensionLineOffsets);
   });
 
   it("round-trips saved automatic annotation-panel placements", () => {

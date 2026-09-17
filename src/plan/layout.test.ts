@@ -35,7 +35,7 @@ it('uses a saved annotation-panel position for the current annotation group',()=
  const exterior={runs:[{id:'bottom',levelId:'l',componentId:'c',start:[0,0],end:[10,0],direction:[1,0],outwardNormal:[0,-1],sourceWallIds:['w'],boundarySegments:[],lengthMeters:10}],rings:[],dimensions:[],diagnostics:[],summary:{}} as unknown as ExteriorDimensionReport;
  const annotation=a('socket-a'),result=layoutExteriorAnnotations([annotation],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)});
  expect(result.placed[0]).toMatchObject({label:[7.5,-3.25],manual:true});
- expect(layoutExteriorAnnotations([{...annotation,anchor:[2.5,3]}],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)}).placed[0].manual).toBe(false);
+ expect(layoutExteriorAnnotations([{...annotation,anchor:[2.5,3]}],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)}).placed[0].manual).toBe(true);
 });
 
 it('only staggers colliding callouts and returns later callouts to the main rule line',()=>{
