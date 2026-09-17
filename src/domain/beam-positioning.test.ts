@@ -30,15 +30,14 @@ describe("Beam physical positioning", () => {
     expect(editBeamClearance({ ...nodes, beam }, beam, "left", 2.9026).beam).toMatchObject({ start: [1, .845], end: [5, .845] });
     expect(editBeamClearance({ ...nodes, beam }, beam, "end", 2.0026).beam?.end).toEqual([5.8950000000000005, 1]);
   });
-  it("uses one perpendicular position witness for an angled Beam, never an axial or diagonal nearest segment", () => {
-    const beam = createBeam(nodes, { id: "angled", name: "斜梁", levelId: "level", start: [1, 1], end: [5, 2], width: .3 }).beam!;
-    const normal: [number, number] = [-1 / Math.sqrt(17), 4 / Math.sqrt(17)];
-    const parallelWall = { id: "parallel", type: "wall", parentId: "level", start: [1 + normal[0] * 2, 1 + normal[1] * 2], end: [5 + normal[0] * 2, 2 + normal[1] * 2], thickness: .2 };
-    const clearances = beamPlanarClearances({ ...nodes, parallelWall, beam }, beam);
+  it("uses one perpendicular position witness for an angled Beam even when the Wall is not parallel", () => {
+    const fixture = { level: nodes.level, ceiling: nodes.ceiling, crossingWall: { id: "crossing-wall", type: "wall", parentId: "level", start: [2.5, 3], end: [2.5, 4], thickness: .2 } };
+    const beam = createBeam(fixture, { id: "angled", name: "斜梁", levelId: "level", start: [1, 1], end: [5, 2], width: .3 }).beam!;
+    const clearances = beamPlanarClearances({ ...fixture, beam }, beam);
     expect(clearances).toHaveLength(1);
-    expect(clearances[0]).toMatchObject({ witness: { id: "parallel", kind: "wall" } });
+    expect(clearances[0]).toMatchObject({ witness: { id: "crossing-wall", kind: "wall" } });
     expect(Math.abs(clearances[0]!.direction[0] * 4 + clearances[0]!.direction[1])).toBeLessThan(1e-8);
-    const result = editBeamPlanarClearance({ ...nodes, parallelWall, beam }, beam, clearances[0]!, 1.0026);
+    const result = editBeamPlanarClearance({ ...fixture, beam }, beam, clearances[0]!, 1.0026);
     expect(result.beam).not.toBeNull();
     expect(Math.hypot(result.beam!.end[0] - result.beam!.start[0], result.beam!.end[1] - result.beam!.start[1])).toBeCloseTo(Math.hypot(4, 1));
   });

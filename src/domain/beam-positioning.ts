@@ -113,16 +113,15 @@ export function beamPlanarClearances(nodes: Record<string, NodeData>, beam: Beam
   const axis = normalized(subtract(beam.end, beam.start));
   if (!axis) return [];
   const normal: [number, number] = [-axis[1], axis[0]], center = scale(add(beam.start, beam.end), .5), half = beam.width / 2;
-  // One useful position value: from the nearest long Beam side to a parallel
-  // physical Wall face, never along the Beam or to an arbitrary diagonal point.
+  // One useful position value: cast from the nearest long Beam side in the
+  // cross-axis direction to the first physical Wall face.  The wall itself may
+  // be angled; the dimension direction never is along the Beam.
   const walls = beamAuthoringSurfaces(nodes, beam.parentId!, beam.id).filter((surface) => surface.kind === "wall");
   const queries: Array<{ origin: [number, number]; direction: [number, number] }> = [
     { origin: add(center, scale(normal, half)), direction: normal },
     { origin: add(center, scale(normal, -half)), direction: scale(normal, -1) },
   ];
   const candidates = queries.flatMap((query) => walls.flatMap((witness) => {
-      const tangent = normalized(subtract(witness.end, witness.start));
-      if (!tangent || Math.abs(cross(tangent, axis)) > 1e-5) return [];
       const meters = rayHit(query.origin, query.direction, witness);
       return meters === null ? [] : [{ meters: quantizeBeamMeters(meters), witness, direction: query.direction, origin: query.origin }];
     })).sort((a, b) => a.meters - b.meters || a.witness.id.localeCompare(b.witness.id) || a.witness.face.localeCompare(b.witness.face));

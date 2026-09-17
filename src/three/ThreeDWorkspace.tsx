@@ -1175,7 +1175,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       </span>
                     </label>
                   ))}
-                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为横向定位见证的平行墙实体表面。</small>}
+                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为横向定位见证的墙实体表面。</small>}
                 </section>
               )}
 
