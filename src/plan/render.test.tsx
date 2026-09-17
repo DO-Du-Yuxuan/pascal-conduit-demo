@@ -202,10 +202,19 @@ describe('construction plan rendering integration',()=>{
  it('snaps a moved point-position dimension line to an adjacent point-position dimension line only',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
   const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]},neighbor={...dimension,id:'neighbor',sourceId:'other',reference:[0,3] as [number,number],center:[10,3] as [number,number],referenceWitness:[0,3] as [number,number],centerWitness:[10,3] as [number,number]};
-  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension,neighbor]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} lineOffsets={{position:.28,neighbor:-1.7}} onPositionChange={onChange} toPlanPoint={(x,y)=>[x,y]} lineSnapTolerance={.12}/></svg>));
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension,neighbor]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} lineOffsets={{position:.28,neighbor:-1.7}} onPositionChange={onChange} toPlanPoint={(x,y)=>[x,y]}/></svg>));
   const label=div.querySelector('[data-point-position-dimension-label="position"]') as SVGTextElement;
   Object.assign(label,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
-  act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:5,clientY:1.25,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:5,clientY:1.25,button:0}));});
+  act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:5,clientY:1.26,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:5,clientY:1.26,button:0}));});
   expect(onChange).toHaveBeenCalledWith('position',.5,1.3);
+ });
+ it('moves the dimension number in the same screen direction as its actual dimension line',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
+  const dimension={id:'position',sourceId:'d',levelId:'l',reference:[10,0] as [number,number],center:[0,0] as [number,number],referenceWitness:[10,0] as [number,number],centerWitness:[0,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} onLabelPositionChange={onChange} toPlanPoint={(x,y)=>[x,y]}/></svg>));
+  const label=div.querySelector('[data-point-position-dimension-label="position"]') as SVGTextElement;
+  Object.assign(label,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
+  act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:8,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:8,clientY:.28,button:0}));});
+  expect(onChange).toHaveBeenCalledWith('position',.2);
  });
 });
