@@ -1151,12 +1151,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     </span>
                   </label>
                   <b>梁位置</b>
-                  {selectedBeamPlanarClearances.map((clearance, index) => (
-                    <label key={`${clearance.witness.id}:${clearance.witness.face}`}>
-                      平面净距 {index + 1}
+                  {selectedBeamPlanarClearances.map((clearance) => (
+                    <label key={`${clearance.axis}:${clearance.witness.id}:${clearance.witness.face}`}>
+                      {clearance.axis === "x" ? "X 向净距" : "Y 向净距"}
                       <span>
                         <input
-                          aria-label={`Beam planar clearance ${index + 1}`}
+                          aria-label={`Beam ${clearance.axis} clearance`}
                           type="number"
                           min="0"
                           step="5"
@@ -1172,7 +1172,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       </span>
                     </label>
                   ))}
-                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为定位见证的墙面或相邻梁面。</small>}
+                  {!selectedBeamPlanarClearances.length && <small>附近没有可作为 X/Y 定位见证的墙实体表面。</small>}
                   {selectedBeamClearances.map((clearance) => (
                     <label key={clearance.edge}>
                       {

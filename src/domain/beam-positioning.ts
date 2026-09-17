@@ -7,10 +7,9 @@ export type BeamSurface = { id: string; kind: BeamSurfaceKind; face: "side-a" | 
 export type BeamSnap = { point: [number, number]; distance: number; target: BeamSurface };
 export type BeamClearanceEdge = "left" | "right" | "start" | "end";
 export type BeamClearance = { edge: BeamClearanceEdge; meters: number; witness: BeamSurface };
-/** The two plan-position dimensions use the same nearest non-parallel witness
- * language as horizontal point devices.  Unlike BeamClearance, they translate
- * the whole member and do not depend on the Beam being orthogonal to a wall. */
-export type BeamPlanarClearance = { meters: number; witness: BeamSurface; direction: [number, number] };
+/** A whole-Beam plan position is expressed against a physical Wall face.
+ * `origin` is one actual outer Beam corner, never the member centreline. */
+export type BeamPlanarClearance = { axis: "x" | "y"; meters: number; witness: BeamSurface; direction: [number, number]; origin: [number, number] };
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const point = (value: unknown): [number, number] | null => Array.isArray(value) && finite(value[0]) && finite(value[1]) ? [value[0], value[1]] : null;
@@ -112,25 +111,39 @@ export function editBeamClearance(nodes: Record<string, NodeData>, beam: BeamNod
 export function beamPlanarClearances(nodes: Record<string, NodeData>, beam: BeamNode): BeamPlanarClearance[] {
   const axis = normalized(subtract(beam.end, beam.start));
   if (!axis) return [];
-  const normal: [number, number] = [-axis[1], axis[0]], center = scale(add(beam.start, beam.end), .5);
-  const surfaces = beamAuthoringSurfaces(nodes, beam.parentId!, beam.id).filter((surface) => surface.kind === "wall" || surface.kind === "beam");
-  const candidates = surfaces.flatMap((witness) => {
-    const hit = closest(center, witness.start, witness.end), delta = subtract(hit.point, center), direction = normalized(delta);
-    if (!direction || hit.distance < 1e-7) return [];
-    // The dimension starts on the outermost Beam face in the witness direction,
-    // not at its centreline.
-    const extent = Math.abs(dot(axis, direction)) * Math.hypot(beam.end[0] - beam.start[0], beam.end[1] - beam.start[1]) / 2 + Math.abs(dot(normal, direction)) * beam.width / 2;
-    const meters = hit.distance - extent;
-    return meters >= -1e-7 ? [{ meters: quantizeBeamMeters(Math.max(0, meters)), witness, direction }] : [];
-  }).sort((a, b) => a.meters - b.meters || a.witness.kind.localeCompare(b.witness.kind) || a.witness.id.localeCompare(b.witness.id) || a.witness.face.localeCompare(b.witness.face));
-  const first = candidates[0];
-  const second = first && candidates.find((candidate) => candidate.witness.id !== first.witness.id && Math.abs(dot(candidate.direction, first.direction)) <= .25);
-  return [first, second].filter((candidate): candidate is BeamPlanarClearance => Boolean(candidate));
+  const normal: [number, number] = [-axis[1], axis[0]], half = beam.width / 2;
+  const corners = [
+    add(beam.start, scale(normal, half)), add(beam.start, scale(normal, -half)),
+    add(beam.end, scale(normal, half)), add(beam.end, scale(normal, -half)),
+  ];
+  // A position field must be globally legible: never choose an arbitrary nearest
+  // segment or another Beam. Wall faces are already offset by half wall thickness.
+  const walls = beamAuthoringSurfaces(nodes, beam.parentId!, beam.id).filter((surface) => surface.kind === "wall");
+  const queries: Array<{ axis: "x" | "y"; directions: [number, number][] }> = [
+    { axis: "x", directions: [[-1, 0], [1, 0]] },
+    { axis: "y", directions: [[0, -1], [0, 1]] },
+  ];
+  return queries.flatMap((query) => {
+    const hit = walls.flatMap((witness) => {
+      const tangent = normalized(subtract(witness.end, witness.start));
+      if (!tangent) return [];
+      return query.directions.flatMap((direction) => {
+        // Only a Wall face perpendicular to this global measurement direction
+        // can be a valid endpoint for the dimension line.
+        if (Math.abs(dot(tangent, direction)) > 1e-5) return [];
+        return corners.flatMap((origin) => {
+          const meters = rayHit(origin, direction, witness);
+          return meters === null ? [] : [{ axis: query.axis, meters: quantizeBeamMeters(meters), witness, direction, origin }];
+        });
+      });
+    }).sort((a, b) => a.meters - b.meters || a.witness.id.localeCompare(b.witness.id) || a.witness.face.localeCompare(b.witness.face) || a.origin[0] - b.origin[0] || a.origin[1] - b.origin[1]);
+    return hit[0] ? [hit[0]] : [];
+  });
 }
 
 export function editBeamPlanarClearance(nodes: Record<string, NodeData>, beam: BeamNode, reference: BeamPlanarClearance, targetMeters: number): BeamValidation {
   if (!finite(targetMeters) || targetMeters < 0) return { valid: false, beam: null, diagnostics: ["梁平面净距必须是非负有限数值。"] };
-  const current = beamPlanarClearances(nodes, beam).find((candidate) => candidate.witness.id === reference.witness.id && candidate.witness.face === reference.witness.face && dot(candidate.direction, reference.direction) > .999);
+  const current = beamPlanarClearances(nodes, beam).find((candidate) => candidate.axis === reference.axis && candidate.witness.id === reference.witness.id && candidate.witness.face === reference.witness.face && dot(candidate.direction, reference.direction) > .999);
   if (!current) return { valid: false, beam: null, diagnostics: ["梁的定位见证面已不可用，请重新选择梁。"] };
   const delta = current.meters - quantizeBeamMeters(targetMeters);
   return editBeam(nodes, beam, { start: add(beam.start, scale(current.direction, delta)), end: add(beam.end, scale(current.direction, delta)) });

@@ -75,13 +75,9 @@ function BeamDimensionGuides({ beam, clearances, y }: { beam: BeamNode; clearanc
 }
 
 function BeamPlanarDimensionGuides({ beam, clearances, y }: { beam: BeamNode; clearances: BeamPlanarClearance[]; y: number }) {
-  const axisLength = Math.hypot(beam.end[0] - beam.start[0], beam.end[1] - beam.start[1]);
-  if (axisLength < 1e-8) return null;
-  const axis: [number, number] = [(beam.end[0] - beam.start[0]) / axisLength, (beam.end[1] - beam.start[1]) / axisLength], normal: [number, number] = [-axis[1], axis[0]], center: [number, number] = [(beam.start[0] + beam.end[0]) / 2, (beam.start[1] + beam.end[1]) / 2];
-  return <group name="beam-planar-position-dimensions">{clearances.map((clearance, index) => {
-    const extent = Math.abs(axis[0] * clearance.direction[0] + axis[1] * clearance.direction[1]) * axisLength / 2 + Math.abs(normal[0] * clearance.direction[0] + normal[1] * clearance.direction[1]) * beam.width / 2;
-    const start: Point = [center[0] + clearance.direction[0] * extent, y, center[1] + clearance.direction[1] * extent], end: Point = [start[0] + clearance.direction[0] * clearance.meters, y, start[2] + clearance.direction[1] * clearance.meters], middle: Point = [(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2];
-    return <group key={`${clearance.witness.id}:${clearance.witness.face}`} data-beam-planar-dimension={index + 1}><Line points={[start, end]} color="#f97316" lineWidth={1.5} raycast={() => null} /><mesh position={start} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><mesh position={end} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><Html position={middle} center distanceFactor={9}><span className="conduit-dimension-label">{Math.round(clearance.meters * 1000)} mm</span></Html></group>;
+  return <group name="beam-planar-position-dimensions">{clearances.map((clearance) => {
+    const start: Point = [clearance.origin[0], y, clearance.origin[1]], end: Point = [start[0] + clearance.direction[0] * clearance.meters, y, start[2] + clearance.direction[1] * clearance.meters], middle: Point = [(start[0] + end[0]) / 2, y, (start[2] + end[2]) / 2];
+    return <group key={`${clearance.axis}:${clearance.witness.id}:${clearance.witness.face}`} data-beam-planar-dimension={clearance.axis}><Line points={[start, end]} color="#f97316" lineWidth={1.5} raycast={() => null} /><mesh position={start} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><mesh position={end} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><Html position={middle} center distanceFactor={9}><span className="conduit-dimension-label">{Math.round(clearance.meters * 1000)} mm</span></Html></group>;
   })}</group>;
 }
 

@@ -163,7 +163,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("commitBeamEdit");
     expect(threeDSource).toContain("梁位置");
     expect(threeDSource).toContain("editBeamPlanarClearance");
-    expect(threeDSource).toContain('aria-label={`Beam planar clearance ${index + 1}`}');
+    expect(threeDSource).toContain('aria-label={`Beam ${clearance.axis} clearance`}');
+    expect(threeDSource).toContain('clearance.axis === "x" ? "X 向净距" : "Y 向净距"');
     expect(threeDSource).toContain("beamEditPreview ?? beamPreview");
     expect(threeDSource).toContain("selectedBeam.start.join");
     expect(threeDSource).not.toContain('addEventListener("beam-drag"');
