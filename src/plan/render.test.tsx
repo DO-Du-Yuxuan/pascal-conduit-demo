@@ -199,6 +199,15 @@ describe('construction plan rendering integration',()=>{
   act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:5,clientY:1.28,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:5,clientY:1.28,button:0}));});
   expect(onChange).toHaveBeenCalledWith('position',.5,1.28);
  });
+ it('keeps a point-position dimension line directly under the pointer during continuous dragging',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
+  const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} labelPositions={{position:.5}} lineOffsets={{position:.28}} onPositionChange={onChange} toPlanPoint={(x,y)=>[x,y]}/></svg>));
+  const label=div.querySelector('[data-point-position-dimension-label="position"]') as SVGTextElement;
+  Object.assign(label,{setPointerCapture:vi.fn(),hasPointerCapture:vi.fn(()=>true),releasePointerCapture:vi.fn()});
+  act(()=>{label.dispatchEvent(new MouseEvent('pointerdown',{bubbles:true,clientX:5,clientY:.28,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:5,clientY:.5,button:0}));label.dispatchEvent(new MouseEvent('pointermove',{bubbles:true,clientX:5,clientY:.75,button:0}));label.dispatchEvent(new MouseEvent('pointerup',{bubbles:true,clientX:5,clientY:.75,button:0}));});
+  expect(onChange).toHaveBeenCalledWith('position',.5,.75);
+ });
  it('snaps a moved point-position dimension line to an adjacent point-position dimension line only',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);
   const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]},neighbor={...dimension,id:'neighbor',sourceId:'other',reference:[0,3] as [number,number],center:[10,3] as [number,number],referenceWitness:[0,3] as [number,number],centerWitness:[10,3] as [number,number]};
