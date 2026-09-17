@@ -119,7 +119,12 @@ export function createNetworkDevice(deviceType: NetworkDeviceType, position: Rou
   return buildNetworkDevice(deviceType, position, name, true);
 }
 
-export function createReferencePlaneDevice(deviceType: "luminaire" | "sprinkler-head" | "sensor", position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
+export function isReferencePlaneEligibleDeviceType(deviceType: NetworkDeviceType) {
+  return DEVICE_DEFAULTS[deviceType].hostKinds.includes("ceiling");
+}
+
+export function createReferencePlaneDevice(deviceType: NetworkDeviceType, position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
+  if (!isReferencePlaneEligibleDeviceType(deviceType)) throw new Error(`${DEVICE_DEFAULTS[deviceType].label}不能放置在悬空参考面。`);
   return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm }, frameFront: [0, -1, 0] });
 }
 

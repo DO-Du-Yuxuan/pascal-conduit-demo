@@ -1,5 +1,5 @@
 import type { ConduitOverlayDocument, NetworkDevice, RoutePoint, Vec3 } from "./overlay";
-import { rebuildNetworkDevice } from "./devices";
+import { isReferencePlaneEligibleDeviceType, rebuildNetworkDevice } from "./devices";
 
 export type DevicePositioningContext = {
   levelFloorY: Readonly<Record<string, number>>;
@@ -41,7 +41,7 @@ const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b
 const footprintExtent = (device: NetworkDevice, normal: Vec3) => Math.abs(normal[0]) * device.sizeMm[0] / 2000 + Math.abs(normal[2]) * device.sizeMm[2] / 2000;
 
 function planarReferences(device: NetworkDevice, context: DevicePositioningContext): NonNullable<DevicePositionDescription["planar"]> {
-  const levelId = device.mount?.kind === "reference-plane" ? device.mount.levelId : device.position.attachment?.levelId;
+  const levelId = referencePlaneLevelId(device);
   const candidates = (context.wallFaces ?? []).filter((face) => {
     if (face.levelId !== levelId || !face.start || !face.end) return face.levelId === levelId;
     const tangent = subtract(face.end, face.start), length = Math.hypot(...tangent);
@@ -57,6 +57,14 @@ function planarReferences(device: NetworkDevice, context: DevicePositioningConte
   const ordered = persisted?.length ? persisted : candidates.sort((a, b) => a.distance - b.distance || a.wallId.localeCompare(b.wallId));
   const first = ordered[0], second = first && ordered.find((candidate) => candidate.wallId !== first.wallId && Math.abs(dot(candidate.direction, first.direction)) <= .25);
   return [first, second].filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate)).map(({ distance: _distance, ...reference }) => reference);
+}
+
+function referencePlaneLevelId(device: NetworkDevice) {
+  return device.mount?.kind === "reference-plane" ? device.mount.levelId : device.position.attachment?.hostKind === "ceiling" || device.position.attachment?.hostKind === "slab" || device.position.attachment?.hostKind === "beam" ? device.position.attachment.levelId : null;
+}
+
+function canEditAsReferencePlane(device: NetworkDevice) {
+  return Boolean(referencePlaneLevelId(device) && isReferencePlaneEligibleDeviceType(device.deviceType));
 }
 
 function horizontalReference(overlay: ConduitOverlayDocument, device: NetworkDevice, context: DevicePositioningContext): DevicePositionDescription["horizontal"] {
@@ -88,8 +96,10 @@ export function describeDevicePosition(overlay: ConduitOverlayDocument, deviceId
       horizontal: horizontalReference(overlay, device, context),
     };
   }
-  if (device.mount?.kind === "reference-plane") return { vertical: { millimeters: device.mount.elevationMm, kind: "reference-plane" }, planar: planarReferences(device, context) };
-  if (attachment?.hostKind === "slab") return { planar: planarReferences(device, context) };
+  if (canEditAsReferencePlane(device)) {
+    const levelId = referencePlaneLevelId(device)!, floor = context.levelFloorY[levelId];
+    return { vertical: floor === undefined ? undefined : { millimeters: Math.round((device.position.position[1] - floor) * 1000), kind: "reference-plane" }, planar: planarReferences(device, context) };
+  }
   return {};
 }
 
@@ -104,14 +114,13 @@ function translatedPoint(point: RoutePoint, delta: Vec3, clearAttachment = false
   return attachment ? { position: add(point.position, delta), attachment } : { position: add(point.position, delta) };
 }
 
-function moveDevice(device: NetworkDevice, delta: Vec3, reference?: NonNullable<DevicePositionDescription["horizontal"]>, elevationMm?: number, clearConnections = true): NetworkDevice {
-  const referencePlaneMount = device.mount?.kind === "reference-plane" ? device.mount : undefined;
+function moveDevice(device: NetworkDevice, delta: Vec3, reference?: NonNullable<DevicePositionDescription["horizontal"]>, referencePlaneMount?: { levelId: string; elevationMm: number }, clearConnections = true): NetworkDevice {
   const referencePlane = Boolean(referencePlaneMount);
   const movedPosition = translatedPoint(device.position, delta, referencePlane);
   return {
     ...device,
     position: movedPosition,
-    mount: referencePlaneMount ? { ...referencePlaneMount, elevationMm: elevationMm ?? referencePlaneMount.elevationMm } : device.mount?.kind === "host" && movedPosition.attachment ? { kind: "host", attachment: structuredClone(movedPosition.attachment) } : device.mount,
+    mount: referencePlaneMount ? { kind: "reference-plane", ...referencePlaneMount } : device.mount?.kind === "host" && movedPosition.attachment ? { kind: "host", attachment: structuredClone(movedPosition.attachment) } : device.mount,
     positioning: reference ? { ...device.positioning, horizontal: reference } : device.positioning,
     ports: device.ports.map((port) => ({ ...port, position: translatedPoint(port.position, delta, referencePlane), connectedSegmentIds: clearConnections ? [] : port.connectedSegmentIds })),
   };
@@ -163,13 +172,16 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
     let delta: Vec3 = [0, 0, 0];
     let reference: DevicePositionDescription["horizontal"];
     if (edit.elevationMm !== undefined) {
-      if (device.mount?.kind !== "reference-plane") { skipped.push(device.id); continue; }
-      const floor = context.levelFloorY[device.mount.levelId];
+      const levelId = referencePlaneLevelId(device);
+      if (!levelId || !canEditAsReferencePlane(device)) { skipped.push(device.id); continue; }
+      const floor = context.levelFloorY[levelId];
       if (floor === undefined) { skipped.push(device.id); continue; }
       delta = [0, floor + edit.elevationMm / 1000 - device.position.position[1], 0];
-      if (!edit.planarClearanceMm) { if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, undefined, edit.elevationMm, mode === "commit")); continue; }
+      if (!edit.planarClearanceMm) { if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm }, mode === "commit")); continue; }
     }
-    if (edit.planarClearanceMm && (device.mount?.kind === "reference-plane" || device.position.attachment?.hostKind === "slab")) {
+    if (edit.planarClearanceMm && canEditAsReferencePlane(device)) {
+      const levelId = referencePlaneLevelId(device)!, floor = context.levelFloorY[levelId];
+      if (floor === undefined) { skipped.push(device.id); continue; }
       const references = planarReferences(device, context);
       if (!references.length) { skipped.push(device.id); continue; }
       for (const reference of references) {
@@ -178,7 +190,7 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
         delta = add(delta, scale(reference.direction, (proposed - reference.millimeters) / 1000));
       }
       if (!hasMovement(delta)) continue;
-      const movedDevice = moveDevice(device, delta, undefined, edit.elevationMm, mode === "commit");
+      const movedDevice = moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm ?? Math.round((device.position.position[1] + delta[1] - floor) * 1000) }, mode === "commit");
       movedDevice.positioning = { ...movedDevice.positioning, planarWallIds: references.map((reference) => reference.wallId) };
       moved.set(device.id, movedDevice);
       continue;
@@ -202,7 +214,7 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
         delta = add(delta, scale(basis, targetCoordinate - wallCoordinate(device)));
       }
     } else { skipped.push(device.id); continue; }
-    if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, reference, edit.elevationMm, mode === "commit"));
+    if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, reference, undefined, mode === "commit"));
   }
   if (!moved.size) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: skipped, diagnostics: ["所选设备没有可编辑的定位参考。"] };
   const withMovedDevices = { ...overlay, devices: overlay.devices.map((device) => moved.get(device.id) ?? device) };

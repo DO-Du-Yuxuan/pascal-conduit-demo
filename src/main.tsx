@@ -66,6 +66,7 @@ import { loadRequirementHandoffJson, type RequirementHandoff } from "./requireme
 import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoSceneVisibility, restoreAllSceneNodes, undoSceneVisibility } from "./scene-visibility";
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
+import { saveJsonFile } from "./three/save-json-file";
 import { useOverlayStore } from "./domain/store";
 import { sha256Text } from "./domain/hash";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
@@ -436,14 +437,10 @@ function App() {
     setCalloutTargetId(null);
     setThreeDOverlayVersion((version) => version + 1);
   };
-  const exportConduitOverlayFromTwoD = () => {
+  const exportConduitOverlayFromTwoD = async () => {
     if (!conduitOverlay) return;
-    const url = URL.createObjectURL(new Blob([JSON.stringify(conduitOverlay, null, 2)], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "conduit-overlay.json";
-    anchor.click();
-    URL.revokeObjectURL(url);
+    const result = await saveJsonFile(new Blob([JSON.stringify(conduitOverlay, null, 2)], { type: "application/json" }), "conduit-overlay.json");
+    if (result === "cancelled") return;
     markConduitOverlayExported();
   };
   const exportProjectJson = async () => {
@@ -457,12 +454,8 @@ function App() {
     nextParsed.diagnostics = [...nextParsed.diagnostics, ...inspectNodes(nextParsed.nodes)];
     const extension = file.toLowerCase().endsWith(".json") ? ".json" : "";
     const downloadedName = `${file.slice(0, extension ? -extension.length : undefined) || "project"}-export.json`;
-    const url = URL.createObjectURL(new Blob([projectText], { type: "application/json" }));
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = downloadedName;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    const result = await saveJsonFile(new Blob([projectText], { type: "application/json" }), downloadedName);
+    if (result === "cancelled") return;
     setData(nextParsed);
     setSourceSha(revisionSha256);
     commitWorkspace(exported, conduitOverlay ? migrateOverlayOwnership(conduitOverlay, exported) : null, true, Boolean(conduitOverlay));
@@ -856,7 +849,7 @@ function App() {
           <button className="primary" onClick={() => input.current?.click()}>
             导入 JSON
           </button>
-          <button disabled={!data?.raw || typeof data.raw !== "object"} onClick={() => void exportProjectJson()} title="下载新的项目 JSON 文件，不会覆盖导入源文件">
+          <button disabled={!data?.raw || typeof data.raw !== "object"} onClick={() => void exportProjectJson()} title="另存项目 JSON，可选择位置并修改文件名">
             导出项目 JSON
           </button>
           <input

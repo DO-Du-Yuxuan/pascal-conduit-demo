@@ -7,7 +7,7 @@ import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type C
 import { migrateOverlayOwnership, overlayBelongsToProject } from "../domain/workspace";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
+import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { createLightingControlGroup, removeLightingControlGroup, replaceLightingControlGroup } from "../domain/lighting-controls";
@@ -22,6 +22,9 @@ import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments,
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
 import { routeCursorFromActiveWall } from "./active-host";
+import { cameraMouseButtons, type CameraProjection } from "./camera-navigation";
+import { syncExternalDeviceSelection } from "./device-selection";
+import { saveJsonFile } from "./save-json-file";
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
 import { DEFAULT_3D_LAYERS, type ThreeDLevelMode, type ThreeDViewPreset, type ThreeDWallMode, viewStateForPreset } from "./view-state";
 
@@ -43,7 +46,6 @@ const PERSPECTIVE_CAMERA = { position: [10, 10, 10] as [number, number, number],
 const ORTHOGRAPHIC_CAMERA = { position: [10, 10, 10] as [number, number, number], zoom: 30 };
 const CANVAS_DPR: [number, number] = [1, 1.25];
 const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
-const CONTROL_MOUSE_BUTTONS = { left: CameraControlsImpl.ACTION.NONE, middle: CameraControlsImpl.ACTION.TRUCK, right: CameraControlsImpl.ACTION.ROTATE, wheel: CameraControlsImpl.ACTION.DOLLY };
 const NO_CAMERA_COLLIDERS: never[] = [];
 const GROUND_CAMERA_CLEARANCE = .04;
 const gangLabel = (count: number) => `${["零", "一", "二", "三", "四", "五", "六", "七", "八"][count] ?? count}开`;
@@ -90,7 +92,7 @@ function useRafCoalescedDevicePreview(initial: DevicePreview | null) {
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
   return [value, setImmediate, schedule, latest] as const;
 }
-function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPreset }) {
+function Navigation({ bounds, preset, projection }: { bounds: ThreeDBounds; preset: ViewPreset; projection: CameraProjection }) {
   const controls = useRef<CameraControlsImpl>(null!);
   const latestBounds = useRef(bounds);
   latestBounds.current = bounds;
@@ -127,7 +129,7 @@ function Navigation({ bounds, preset }: { bounds: ThreeDBounds; preset: ViewPres
   // near-zero minimum makes wheel motion decay until it feels blocked at the
   // orbit target, so enter pass-through mode at a practical scene-relative
   // distance instead. Hidden or visible scene meshes are never colliders.
-  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryFriction={.12} boundaryEnclosesCamera colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={CONTROL_MOUSE_BUTTONS} />;
+  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryFriction={.12} boundaryEnclosesCamera colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={cameraMouseButtons(projection)} />;
 }
 
 function PointerCapture({ bounds, onRay, onEmptyClick }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number], shiftKey: boolean, ctrlKey: boolean) => void; onEmptyClick: (shiftKey: boolean, ctrlKey: boolean) => void }) {
@@ -277,7 +279,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   // Horizontal point placement shares the Beam interaction aid. The persisted
   // device mount below remains an Installation reference plane, never a fake
   // Ceiling/Layout host.
-  const eligibleLayoutPoint = tool === "point" && (deviceType === "luminaire" || deviceType === "sprinkler-head" || deviceType === "sensor");
+  const eligibleLayoutPoint = tool === "point" && isReferencePlaneEligibleDeviceType(deviceType);
   const sharedPointPlane = eligibleLayoutPoint && layoutReferencePlane?.visible ? layoutReferencePlane : null;
   const referencePlaneY = activeLevelId ? (devicePositioningContext.levelFloorY[activeLevelId] ?? 0) + referencePlaneElevationMm / 1000 : 2.7;
   const renderedOverlay = { ...overlay, devices: overlay.devices.map((device) => Object.assign({}, device, { displaySelected: selectedDeviceIds.includes(device.id) || relatedControlDeviceIds.has(device.id), ...(device.id === selectedDevice?.id ? { displayPosition: positionDescription } : {}) })) } as ConduitOverlayDocument & { devices: (NetworkDevice & { displayPosition?: DevicePositionDescription; displaySelected?: boolean })[] };
@@ -318,8 +320,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   useEffect(() => { setChaseFallbacks(new Set()); }, [appliedConstruction.surfaceChases, appliedConstruction.penetrations, scene?.sceneKey]);
   useEffect(() => {
     if (!selectedDevice) { setPositionDraft({}); return; }
-    setPositionDraft({ elevation: selectedDevice.mount?.kind === "reference-plane" ? selectedDevice.mount.elevationMm : undefined, horizontal: positionDescription.horizontal?.millimeters, vertical: positionDescription.vertical?.millimeters, planar: Object.fromEntries(positionDescription.planar?.map((item) => [item.wallId, item.millimeters]) ?? []) });
+    setPositionDraft({ elevation: positionDescription.vertical?.kind === "reference-plane" ? positionDescription.vertical.millimeters : undefined, horizontal: positionDescription.horizontal?.millimeters, vertical: positionDescription.vertical?.millimeters, planar: Object.fromEntries(positionDescription.planar?.map((item) => [item.wallId, item.millimeters]) ?? []) });
   }, [selectedDevice?.id, positionDescription.horizontal?.millimeters, positionDescription.vertical?.millimeters, positionDescription.planar?.map((item) => `${item.wallId}:${item.millimeters}`).join("|")]);
+  useEffect(() => {
+    const deviceIds = new Set(overlay.devices.map((device) => device.id));
+    setSelectedDeviceIds((current) => syncExternalDeviceSelection(current, selectedId, deviceIds));
+  }, [overlay.devices, selectedId]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
@@ -668,7 +674,16 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
   const importOverlay = async (file: File) => { const imported = parseOverlay(JSON.parse(await file.text())), project = useOverlayStore.getState().project; if (!project || !overlayBelongsToProject(imported, project)) { window.alert("该 Overlay 不属于当前项目，未导入。"); return; } const migrated = migrateOverlayOwnership(imported, project); setOverlay(migrated); setOverlayDirty(JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); loadSharedWorkspace(project, migrated, JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); setAppliedConstruction({ surfaceChases: [], penetrations: [] }); };
-  const exportOverlay = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" })); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "conduit-overlay.json"; anchor.click(); URL.revokeObjectURL(url); setOverlayDirty(false); markOverlayExported(); };
+  const exportOverlay = async () => {
+    try {
+      const result = await saveJsonFile(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" }), "conduit-overlay.json");
+      if (result === "cancelled") return;
+      setOverlayDirty(false);
+      markOverlayExported();
+    } catch {
+      setStatus("无法保存 Overlay 文件，请检查目标位置后重试。");
+    }
+  };
   const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); orthogonalDirection.current = null; };
   const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); if (next !== "select") onSelect(null); };
@@ -1620,7 +1635,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                         className="conduit-position-fields"
                         aria-label="设备边缘定位"
                       >
-                        {selectedDevice.mount?.kind === "reference-plane" && (
+                        {positionDescription.vertical?.kind === "reference-plane" && (
                           <label>
                             完成地标高
                             <span>
@@ -1973,7 +1988,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 <button onClick={() => overlayInput.current?.click()}>
                   导入
                 </button>
-                <button className="primary" onClick={exportOverlay}>
+                <button className="primary" onClick={() => void exportOverlay()}>
                   导出
                 </button>
               </div>
@@ -2080,7 +2095,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     sharedPointPlane.elevationMm,
                   );
                   const device = createReferencePlaneDevice(
-                    deviceType as "luminaire" | "sprinkler-head" | "sensor",
+                    deviceType,
                     position,
                     activeLevelId,
                     sharedPointPlane.elevationMm,
@@ -2238,7 +2253,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onRay={onPointerRay}
             onEmptyClick={onEmptyCanvasClick}
           />
-          <Navigation bounds={scene.bounds} preset={preset} />
+          <Navigation bounds={scene.bounds} preset={preset} projection={projection} />
         </Canvas>
         {snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}
         <div className="three-d-walkthrough-hint">

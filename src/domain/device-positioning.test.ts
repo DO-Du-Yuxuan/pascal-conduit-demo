@@ -102,6 +102,21 @@ describe("device point positioning transaction", () => {
     expect(result.skippedDeviceIds).toEqual([wall.id]);
   });
 
+  it("promotes a Ceiling-mounted socket to an editable reference-plane point when changing XYZ", () => {
+    const socket = createNetworkDevice("socket", { position: [2, 2.7, 3], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "L0", localPosition: [2, 2.7, 3], basis: { u: [1, 0, 0], v: [0, 0, 1] } } });
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [socket] };
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces: [
+      { id: "wall-x", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [1, 0, 0] as [number, number, number] },
+      { id: "wall-z", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] },
+    ] };
+    expect(describeDevicePosition(overlay, socket.id, context)).toMatchObject({ vertical: { millimeters: 2700, kind: "reference-plane" }, planar: expect.any(Array) });
+    const moved = editDevicePosition(overlay, { deviceIds: [socket.id], elevationMm: 3000, planarClearanceMm: { "wall-x": 1000 } }, context, "commit");
+    expect(moved.status).toBe("committed");
+    expect(moved.overlay.devices[0].mount).toEqual({ kind: "reference-plane", levelId: "L0", elevationMm: 3000 });
+    expect(moved.overlay.devices[0].position.position).toEqual([expect.closeTo(1.043), 3, 3]);
+    expect(moved.overlay.devices[0].position.attachment).toBeUndefined();
+  });
+
   it("bulk-edits the bottom-edge height of multiple wall device points", () => {
     const first = createNetworkDevice("switch", wallPoint(1, 1.2)), second = createNetworkDevice("socket", wallPoint(2, .3));
     const overlay = { ...createEmptyOverlay("a", "sha"), devices: [first, second] };

@@ -66,7 +66,7 @@ describe("conduit workspace UI contract", () => {
     expect(compactThreeDSource).toContain("camera={ projection === \"orthographic\" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA }");
     expect(threeDSource).toContain("dpr={CANVAS_DPR}");
     expect(threeDSource).toContain("gl={CANVAS_GL}");
-    expect(threeDSource).toContain("mouseButtons={CONTROL_MOUSE_BUTTONS}");
+    expect(threeDSource).toContain("mouseButtons={cameraMouseButtons(projection)}");
     expect(threeDSource).toContain("colliderMeshes={NO_CAMERA_COLLIDERS}");
     expect(threeDSource).toContain("GROUND_CAMERA_CLEARANCE");
     expect(threeDSource).toContain("boundaryEnclosesCamera");
