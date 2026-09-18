@@ -127,3 +127,43 @@ _Avoid_: A separate sprinkler device type, automatic pipe reroute
 **Sensor point**:
 A standalone, unpowered device point used to record a sensor's installation location and editable purpose. It may mount to a wall, slab, ceiling, installation reference plane, or free space; it has no physical conduit port, circuit, or routing system. Its independent sensor layer controls its 2D and 3D display, while its location continues to participate in construction dimensions and installation-height schedules.
 _Avoid_: Weak-current outlet, luminaire, conduit endpoint
+
+**Indoor air-handling unit**:
+An Overlay-owned, horizontally oriented central-air-conditioning indoor unit with one supply port and one return port. In the current HVAC version, the unit and both routes share one rectangular Duct section; it is positioned with the same host and physical-dimension interactions as a luminaire, rather than by raw world-coordinate fields.
+_Avoid_: Outdoor unit, Pascal building node, generic device point
+
+**Indoor-unit port outward direction**:
+The yaw-rotated horizontal normal of the specifically clicked Supply or Return port. It constrains only the first default Duct leg to leave that port; later legs regain ordinary orthogonal choice or explicit world-axis constraints.
+_Avoid_: Pointer-derived initial axis, a permanent route direction, port label orientation
+
+**Duct section**:
+The one shared width-and-height rectangle used by an Indoor air-handling unit and all of its Supply and Return ducts in the current HVAC version.
+_Avoid_: Indoor-unit casing dimensions, circular pipe diameter, independently tapered duct
+
+**Supply duct**:
+A manually routed, non-branching rectangular air path that begins at an Indoor air-handling unit's supply port. It may carry multiple Supply outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
+_Avoid_: Electrical conduit, return duct, refrigerant pipe
+
+**Return duct**:
+A manually routed, non-branching rectangular air path that begins at an Indoor air-handling unit's return port. It may carry multiple Return outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
+_Avoid_: Electrical conduit, supply duct, condensate pipe
+
+**Duct outlet**:
+An adjustable rectangular opening attached to one exterior face of a rectangular duct segment. In placement mode, the currently hovered physical duct face and along-segment pointer location determine its transient preview; a click confirms that exact face and location. Its Supply or Return identity is derived from its owning duct, its rectangle must remain wholly inside that face, and multiple outlets may share a face.
+_Avoid_: Wall opening, Ceiling grille, device port
+
+**Thermostat point**:
+An 86-panel device point that has a one-to-one logical control relationship with one Indoor air-handling unit. The relationship is independent of physical ducts, electrical conduit, and location, and is visibly presented in 2D and 3D like a lighting-control relationship.
+_Avoid_: Switch device point, lighting control group, air outlet
+
+**Duct penetration**:
+A fixed-clearance rectangular opening through a Wall, explicitly created by Ctrl while drafting a duct. It is Overlay-owned construction evidence and does not imply structural approval.
+_Avoid_: Adjustable wall opening, Beam penetration, automatic wall cut
+
+**Connected Indoor air-handling unit**:
+An Indoor air-handling unit with at least one connected Supply or Return duct. Its position and horizontal rotation cannot be changed until every connected duct has been deleted.
+_Avoid_: Auto-routed unit, stretchable duct anchor
+
+**Rectangular duct elbow**:
+A fixed 90-degree fitting that joins two perpendicular rectangular duct segments. The current HVAC version does not model non-right-angle, tapered, or branch fittings.
+_Avoid_: Round conduit bend, mitred arbitrary-angle turn, tee

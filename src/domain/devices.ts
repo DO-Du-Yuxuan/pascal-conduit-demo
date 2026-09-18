@@ -50,10 +50,23 @@ function devicePort(deviceId: string, index: number, point: RoutePoint, directio
   return { id: `${deviceId}:port:${index}`, owner: { kind: "device", id: deviceId }, position: clonePoint(point), direction: normalize(direction), role, system, connectedSegmentIds: [], face, slot, flow: "unknown" };
 }
 
-function sourcePortPosition(position: RoutePoint, index: number): RoutePoint {
+const SOURCE_PORT_ROWS = 10;
+const SOURCE_PORT_ROW_SPACING = .035;
+const SOURCE_PORT_LANE_SPACING = .12;
+
+function sourcePortPosition(position: RoutePoint, index: number, systemIndex = 0, systemCount = 1): RoutePoint {
   const normal = normalize(position.attachment?.normal ?? [0, 0, 1]), fallbackU = Math.abs(normal[1]) < .9 ? normalize(cross([0, 1, 0], normal)) : [1, 0, 0] as Vec3;
   const u = normalize(position.attachment?.basis?.u ?? fallbackU), v = normalize(position.attachment?.basis?.v ?? cross(normal, u));
-  const column = index % 6, row = Math.floor(index / 6), offsetU = (column - 2.5) * .035, offsetV = row * .035;
+  // A panel output lane first uses its full vertical capacity. This keeps ten
+  // 20 mm conduits visibly separate on the default panel instead of spreading
+  // five across the face and then overlapping the next starts.
+  const row = index % SOURCE_PORT_ROWS, extraColumn = Math.floor(index / SOURCE_PORT_ROWS);
+  const lane = systemIndex + extraColumn * systemCount;
+  const offsetU = (lane - (systemCount - 1) / 2) * SOURCE_PORT_LANE_SPACING;
+  // Keep the original first source port on the device centreline. Subsequent
+  // ports alternate upward and downward, so all ten fit within the default
+  // panel height while previously authored first routes retain their level.
+  const offsetV = row === 0 ? 0 : Math.ceil(row / 2) * SOURCE_PORT_ROW_SPACING * (row % 2 ? 1 : -1);
   return { ...clonePoint(position), position: position.position.map((value, axis) => value + u[axis] * offsetU + v[axis] * offsetV) as Vec3 };
 }
 
@@ -107,7 +120,7 @@ function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint,
   if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind) || hostKind === "beam" && position.attachment?.surface === "top")) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
   const id = nextId(deviceType), frame = deviceFrame(position, options.tangent, options.frameFront), orientation = frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
-    if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, systemIndex), orientation, system, "source")];
+    if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, 0, systemIndex, definition.systems.length), orientation, system, "source")];
     if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, sizeMm, system, definition.portRole);
     if (deviceType === "luminaire") return luminairePorts(id, position, frame, sizeMm, system);
     return [devicePort(id, systemIndex, position, orientation, system, definition.portRole)];
@@ -211,7 +224,8 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
   let port = existing;
   let devices = workingOverlay.devices;
   if (!port && isSourceDevice(device) && !requestedPortId) {
-    port = devicePort(device.id, device.ports.length, sourcePortPosition(device.position, device.ports.length), device.orientation, system, "source");
+    const systemIndex = device.systems.indexOf(system), sourcePortIndex = device.ports.filter((candidate) => candidate.system === system).length;
+    port = devicePort(device.id, device.ports.length, sourcePortPosition(device.position, sourcePortIndex, systemIndex < 0 ? 0 : systemIndex, device.systems.length), device.orientation, system, "source");
     devices = workingOverlay.devices.map((item) => item.id === device.id ? { ...item, ports: [...item.ports, port!] } : item);
   }
   if (!port) throw new Error("该设备没有可用的输出端口。");

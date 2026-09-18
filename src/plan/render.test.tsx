@@ -134,7 +134,7 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
     expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('translate(1 0.1)');
   });
-  it('uses a distinct square floor-socket symbol for slab-mounted sockets',()=>{
+ it('uses a distinct square floor-socket symbol for slab-mounted sockets',()=>{
     const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
     const overlay=createEmptyOverlay('a','sha'),floorSocket={...device,id:'floor-socket',position:{position:[1,0,2] as [number,number,number],attachment:{hostId:'floor',hostKind:'slab' as const,surface:'top',normal:[0,1,0] as [number,number,number],levelId:'l'}}};
     overlay.devices=[floorSocket];const context=createPlanContext({...nodes,floor:{id:'floor',type:'slab',parentId:'l'}} as Record<string,NodeData>,overlay);
@@ -142,6 +142,18 @@ describe('construction plan rendering integration',()=>{
     expect(div.querySelector('[data-device-symbol="socket"]')?.hasAttribute('data-floor-socket')).toBe(true);
     expect(div.querySelector('[data-floor-socket-symbol]')).toBeTruthy();
   });
+ it('projects HVAC hardware from its 3D dimensions without automatic duct-length labels',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');
+  overlay.hvac={visible:true,indoorUnits:[{id:'unit',type:'indoor-air-handling-unit',name:'空调内机',position:{position:[1,2.85,1],attachment:{hostId:'ceiling',hostKind:'ceiling',surface:'bottom',normal:[0,-1,0],levelId:'l'}},sizeMm:[600,1000,300],sectionMm:[1000,300],rotationYDegrees:0,createdAt:''}],ducts:[{id:'duct',type:'hvac-duct',indoorUnitId:'unit',system:'supply',segmentIds:['segment'],createdAt:''}],segments:[{id:'segment',start:{position:[1,2.85,1.3]},end:{position:[3,2.85,1.3]}}],outlets:[{id:'outlet',type:'hvac-duct-outlet',ductId:'duct',segmentId:'segment',face:'left',offsetMm:400,sizeMm:[300,150],createdAt:''}],thermostats:[{id:'thermostat',type:'thermostat',name:'控温器',position:{position:[.2,1.3,1],attachment:{hostId:'w',hostKind:'wall',surface:'front',normal:[0,0,1],levelId:'l'}},sizeMm:[86,86,50],createdAt:''}],controls:[{id:'control',thermostatId:'thermostat',indoorUnitId:'unit',createdAt:''}],wallPenetrations:[]};
+  const context=createPlanContext(nodes,overlay);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  expect(div.querySelector('[data-hvac-duct-segment="segment"]')?.getAttribute('points')).toContain('1,0.8');
+  expect(div.querySelector('[data-hvac-duct-segment="segment"]')?.textContent).toBe('');
+  expect(div.querySelector('[data-hvac-plan-port="supply"]')?.textContent).toBe('送');
+  expect(div.querySelector('[data-hvac-outlet="outlet"]')).not.toBeNull();
+  expect(div.querySelector('[data-hvac-thermostat="thermostat"] rect')?.getAttribute('width')).toBe('0.086');
+ });
  it('opens a screen-space editor only when the device description is double-clicked',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];useOverlayStore.getState().load(overlay);

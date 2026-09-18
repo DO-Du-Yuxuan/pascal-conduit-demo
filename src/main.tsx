@@ -108,6 +108,7 @@ type Visibility = {
   conduitNetwork: boolean;
   conduitSprinkler: boolean;
   conduitSensor: boolean;
+  conduitHvac: boolean;
   constructionAnnotations: boolean;
   pointPositionDimensions: boolean;
   conduits: boolean;
@@ -141,6 +142,7 @@ const visibilityDefault: Visibility = {
   conduitNetwork: false,
   conduitSprinkler: false,
   conduitSensor: true,
+  conduitHvac: true,
   constructionAnnotations: true,
   pointPositionDimensions: true,
   conduits: true,
@@ -797,7 +799,7 @@ function App() {
   </details>;
   const layerControls = <>
     {layerGroup("建筑图层", { walls: "墙体", beams: "梁", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
-    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduitSensor: "传感器", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler, sensor: visibility.conduitSensor })} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler, conduitSensor: next.sensor ?? true })); }} />全部施工图</label>)}
+    {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯具施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduitSensor: "传感器", conduitHvac: "空调施工图", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler, sensor: visibility.conduitSensor }) && visibility.conduitHvac} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler, conduitSensor: next.sensor ?? true, conduitHvac: event.target.checked })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
   const reportPanels = <>
@@ -1581,7 +1583,8 @@ function Plan({
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
           <ConstructionDrawingLayoutPersistence plan={constructionPlan} />
-          <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
+          <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} hvacVisible={visibility.conduitHvac} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
+          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={`visual-${n.id}`} node={n} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} visualOnly />)}
           {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} lineOffsets={conduitOverlay?.pointPositionDimensionLineOffsets} onPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           <ManualCallouts callouts={visibleCallouts} preview={calloutTarget&&calloutHover?{anchor:calloutTarget.anchor,label:calloutHover}:null} rotation={rotation} annotationScale={pointAnnotationScale} selectedId={selectedCalloutId} autoEditId={autoEditCalloutId} onSelect={onSelectCallout} onUpdate={onUpdateCallout} onDelete={onDeleteCallout} onEditFinished={()=>setAutoEditCalloutId(null)} onMoveStart={(id,event)=>{event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);const item=visibleCallouts.find(callout=>callout.id===id);if(item)setCalloutDrag({id,label:item.label,pointerId:event.pointerId});onSelectCallout(id);}} onMove={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;const point=eventWorldPoint(event);if(point)setCalloutDrag({...calloutDrag,label:point});}} onMoveEnd={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);onUpdateCallout(calloutDrag.id,{label:eventWorldPoint(event)??calloutDrag.label});setCalloutDrag(null);}}/>
@@ -1836,13 +1839,13 @@ function Slab({ node, selected, onSelect }: { node: NodeData; selected: boolean;
   if (!geometry) return null;
   return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#fafaf9"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#d2d2cf"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
 }
-function BeamFootprint({ node, selected, penetrations, onSelect }: { node: NodeData; selected: boolean; penetrations: ConduitOverlayDocument["penetrations"]; onSelect: (id: string) => void }) {
+function BeamFootprint({ node, selected, penetrations, onSelect, visualOnly = false }: { node: NodeData; selected: boolean; penetrations: ConduitOverlayDocument["penetrations"]; onSelect: (id: string) => void; visualOnly?: boolean }) {
   const start = Array.isArray(node.start) ? node.start : [], end = Array.isArray(node.end) ? node.end : [], width = Number(node.width);
   if (!Number.isFinite(start[0]) || !Number.isFinite(start[1]) || !Number.isFinite(end[0]) || !Number.isFinite(end[1]) || !Number.isFinite(width) || width <= 0) return null;
   const dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz);
   if (length < 1e-8) return null;
   const x = (start[0] + end[0]) / 2, z = (start[1] + end[1]) / 2, rotation = Math.atan2(dz, dx) * 180 / Math.PI;
-  return <g data-selectable="beam" transform={`translate(${x} ${z}) rotate(${rotation})`} onClick={(event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" />{penetrations.map((penetration) => { const px = penetration.entry.position[0] - x, pz = penetration.entry.position[2] - z, localX = px * Math.cos(-rotation * Math.PI / 180) - pz * Math.sin(-rotation * Math.PI / 180), localZ = px * Math.sin(-rotation * Math.PI / 180) + pz * Math.cos(-rotation * Math.PI / 180); return <g key={penetration.id}><circle cx={localX} cy={localZ} r={penetration.diameterMm / 2000} fill="#f8fafc" stroke="#111827" strokeWidth=".02" />{selected && <text x={localX} y={localZ - .12} textAnchor="middle" fontSize=".12" fill="#111827">Ø{penetration.diameterMm} · {penetration.segmentId}</text>}</g>; })}</g>;
+  return <g data-selectable={visualOnly ? undefined : "beam"} transform={`translate(${x} ${z}) rotate(${rotation})`} pointerEvents={visualOnly ? "none" : undefined} onClick={visualOnly ? undefined : (event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" />{penetrations.map((penetration) => { const px = penetration.entry.position[0] - x, pz = penetration.entry.position[2] - z, localX = px * Math.cos(-rotation * Math.PI / 180) - pz * Math.sin(-rotation * Math.PI / 180), localZ = px * Math.sin(-rotation * Math.PI / 180) + pz * Math.cos(-rotation * Math.PI / 180); return <g key={penetration.id}><circle cx={localX} cy={localZ} r={penetration.diameterMm / 2000} fill="#f8fafc" stroke="#111827" strokeWidth=".02" />{selected && <text x={localX} y={localZ - .12} textAnchor="middle" fontSize=".12" fill="#111827">Ø{penetration.diameterMm} · {penetration.segmentId}</text>}</g>; })}</g>;
 }
 function Wall({
   node,

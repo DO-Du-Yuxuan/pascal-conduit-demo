@@ -108,6 +108,18 @@ describe("network devices and rooted circuits", () => {
     expect(second.port.position.position).not.toEqual(first.port.position.position);
   });
 
+  it("stacks ten conduits vertically on a strong-panel output lane before using another lane", () => {
+    let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", point(0, 1, 0));
+    const outputYs: number[] = [];
+    for (let index = 0; index < 10; index += 1) {
+      const started = startRouteFromDevice(overlay, overlay.devices[0].id, "receptacle");
+      outputYs.push(started.port.position.position[1]);
+      overlay = commitDeviceRoute(started.overlay, planRoute("receptacle", 20, "surface", [started.port.position, point(index + 1, 1, 0)]), started.circuit, started.port);
+    }
+    expect(new Set(outputYs.map((value) => value.toFixed(6))).size).toBe(10);
+    expect(Math.max(...outputYs) - Math.min(...outputYs)).toBeGreaterThan(.3);
+  });
+
   it("rejects a route commit when the supplied circuit has no valid matching source", () => {
     const overlay = createEmptyOverlay("a.json", "sha"), device = createNetworkDevice("socket", point(0, 1, 0));
     const fakeCircuit = { id: "fake", system: "receptacle" as const, sourceDeviceId: device.id, rootPortId: device.ports[0].id, segmentIds: [], status: "rooted" as const, createdAt: new Date(0).toISOString() };

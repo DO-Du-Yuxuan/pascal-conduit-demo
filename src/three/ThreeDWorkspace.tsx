@@ -3,7 +3,9 @@ import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BackSide, Box3, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
-import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode } from "../domain/overlay";
+import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
+import { addHvacOutlet, addHvacWallPenetration, bindThermostat, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment } from "../domain/hvac";
+import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
 import { migrateOverlayOwnership, overlayBelongsToProject } from "../domain/workspace";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
@@ -33,7 +35,7 @@ export type ThreeDLayerVisibility = { walls: boolean; floors: boolean; ceilings:
 type ViewPreset = ThreeDViewPreset;
 type LevelMode = ThreeDLevelMode;
 type WallMode = ThreeDWallMode;
-type Tool = ConduitTool | "beam";
+type Tool = ConduitTool | "beam" | "hvac-unit" | "hvac-duct" | "hvac-supply" | "hvac-return" | "hvac-outlet" | "hvac-thermostat" | "hvac-bind";
 type BeamPointer = { point: [number, number, number]; shiftKey: boolean; ctrlKey?: boolean; levelId?: string | null };
 type BranchStart = { segmentId: string; point: RoutePoint };
 type DeviceRouteStart = { circuit: Circuit; port: NetworkPort; overlay: ConduitOverlayDocument };
@@ -239,6 +241,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
   const [activeTargetPortId, setActiveTargetPortId] = useState<string | null>(null);
   const [controlBinding, setControlBinding] = useState<ControlBindingSession | null>(null);
+  const [activeHvacDuctId, setActiveHvacDuctId] = useState<string | null>(null), [hvacRouteStart, setHvacRouteStart] = useState<{ unitId: string; system: HvacSystem } | null>(null), [hvacOutletPreview, setHvacOutletPreview] = useState<HvacOutletPreview | null>(null);
   const levels = useMemo(() => Object.values(scene?.nodes ?? {}).filter((node) => node.type === "level").sort((a, b) => Number(a.level ?? 0) - Number(b.level ?? 0) || a.id.localeCompare(b.id)), [scene]);
   const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
   const [appliedConstruction, setAppliedConstruction] = useState<AppliedConstruction>({ surfaceChases: [], penetrations: [] });
@@ -257,6 +260,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const selectedFitting = overlay.fittings.find((fitting) => fitting.id === selectedId);
   const selectedBox = overlay.junctionBoxes.find((box) => box.id === selectedId);
   const selectedDevice = overlay.devices.find((device) => device.id === selectedId);
+  const selectedHvacUnit = overlay.hvac.indoorUnits.find((unit) => unit.id === selectedId);
+  const selectedHvacSegment = overlay.hvac.segments.find((segment) => segment.id === selectedId);
+  const selectedHvacOutlet = overlay.hvac.outlets.find((outlet) => outlet.id === selectedId);
+  // Preserve the existing conduit seam: HVAC has its own scene interactions.
+  const conduitSceneTool: ConduitTool = tool === "beam" ? "select" : tool.startsWith('hvac-') ? "select" : tool as ConduitTool;
+  const selectedThermostat = overlay.hvac.thermostats.find((item) => item.id === selectedId);
+  const hvacPanelOpen = tool.startsWith('hvac-') || Boolean(selectedHvacUnit || selectedHvacSegment || selectedHvacOutlet || selectedThermostat);
   const selectedBeam = scene && selectedId ? validateBeam(scene.nodes[selectedId], scene.nodes).beam : null;
   const selectedBeamPlanarClearances = selectedBeam && scene ? beamPlanarClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
   const selectedBeamPositionLabel = selectedBeam ? (() => {
@@ -282,9 +292,24 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   // Horizontal point placement shares the Beam interaction aid. The persisted
   // device mount below remains an Installation reference plane, never a fake
   // Ceiling/Layout host.
-  const eligibleLayoutPoint = tool === "point" && isReferencePlaneEligibleDeviceType(deviceType);
+  const eligibleLayoutPoint = tool === "point" && isReferencePlaneEligibleDeviceType(deviceType) || tool === 'hvac-unit';
   const sharedPointPlane = eligibleLayoutPoint && layoutReferencePlane?.visible ? layoutReferencePlane : null;
   const referencePlaneY = activeLevelId ? (devicePositioningContext.levelFloorY[activeLevelId] ?? 0) + referencePlaneElevationMm / 1000 : 2.7;
+  const selectedHvacLevelId = selectedHvacUnit?.mount?.kind === 'reference-plane' ? selectedHvacUnit.mount.levelId : selectedHvacUnit?.position.attachment?.levelId ?? (selectedHvacUnit?.mount?.kind === 'host' ? selectedHvacUnit.mount.attachment.levelId : null);
+  const selectedHvacFloorY = selectedHvacLevelId ? devicePositioningContext.levelFloorY[selectedHvacLevelId] : undefined;
+  const selectedHvacBottomElevationMm = selectedHvacUnit && selectedHvacFloorY !== undefined ? Math.round((selectedHvacUnit.position.position[1] - selectedHvacUnit.sectionMm[1] / 2000 - selectedHvacFloorY) * 1000) : undefined;
+  const selectedHvacPlanarReferences = useMemo(() => {
+    if (!selectedHvacUnit || !selectedHvacLevelId) return [];
+    const yaw = selectedHvacUnit.rotationYDegrees * Math.PI / 180, right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)], forward: Vec3 = [Math.sin(yaw), 0, Math.cos(yaw)];
+    const candidates = (devicePositioningContext.wallFaces ?? []).filter(face => face.levelId === selectedHvacLevelId).map(face => {
+      const signed = (selectedHvacUnit.position.position[0] - face.point[0]) * face.normal[0] + (selectedHvacUnit.position.position[2] - face.point[2]) * face.normal[2], direction = face.normal.map(value => value * (signed < 0 ? -1 : 1)) as Vec3;
+      const extent = Math.abs(face.normal[0] * right[0] + face.normal[2] * right[2]) * selectedHvacUnit.sectionMm[0] / 2000 + Math.abs(face.normal[0] * forward[0] + face.normal[2] * forward[2]) * selectedHvacUnit.sizeMm[0] / 2000;
+      const distance = Math.max(0, Math.abs(signed) - (face.halfThickness ?? 0));
+      return { wallId: face.id, direction, distance, millimeters: Math.max(0, Math.round((distance - extent) * 1000)) };
+    }).sort((left, right) => left.distance - right.distance || left.wallId.localeCompare(right.wallId));
+    const first = candidates[0], second = first && candidates.find(candidate => candidate.wallId !== first.wallId && Math.abs(candidate.direction[0] * first.direction[0] + candidate.direction[2] * first.direction[2]) <= .25);
+    return [first, second].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  }, [selectedHvacUnit, selectedHvacLevelId, devicePositioningContext.wallFaces]);
   const renderedOverlay = { ...overlay, devices: overlay.devices.map((device) => Object.assign({}, device, { displaySelected: selectedDeviceIds.includes(device.id) || relatedControlDeviceIds.has(device.id), ...(device.id === selectedDevice?.id ? { displayPosition: positionDescription } : {}) })) } as ConduitOverlayDocument & { devices: (NetworkDevice & { displayPosition?: DevicePositionDescription; displaySelected?: boolean })[] };
   const cancelControlBinding = () => {
     if (controlBinding?.kind === "edit") { onSelect(controlBinding.switchDeviceId); setSelectedDeviceIds([controlBinding.switchDeviceId]); }
@@ -317,7 +342,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
 
   useEffect(() => {
     const stored = useOverlayStore.getState(), restored = overlayForProject(stored.overlay, sourceSha, projectId);
-    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setControlBinding(null); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
+    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setControlBinding(null); setActiveHvacDuctId(null); setHvacRouteStart(null); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
   }, [scene?.sceneKey, sourceFile, sourceSha, projectId]);
   useEffect(() => {
     setOverlay(current => {
@@ -345,11 +370,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") { chooseTool("draw"); setStatus("已切换到画管模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "d") { chooseTool("point"); setStatus("已切换到点位模式。"); return; }
       if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") { if (controlBinding) return; event.preventDefault(); deleteSelectedObjects(); return; }
-      if (tool === "beam" && event.key === "Shift" && !event.repeat) { event.preventDefault(); orthogonalDirection.current = null; setOrthogonal((value) => !value); setStatus("Orthogonal lock 已切换。 "); return; }
-      if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
+      if ((tool === "beam" || tool === "hvac-duct" || tool === "hvac-supply" || tool === "hvac-return") && event.key === "Shift" && !event.repeat) { event.preventDefault(); orthogonalDirection.current = null; setOrthogonal((value) => !value); setStatus(`正交${orthogonal ? '已关闭' : '已开启'}。`); return; }
+      if (["ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown"].includes(event.key) && (draft.length || hvacRouteStart || activeHvacDuctId || event.key === "ArrowDown")) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); return; }
       if (event.key === "Escape") { if (controlBinding) { cancelControlBinding(); return; } if (tool === "select") { selectWhileBrowsing(null); return; } if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; } if (penetrationSession) { setPenetrationSession(null); setCursor(null); return; } setBranchStart(null); setBranchEnd(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
       if (tool === "beam" && event.key === "Enter") { event.preventDefault(); confirmBeamEndpoint(); return; }
-      if (event.key === "Enter") { event.preventDefault(); if (controlBinding?.kind === "edit") { finishControlGroupEdit(); return; } finishCurrentRoute("confirmed-only"); }
+      if (event.key === "Enter") { event.preventDefault(); if (tool === 'hvac-supply' || tool === 'hvac-return') { setActiveHvacDuctId(null); setHvacRouteStart(null); setTool('select'); setStatus('风管路径已完成。'); return; } if (controlBinding?.kind === "edit") { finishControlGroupEdit(); return; } finishCurrentRoute("confirmed-only"); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && latestCursor.current?.attachment && draft.length) {
         event.preventDefault();
         const liveCursor = latestCursor.current, displayedPoints = previewRoutePoints(draft, liveCursor, orthogonal ? "orthogonal" : "free"), displayed = displayedPoints[displayedPoints.length - 1] ?? liveCursor, session = beginPenetration(draft, displayed, orthogonal);
@@ -394,7 +419,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     const ids = [...new Set(selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
-    const next = ids.reduce((current, id) => deleteNetworkObject(current, id), overlay);
+    let next = overlay;
+    for (const id of ids) {
+      const hvacId = [...next.hvac.indoorUnits, ...next.hvac.ducts, ...next.hvac.segments, ...next.hvac.outlets, ...next.hvac.thermostats].some(item => item.id === id);
+      if (hvacId) { const result = deleteHvacObject(next, id); if ('reason' in result) { setStatus(result.reason); return; } next = result.overlay; }
+      else next = deleteNetworkObject(next, id);
+    }
     if (next === overlay) return;
     commit(next); onSelect(null); setSelectedDeviceIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个点位及孤立施工特征。` : "已删除对象及孤立施工特征。");
   };
@@ -407,6 +437,27 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const leaving = overlay.segments.filter((segment) => result.removedSegmentIds.includes(segment.id));
     setDepartingSegments(leaving); window.setTimeout(() => setDepartingSegments([]), 180);
     commit(result.overlay); setStatus(result.removedSegmentIds.length ? "设备已移动；相邻管段已断开，请从开放管端重新连接。" : "设备定位已更新。");
+  };
+  const applyHvacPosition = (change: { bottomElevationMm?: number; planarClearanceMm?: Record<string, number> }) => {
+    if (!selectedHvacUnit) return;
+    if (overlay.hvac.ducts.some(duct => duct.indoorUnitId === selectedHvacUnit.id)) { setStatus('已连接风管的内机不能移动；请先删除连接风管。'); return; }
+    const nextPosition = [...selectedHvacUnit.position.position] as Vec3;
+    if (change.bottomElevationMm !== undefined) {
+      if (selectedHvacFloorY === undefined || !Number.isFinite(change.bottomElevationMm) || change.bottomElevationMm < 0) { setStatus('内机底部标高必须是非负有效数值。'); return; }
+      nextPosition[1] = selectedHvacFloorY + change.bottomElevationMm / 1000 + selectedHvacUnit.sectionMm[1] / 2000;
+    }
+    for (const reference of selectedHvacPlanarReferences) {
+      const requested = change.planarClearanceMm?.[reference.wallId];
+      if (requested === undefined) continue;
+      if (!Number.isFinite(requested) || requested < 0) { setStatus('平面净距必须是非负有效数值。'); return; }
+      const delta = (requested - reference.millimeters) / 1000;
+      nextPosition[0] += reference.direction[0] * delta; nextPosition[2] += reference.direction[2] * delta;
+    }
+    const result = editIndoorUnit(overlay, selectedHvacUnit.id, { position: { ...selectedHvacUnit.position, position: nextPosition } });
+    if ('reason' in result) { setStatus(result.reason); return; }
+    const elevationMm = change.bottomElevationMm ?? selectedHvacBottomElevationMm;
+    const next = selectedHvacUnit.mount?.kind === 'reference-plane' && elevationMm !== undefined ? { ...result.overlay, hvac: { ...result.overlay.hvac, indoorUnits: result.overlay.hvac.indoorUnits.map(unit => unit.id === selectedHvacUnit.id ? { ...unit, mount: { ...unit.mount!, elevationMm } } : unit) } } : result.overlay;
+    commit(next); setStatus('空调内机定位已更新。');
   };
   const selectSystem = (next: RoutingSystem) => { const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); };
   const canDrawWithoutSource = tool === "draw" && system === "network";
@@ -575,7 +626,20 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     surfaceOccluded.current = false;
     rawSurfaceHit.current = hit;
     const active = draft[draft.length - 1];
-    if (tool === "point") { scheduleCursor(routePoint(hit)); return; }
+    if (tool === "hvac-supply" || tool === "hvac-return") {
+      const system = tool === 'hvac-supply' ? 'supply' as const : 'return' as const;
+      const activeDuct = activeHvacDuctId ? overlay.hvac.ducts.find(duct => duct.id === activeHvacDuctId) : undefined, activeSegmentId = activeDuct?.segmentIds[activeDuct.segmentIds.length - 1], activeSegment = activeSegmentId ? overlay.hvac.segments.find(segment => segment.id === activeSegmentId) : undefined;
+      const routeUnit = hvacRouteStart ? overlay.hvac.indoorUnits.find(unit => unit.id === hvacRouteStart.unitId) : undefined;
+      const hvacStart = activeSegment?.end ?? (routeUnit && hvacRouteStart ? indoorUnitPort(routeUnit, hvacRouteStart.system) : undefined);
+      if (hvacStart && orthogonal && !worldAxis) {
+        const target = routePoint(hit), direction = activeSegment ? resolveOrthogonalDirection(hvacStart, target, orthogonalDirection.current) : indoorUnitPortDirection(routeUnit!, hvacRouteStart!.system);
+        orthogonalDirection.current = direction;
+        scheduleCursor(activeSegment ? projectRoutePointToDirection(hvacStart, target, direction) : projectFirstDuctSegmentFromPort(routeUnit!, hvacRouteStart!.system, target));
+        return;
+      }
+      scheduleCursor(routePoint(hit)); return;
+    }
+    if (tool === "point" || tool === "hvac-unit" || tool === "hvac-thermostat") { scheduleCursor(routePoint(hit)); return; }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
     if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
@@ -595,6 +659,37 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       confirmBeamEndpoint({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
     }
     if (tool === "point") { try { commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, routePoint(hit))] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
+    if (tool === "hvac-unit") {
+      if (!['ceiling', 'beam'].includes(hit.attachment.hostKind)) { setStatus('空调内机需安装到 Ceiling、梁面或辅助平面。'); return; }
+      const result = placeIndoorUnit(overlay, routePoint(hit)); commit(result.overlay); onSelect(result.unit.id); setStatus('已放置空调内机；选择画送风或画回风后，直接点击对应颜色端口开始。'); return;
+    }
+    if (tool === "hvac-thermostat") {
+      const result = placeThermostat(overlay, routePoint(hit));
+      if ('reason' in result) { setStatus(result.reason); return; }
+      commit(result.overlay); onSelect(result.thermostat.id); setStatus('已放置空调控温器。'); return;
+    }
+    if (tool === "hvac-supply" || tool === "hvac-return") {
+      const system = tool === 'hvac-supply' ? 'supply' as const : 'return' as const;
+      if (!hvacRouteStart && !activeHvacDuctId) { setStatus(`请直接点击内机的${system === 'supply' ? '蓝色送风口' : '橙色回风口'}，再点击表面开始画管。`); return; }
+      const target = latestCursor.current ?? routePoint(hit);
+      if (!activeHvacDuctId) {
+        const result = createHvacDuct(overlay, hvacRouteStart!.unitId, system, { position: [...target.position] }, target);
+        if ('reason' in result) { setStatus(result.reason); return; }
+        commit(result.overlay); setActiveHvacDuctId(result.duct.id); setStatus('已创建第一段风管；继续点击添加直段，Enter 完成。'); return;
+      }
+      const result = appendHvacDuctSegment(overlay, activeHvacDuctId, target);
+      if ('reason' in result) { setStatus(result.reason); return; }
+      if (hit.ctrlKey && hit.attachment.hostKind === 'wall') {
+        const exit: RoutePoint = { position: hit.point.map((value, axis) => value + hit.attachment.normal[axis] * .1) as [number, number, number] };
+        const through = appendHvacDuctSegment(result.overlay, activeHvacDuctId, exit);
+        if ('reason' in through) { setStatus(through.reason); return; }
+        const duct = through.overlay.hvac.ducts.find(item => item.id === activeHvacDuctId)!, segmentId = duct.segmentIds[duct.segmentIds.length - 1]!;
+        const penetrated = addHvacWallPenetration(through.overlay, hit.attachment.hostId, segmentId, target, exit);
+        if ('reason' in penetrated) { setStatus(penetrated.reason); return; }
+        commit(penetrated.overlay); setStatus('已按 Ctrl 创建矩形墙体穿孔并继续风管。'); return;
+      }
+      commit(result.overlay); setStatus('已添加风管段；继续点击或按 Enter 完成。'); return;
+    }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     const clickedPoint = routePoint(hit);
@@ -680,6 +775,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setSystem(segment.system); setDiameterMm(segment.diameterMm); setSurfaceMode(SYSTEM_DEFAULTS[segment.system].mode); setBranchStart({ segmentId, point: start }); setDraft([start]); setBranchEnd(null); setBranchPreview(null); setCursor(null); setStatus(segment.system === "sprinkler" ? "已确定三通位置；继续绘制消防分支。" : "已确定 86 检修盒位置；继续绘制分支线管。");
   };
   const deleteObject = (id: string) => {
+    if ([...overlay.hvac.indoorUnits, ...overlay.hvac.ducts, ...overlay.hvac.segments, ...overlay.hvac.outlets, ...overlay.hvac.thermostats].some(item => item.id === id)) {
+      const result = deleteHvacObject(overlay, id);
+      if ('reason' in result) { setStatus(result.reason); return; }
+      commit(result.overlay); onSelect(null); setHoverId(null); setStatus('已删除空调对象及其孤立施工关系。'); return;
+    }
     commit(deleteNetworkObject(overlay, id));
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
@@ -695,8 +795,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
   };
   const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
-  const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); orthogonalDirection.current = null; };
-  const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); if (next !== "select") onSelect(null); };
+  const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); setHvacRouteStart(null); setHvacOutletPreview(null); orthogonalDirection.current = null; };
+  const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-bind'].includes(next)) onSelect(null); };
   const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || deviceRouteStart || junctionRouteStart || endpointRouteStart);
   const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
   const activeBeamCandidate = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer) : null;
@@ -714,6 +814,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const distance = (beamStart.point[1] - origin[1]) / direction[1];
       if (distance >= 0) setBeamPointer({ point: [origin[0] + direction[0] * distance, beamStart.point[1], origin[2] + direction[2] * distance], shiftKey, ctrlKey });
       return;
+    }
+    if ((tool === 'hvac-supply' || tool === 'hvac-return') && worldAxis) {
+      const duct = activeHvacDuctId ? overlay.hvac.ducts.find(item => item.id === activeHvacDuctId) : undefined, endId = duct?.segmentIds[duct.segmentIds.length - 1], segment = endId ? overlay.hvac.segments.find(item => item.id === endId) : undefined, unit = hvacRouteStart ? overlay.hvac.indoorUnits.find(item => item.id === hvacRouteStart.unitId) : undefined;
+      const start = segment?.end ?? (unit && hvacRouteStart ? indoorUnitPort(unit, hvacRouteStart.system) : undefined);
+      if (start) { scheduleCursor(pointOnWorldAxis(start, worldAxis, origin, direction)); return; }
     }
     if (worldAxis && draft.length) { scheduleCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); return; }
     if (canDrawWithoutSource && !surfaceHit) {
@@ -879,6 +984,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                         point: "放置设备点位",
                         beam: "从 Ceiling 下表面绘制梁",
                         delete: "删除网络对象",
+                        "hvac-unit": "放置空调内机",
+                        "hvac-duct": "选择内机端口绘制风管",
+                        "hvac-supply": "绘制送风管",
+                        "hvac-return": "绘制回风管",
+                        "hvac-outlet": "在风管面添加风口",
+                        "hvac-thermostat": "放置空调控温器",
+                        "hvac-bind": "关联控温器与内机",
                       } as const
                     )[tool]
                   }
@@ -903,8 +1015,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     "branch",
                     "point",
                     "beam",
+                    "hvac-unit",
                     "delete",
-                  ] as Tool[]
+                  ] as Array<ConduitTool | "beam" | "hvac-unit">
                 ).map((item) => (
                   <button
                     key={item}
@@ -916,6 +1029,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           branch: "从已有管段拉出分支",
                           point: "放置设备点位",
                           beam: "绘制 Beam",
+                          "hvac-unit": "放置空调内机",
                           delete: "删除管网对象",
                         } as const
                       )[item]
@@ -938,6 +1052,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           branch: "分支",
                           point: "点位",
                           beam: "梁",
+                          "hvac-unit": "空调",
                           delete: "删除",
                         } as const
                       )[item]
@@ -945,6 +1060,23 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                   </button>
                 ))}
           </nav>
+              {hvacPanelOpen && (
+              <section className="conduit-context-section" aria-label="空调编辑工具">
+                <div className="conduit-section-title"><b>空调</b><span>Overlay</span></div>
+                <div className="conduit-system-grid">
+                  <button className={tool === 'hvac-unit' ? 'active' : ''} onClick={() => chooseTool('hvac-unit')}>放内机</button>
+                  <button className={tool === 'hvac-duct' || tool === 'hvac-supply' || tool === 'hvac-return' ? 'active' : ''} onClick={() => { chooseTool('hvac-duct'); setStatus('请选择内机蓝色送风口或橙色回风口开始画风管。'); }}>画风管</button>
+                  <button className={tool === 'hvac-outlet' ? 'active' : ''} onClick={() => chooseTool('hvac-outlet')}>加风口</button>
+                  <button className={tool === 'hvac-thermostat' ? 'active' : ''} onClick={() => chooseTool('hvac-thermostat')}>放控温器</button>
+                </div>
+                {tool === 'hvac-unit' && <small>悬停时预览完整内机；蓝色端为送风口，橙色端为回风口。</small>}
+                {tool === 'hvac-unit' && layoutReferencePlane && <><b>布局参考面</b><label><input type="checkbox" checked={layoutReferencePlane.visible} onChange={event => commit({ ...overlay, layoutReferencePlanes: replaceLayoutReferencePlane(overlay.layoutReferencePlanes, { ...layoutReferencePlane, visible: event.target.checked }) })} /> 显示活动楼层参考面</label><label>高度<span><input aria-label="空调布局参考面高度" type="number" min="0" value={layoutReferencePlane.elevationMm} onChange={event => { const elevationMm = Number(event.target.value); if (Number.isFinite(elevationMm) && elevationMm >= 0) commit({ ...overlay, layoutReferencePlanes: replaceLayoutReferencePlane(overlay.layoutReferencePlanes, { ...layoutReferencePlane, elevationMm, basis: 'explicit', sourceCeilingId: undefined }) }); }} /> mm</span></label></>}
+                {tool === 'hvac-duct' && <small>点击蓝色送风口或橙色回风口开始；风管默认正交，Shift 切换正交。</small>}
+                {(tool === 'hvac-supply' || tool === 'hvac-return') && <><small>已从内机端口起画；移动并点击表面逐段确认，默认正交，Shift 切换正交，Enter 完成。</small><div className="conduit-mode-row"><button className={orthogonal ? 'active' : ''} aria-pressed={orthogonal} onClick={() => { orthogonalDirection.current = null; setOrthogonal(value => !value); }}>{orthogonal ? '正交开启' : '正交关闭'}</button><button className={worldAxis === 'x' ? 'active' : ''} onClick={() => setWorldAxis(worldAxis === 'x' ? null : 'x')}>X 轴</button><button className={worldAxis === 'y' ? 'active' : ''} onClick={() => setWorldAxis(worldAxis === 'y' ? null : 'y')}>Y 轴</button><button className={worldAxis === 'z' ? 'active' : ''} onClick={() => setWorldAxis(worldAxis === 'z' ? null : 'z')}>Z 轴</button></div></>}
+                {tool === 'hvac-outlet' && <small>悬停风管外表面预览默认 {HVAC_DEFAULT_OUTLET_MM.join(' × ')} mm 风口；单击当前鼠标命中的面确认。</small>}
+                {tool === 'hvac-bind' && <small>先选择内机，再点击控温器建立一对一关联。</small>}
+              </section>
+              )}
               {tool === "beam" && (
                 <button
                   type="button"
@@ -1581,6 +1713,23 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                         ))}
                       </div>
                     )}
+                  {selectedHvacUnit && (
+                    <section className="conduit-context-section" aria-label="空调内机属性">
+                      <b>空调内机</b>
+                      <label>共享风管宽<span><input type="number" min="1" value={selectedHvacUnit.sectionMm[0]} onChange={event => { const result = editIndoorUnit(overlay, selectedHvacUnit.id, { sectionMm: [Math.max(1, Number(event.target.value)), selectedHvacUnit.sectionMm[1]] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label>
+                      <label>共享风管高<span><input type="number" min="1" value={selectedHvacUnit.sectionMm[1]} onChange={event => { const result = editIndoorUnit(overlay, selectedHvacUnit.id, { sectionMm: [selectedHvacUnit.sectionMm[0], Math.max(1, Number(event.target.value))] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label>
+                      <label>水平旋转<span><input disabled={overlay.hvac.ducts.some(duct => duct.indoorUnitId === selectedHvacUnit.id)} type="number" value={selectedHvacUnit.rotationYDegrees} onChange={event => { const result = editIndoorUnit(overlay, selectedHvacUnit.id, { rotationYDegrees: Number(event.target.value) || 0 }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> °</span></label>
+                      <div className="conduit-position-fields" aria-label="空调内机定位">
+                        {selectedHvacBottomElevationMm !== undefined && <label>内机底部标高<span><input disabled={overlay.hvac.ducts.some(duct => duct.indoorUnitId === selectedHvacUnit.id)} type="number" min="0" value={positionDraft.elevation ?? selectedHvacBottomElevationMm} onChange={event => setPositionDraft(value => ({ ...value, elevation: event.target.value === '' ? undefined : Number(event.target.value) }))} onBlur={event => event.target.value !== '' && applyHvacPosition({ bottomElevationMm: Number(event.target.value) })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /> mm</span></label>}
+                        {selectedHvacPlanarReferences.map((reference, index) => <label key={reference.wallId}>平面净距 {index + 1}<span><input disabled={overlay.hvac.ducts.some(duct => duct.indoorUnitId === selectedHvacUnit.id)} type="number" min="0" value={positionDraft.planar?.[reference.wallId] ?? reference.millimeters} onChange={event => setPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.wallId]: Number(event.target.value) } }))} onBlur={event => event.target.value !== '' && applyHvacPosition({ planarClearanceMm: { [reference.wallId]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /> mm</span></label>)}
+                      </div>
+                      <button onClick={() => chooseTool('hvac-bind')}>关联控温器</button>
+                      <small>{overlay.hvac.ducts.some(duct => duct.indoorUnitId === selectedHvacUnit.id) ? '已连接风管：定位、外壳长度和旋转锁定；截面可同步调整。' : '选中后可按灯具同款定位字段调整内机底部标高与平面净距。'}</small>
+                    </section>
+                  )}
+                  {selectedHvacSegment && (() => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(selectedHvacSegment.id)), terminal = duct?.segmentIds[duct.segmentIds.length - 1] === selectedHvacSegment.id, lengthMm = Math.round(Math.hypot(...selectedHvacSegment.end.position.map((value, axis) => value - selectedHvacSegment.start.position[axis])) * 1000); return <section className="conduit-context-section" aria-label="风管属性"><b>{duct?.system === 'supply' ? '送风管' : '回风管'}</b><label>长度<span><input disabled={!terminal} type="number" min="1" defaultValue={lengthMm} onBlur={event => { if (!duct) return; const result = resizeHvacTerminalSegment(overlay, duct.id, Number(event.target.value)); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><small>{terminal ? '末端风管段可精确调长度；风口越界会拒绝修改。' : '中间风管段需删除后续段再重画。'}</small></section>; })()}
+                  {selectedHvacOutlet && <section className="conduit-context-section" aria-label="风口属性"><b>风口</b><label>宽<span><input type="number" min="1" value={selectedHvacOutlet.sizeMm[0]} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { sizeMm: [Math.max(1, Number(event.target.value)), selectedHvacOutlet.sizeMm[1]] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>高<span><input type="number" min="1" value={selectedHvacOutlet.sizeMm[1]} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { sizeMm: [selectedHvacOutlet.sizeMm[0], Math.max(1, Number(event.target.value))] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>距风管起点<span><input type="number" min="0" defaultValue={selectedHvacOutlet.offsetMm} onBlur={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { offsetMm: Number(event.target.value) }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>风口方向<select value={selectedHvacOutlet.face} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { face: event.target.value as typeof selectedHvacOutlet.face }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }}><option value="top">顶面</option><option value="bottom">底面</option><option value="left">左面</option><option value="right">右面</option></select></label><small>放置时以鼠标命中的风管面为准；选中后可调整位置与方向。</small></section>}
+                  {selectedThermostat && <section className="conduit-context-section" aria-label="空调控温器属性"><b>空调控温器</b><label>名称<input value={selectedThermostat.name} onChange={event => commit({ ...overlay, hvac: { ...overlay.hvac, thermostats: overlay.hvac.thermostats.map(item => item.id === selectedThermostat.id ? { ...item, name: event.target.value } : item) } })} /></label></section>}
                   {selectedDevice && (
                     <>
                       <label>
@@ -1949,6 +2098,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     />
                     传感器
                   </label>
+                  <label>
+                    <input type="checkbox" checked={overlay.hvac.visible} onChange={() => commit({ ...overlay, hvac: { ...overlay.hvac, visible: !overlay.hvac.visible } })} />
+                    空调
+                  </label>
                 </div>
           </details>
 
@@ -2091,11 +2244,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 bounds={scene.bounds}
                 y={sharedPointPlane ? layoutReferencePlaneY : referencePlaneY}
                 onPreview={(position) => {
-                  if (tool === "point" && sharedPointPlane)
+                  if ((tool === "point" || tool === 'hvac-unit') && sharedPointPlane)
                     scheduleCursor(position ? { position } : null);
                 }}
                 onPlace={(position) => {
-                  if (tool !== "point" || !sharedPointPlane) {
+                  if ((tool !== "point" && tool !== 'hvac-unit') || !sharedPointPlane) {
                     selectWhileBrowsing(null);
                     return;
                   }
@@ -2104,6 +2257,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     activeLevelId,
                     sharedPointPlane.elevationMm,
                   );
+                  if (tool === 'hvac-unit') {
+                    const result = placeIndoorUnit(withPlane, { position });
+                    const unit = { ...result.unit, mount: { kind: 'reference-plane' as const, levelId: activeLevelId, elevationMm: sharedPointPlane.elevationMm } };
+                    commit({ ...result.overlay, hvac: { ...result.overlay.hvac, indoorUnits: result.overlay.hvac.indoorUnits.map(item => item.id === unit.id ? unit : item) } });
+                    setCursor(null); onSelect(unit.id); return;
+                  }
                   const device = createReferencePlaneDevice(
                     deviceType,
                     position,
@@ -2193,7 +2352,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             controlBinding={controlBinding?.kind ?? null}
             visibleControlGroups={visibleControlGroups}
             onControlDevice={onControlDevice}
-            tool={tool === "beam" ? "select" : tool}
+            tool={conduitSceneTool}
             hoverId={hoverId}
             onHover={setHoverId}
             onDeviceTarget={onDeviceTarget}
@@ -2258,6 +2417,19 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onStartEndpoint={onStartEndpoint}
             onDelete={deleteObject}
           />
+          <HvacScene overlay={overlay} selectedId={selectedId} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
+            if (overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.system === system)) { setStatus(`该内机${system === 'supply' ? '送风' : '回风'}口已经有一条路线。`); return; }
+            setTool(system === 'supply' ? 'hvac-supply' : 'hvac-return'); setCursor(null); setActiveHvacDuctId(null); setHvacRouteStart({ unitId, system }); onSelect(unitId);
+            setStatus(`已从${system === 'supply' ? '送风' : '回风'}口起画；移动鼠标预览，点击确认第一段。`);
+          }} onSelect={(id) => {
+            const segment = overlay.hvac.segments.find(item => item.id === id), thermostat = overlay.hvac.thermostats.find(item => item.id === id);
+            if (tool === 'hvac-bind' && thermostat && selectedHvacUnit) {
+              const result = bindThermostat(overlay, thermostat.id, selectedHvacUnit.id);
+              if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); setStatus('已关联空调控温器与内机。'); }
+              return;
+            }
+            selectWhileBrowsing(id);
+          }} />
           <PointerCapture
             bounds={scene.bounds}
             onRay={onPointerRay}

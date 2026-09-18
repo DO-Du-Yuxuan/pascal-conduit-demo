@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 
 const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
 const planSource = readFileSync(resolve(process.cwd(), "src/plan/ConduitPlan.tsx"), "utf8");
+const hvacPlanSource = readFileSync(resolve(process.cwd(), "src/plan/HvacPlan.tsx"), "utf8");
 const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
 const compactThreeDSource = threeDSource.replace(/\s+/g, " ");
 const pascalSceneSource = readFileSync(resolve(process.cwd(), "src/three/PascalScenePreview.tsx"), "utf8");
 const conduitSceneSource = readFileSync(resolve(process.cwd(), "src/components/ConduitScene.tsx"), "utf8");
+const hvacSceneSource = readFileSync(resolve(process.cwd(), "src/components/HvacScene.tsx"), "utf8");
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 describe("conduit workspace UI contract", () => {
@@ -30,6 +32,12 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("调整 2D 与 3D 视图宽度");
     expect(styles).toContain("--split-ratio");
     expect(styles).toContain(".workspace-split-divider");
+  });
+
+  it("keeps HVAC as one independently switchable 2D construction drawing", () => {
+    expect(source).toContain('conduitHvac: "空调施工图"');
+    expect(planSource).toContain('hvacVisible = true');
+    expect(planSource).toContain('{hvacVisible && <HvacPlan');
   });
 
   it("renders the transient 3D route preview in the 2D plan overlay", () => {
@@ -110,6 +118,81 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("管线图层");
     expect(threeDSource).toContain('className="conduit-utility-grid"');
     expect(styles).toContain("grid-template-columns:repeat(5,minmax(0,1fr))");
+  });
+
+  it("keeps an explicit indoor-unit placement action inside the HVAC tool group", () => {
+    expect(threeDSource).toContain("<b>空调</b>");
+    expect(threeDSource).toContain("onClick={() => chooseTool('hvac-unit')}>放内机</button>");
+  });
+
+  it("keeps HVAC previews click-through and scopes its panel to HVAC work", () => {
+    expect(hvacSceneSource).toContain("const previewRaycast = preview ? () => null : undefined");
+    expect(hvacSceneSource).toContain("raycast={previewRaycast}");
+    expect(threeDSource).toContain("const hvacPanelOpen = tool.startsWith('hvac-') || Boolean(selectedHvacUnit || selectedHvacSegment || selectedHvacOutlet || selectedThermostat)");
+    expect(threeDSource).toContain("{hvacPanelOpen && (");
+  });
+
+  it("keeps shared layout-reference-plane visibility and elevation controls available while placing an indoor unit", () => {
+    expect(threeDSource).toContain("tool === 'hvac-unit' && layoutReferencePlane");
+    expect(threeDSource).toContain('aria-label="布局参考面高度"');
+  });
+
+  it("starts a duct directly from an indoor-unit port and reserves the helper plane for indoor-unit placement", () => {
+    expect(threeDSource).toContain("setTool(system === 'supply' ? 'hvac-supply' : 'hvac-return')");
+    expect(threeDSource).not.toContain("tool === 'hvac-supply' || tool === 'hvac-return') && Boolean(activeHvacDuctId || hvacRouteStart)");
+  });
+
+  it("keeps direct duct drafting orthogonal by default from its physical port", () => {
+    expect(threeDSource).toContain("const hvacStart = activeSegment?.end");
+    expect(threeDSource).toContain("projectFirstDuctSegmentFromPort(routeUnit!, hvacRouteStart!.system, target)");
+  });
+
+  it("puts indoor-unit positioning and thermostat binding on the selected indoor-unit panel", () => {
+    expect(threeDSource).toContain('aria-label="空调内机定位"');
+    expect(threeDSource).toContain("onClick={() => chooseTool('hvac-bind')}>关联控温器</button>");
+  });
+
+  it("offers the same explicit orthogonal duct-drawing entry and Shift affordance as other routing tools", () => {
+    expect(threeDSource).toContain("chooseTool('hvac-duct')");
+    expect(threeDSource).toContain(">画风管</button>");
+    expect(threeDSource).toContain("tool === 'hvac-duct'");
+    expect(threeDSource).toContain("Shift 切换正交");
+  });
+
+  it("keeps the first HVAC segment controllable by the same XYZ and cancel arrow keys", () => {
+    expect(threeDSource).toContain("draft.length || hvacRouteStart || activeHvacDuctId || event.key === \"ArrowDown\"");
+    expect(threeDSource).toContain("if (tool === 'hvac-supply' || tool === 'hvac-return')");
+  });
+
+  it("locks a newly started duct to the clicked port's outward direction before using free orthogonal choice", () => {
+    expect(threeDSource).toContain("indoorUnitPortDirection(routeUnit!, hvacRouteStart!.system)");
+    expect(threeDSource).toContain("activeSegment ? resolveOrthogonalDirection");
+  });
+
+  it("places duct outlets from the hovered physical face with a live preview, not a preselected face", () => {
+    expect(threeDSource).not.toContain("hvacOutletFace");
+    expect(threeDSource).toContain("outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null}");
+    expect(hvacSceneSource).toContain("onDuctOutletPreview");
+    expect(hvacSceneSource).toContain("data-hvac-outlet-preview");
+  });
+
+  it("keeps selected duct-outlet direction and offset editable after its physical-face placement", () => {
+    expect(threeDSource).toContain("风口方向");
+    expect(threeDSource).toContain("距风管起点");
+    expect(threeDSource).toContain("editHvacOutlet(overlay, selectedHvacOutlet.id");
+  });
+
+  it("uses a compact, direction-readable indoor-unit plan symbol instead of overlapping supply and return pills", () => {
+    expect(hvacPlanSource).toContain("hvac-plan-unit");
+    expect(hvacPlanSource).toContain("送风");
+    expect(hvacPlanSource).toContain("回风");
+    expect(hvacPlanSource).not.toContain("hvac-plan-port-pill");
+  });
+
+  it("shows selected indoor-unit 3D positioning dimensions using the shared suspended-device guide pattern", () => {
+    expect(threeDSource).toContain("selectedIndoorUnitDimensions={selectedHvacUnit ?");
+    expect(hvacSceneSource).toContain("function HvacIndoorUnitDimensions");
+    expect(hvacSceneSource).toContain("内机底部标高");
   });
 
   it("keeps permanent 2D network rendering separate from transient previews", () => {
