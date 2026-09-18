@@ -143,6 +143,16 @@ describe('2D point annotations', () => {
     expect(to.reference).toEqual([4,.1]);
   });
 
+  it('uses the physical face witnesses themselves for a wall-position value',()=>{
+    const overlay=createEmptyOverlay('a','sha'),wall={...nodes.w,thickness:.2},wallNodes={...nodes,w:wall};
+    // Imported host normals can contain a small tangent component. The drawn
+    // witness remains authoritative: the displayed number must match it.
+    overlay.devices=[{...device('surface',1),position:{position:[1,.3,0] as [number,number,number],attachment:{...host(),normal:[.2,0,1]}}}];
+    const from=buildPointPositionDimensions(wallNodes,overlay,'l0')[0]!;
+    const drawnDistance=Math.abs((from.center[0]-from.reference[0])*from.direction[0]+(from.center[1]-from.reference[1])*from.direction[1]);
+    expect(from.valueMeters).toBeCloseTo(drawnDistance);
+  });
+
   it('splits a same-wall chain at an opening instead of dimensioning through it',()=>{
     const overlay=createEmptyOverlay('a','sha');overlay.devices=[device('left',1),device('right',3)];
     const withDoor={...nodes,door:{id:'door',type:'door',parentId:'w',wallId:'w',position:[2,1,0],width:1}} as Record<string,NodeData>;
