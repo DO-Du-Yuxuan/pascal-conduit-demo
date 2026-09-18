@@ -6,7 +6,7 @@ import type {NodeData} from '../types';
 import {createEmptyOverlay,type ConduitOverlayDocument,type NetworkDevice} from '../domain/overlay';
 import {createPlanContext} from './model';
 import {ConduitPlanOverlay,devicePlanRotation} from './ConduitPlan';
-import {ConstructionAnnotations,ConstructionNotices,useConstructionPlan} from './ConstructionAnnotations';
+import {ConstructionAnnotations,ConstructionNotices,missingConstructionDrawingLayout,useConstructionPlan} from './ConstructionAnnotations';
 import {ConstructionLegend} from './ConstructionLegend';
 import {PointPositionDimensions} from './PointPositionDimensions';
 import {buildExteriorDimensions} from '../geometry/exterior-dimensions';
@@ -21,6 +21,26 @@ function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange}:{ove
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
+ it('records generated drawing layout once without replacing existing positions',()=>{
+  const overlay=createEmptyOverlay('a','sha');
+  const oldLabel:[number,number]=[9,-3],oldOffset=.91;
+  overlay.constructionAnnotationLabelPositions['group:d']=oldLabel;
+  overlay.constructionAnnotationLabelPlacementSignatures['group:d']='existing-signature';
+  overlay.pointPositionDimensionLabelPositions['d:position:wall:w:from:wall-end:w']=.71;
+  overlay.pointPositionDimensionLineOffsets['d:position:wall:w:from:wall-end:w']=oldOffset;
+  const plan={
+   annotationScale:1,
+   report:{annotations:[{id:'group:d',anchor:[1,.1],arrangement:'single',rows:[],relatedIds:['d']},{id:'group:new',anchor:[2,.1],arrangement:'single',rows:[],relatedIds:['new']}]},
+   layout:{placed:[{annotation:{id:'group:d'},label:oldLabel},{annotation:{id:'group:new'},label:[8,-2] as [number,number]}]},
+   positionDimensions:[{id:'d:position:wall:w:from:wall-end:w',lane:0},{id:'new:position:wall:w:from:wall-end:w',lane:2}],
+  } as unknown as Parameters<typeof missingConstructionDrawingLayout>[1];
+  const next=missingConstructionDrawingLayout(overlay,plan)!;
+  expect(next.constructionAnnotationLabelPositions).toEqual({'group:d':oldLabel,'group:new':[8,-2]});
+  expect(next.constructionAnnotationLabelPlacementSignatures['group:d']).toBe('existing-signature');
+  expect(next.pointPositionDimensionLabelPositions).toEqual({'d:position:wall:w:from:wall-end:w':.71,'new:position:wall:w:from:wall-end:w':.5});
+  expect(next.pointPositionDimensionLineOffsets).toEqual({'d:position:wall:w:from:wall-end:w':oldOffset,'new:position:wall:w:from:wall-end:w':.64});
+  expect(missingConstructionDrawingLayout(next,plan)).toBeNull();
+ });
  it('draws network conduits with a bright teal outline and a white core',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.segments=[{id:'network-pipe',type:'conduit-segment',system:'network',diameterMm:20,start:{position:[0,.3,0],attachment:device.position.attachment},end:{position:[2,.3,0],attachment:device.position.attachment},createdAt:''},{id:'lighting-pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,.3,.2],attachment:device.position.attachment},end:{position:[2,.3,.2],attachment:device.position.attachment},createdAt:''}];

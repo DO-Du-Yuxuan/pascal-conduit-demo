@@ -7,8 +7,36 @@ import type { ManualMeasurement, MeasurementUnit } from '../geometry/manual-meas
 import type { ExteriorDimensionReport } from '../geometry/exterior-dimensions';
 import { buildPlanAnnotations, buildPointPositionDimensionReport, createPlanContext, type Point } from './model';
 import { buildInstallationSchedule, installationVariantByDeviceId } from './construction-drawings';
-import { annotationPlacementSignature, annotationRuleSide, layoutExteriorAnnotations, rotatePoint } from './layout';
+import { annotationPlacementSignature, annotationRuleSide, layoutExteriorAnnotations, preserveAnnotationPresentation, rotatePoint } from './layout';
 import { useOverlayStore } from '../domain/store';
+
+/**
+ * Capture generated drawing layout once. Subsequent model edits change derived
+ * dimensions and callout text, but do not make unrelated drawing objects jump
+ * back to a newly calculated default lane or panel position.
+ */
+export function missingConstructionDrawingLayout(overlay: ConduitOverlayDocument, plan: Pick<ConstructionPlan, 'layout' | 'report' | 'positionDimensions' | 'annotationScale'>) {
+  const annotationLabels = Object.fromEntries(plan.layout.placed
+    .filter(item => !overlay.constructionAnnotationLabelPositions[item.annotation.id])
+    .map(item => [item.annotation.id, item.label]));
+  const annotationSignatures = Object.fromEntries(plan.report.annotations
+    .filter(annotation => !overlay.constructionAnnotationLabelPlacementSignatures[annotation.id])
+    .map(annotation => [annotation.id, annotationPlacementSignature(annotation)]));
+  const pointLabelPositions = Object.fromEntries(plan.positionDimensions
+    .filter(dimension => overlay.pointPositionDimensionLabelPositions[dimension.id] === undefined)
+    .map(dimension => [dimension.id, .5]));
+  const pointLineOffsets = Object.fromEntries(plan.positionDimensions
+    .filter(dimension => overlay.pointPositionDimensionLineOffsets[dimension.id] === undefined)
+    .map(dimension => [dimension.id, .28 * plan.annotationScale + dimension.lane * .18 * plan.annotationScale]));
+  if (!Object.keys(annotationLabels).length && !Object.keys(annotationSignatures).length && !Object.keys(pointLabelPositions).length && !Object.keys(pointLineOffsets).length) return null;
+  return {
+    ...overlay,
+    constructionAnnotationLabelPositions: { ...overlay.constructionAnnotationLabelPositions, ...annotationLabels },
+    constructionAnnotationLabelPlacementSignatures: { ...overlay.constructionAnnotationLabelPlacementSignatures, ...annotationSignatures },
+    pointPositionDimensionLabelPositions: { ...overlay.pointPositionDimensionLabelPositions, ...pointLabelPositions },
+    pointPositionDimensionLineOffsets: { ...overlay.pointPositionDimensionLineOffsets, ...pointLineOffsets },
+  };
+}
 
 export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, unit, rotation, viewBox, planRef, selectedId, exterior, dimensionsVisible, measurements, systemVisibility, sensorVisible, devicesVisible, annotationScale }: {
   nodes: Record<string,NodeData>; overlay: ConduitOverlayDocument | null; levelId: string; hiddenNodeIds: ReadonlySet<string>; unit: MeasurementUnit; rotation: number; viewBox: ViewBox;
@@ -25,7 +53,11 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
   },[planRef]);
   const scale=Math.max(.001,Math.min(size.width/viewBox.width,size.height/viewBox.height));
   const context=useMemo(()=>overlay ? createPlanContext(nodes,overlay,hiddenNodeIds,systemVisibility,sensorVisible) : null,[nodes,overlay,hiddenNodeIds,systemVisibility,sensorVisible]);
-  const annotationReport=useMemo(()=>overlay && context && devicesVisible !== false ? buildPlanAnnotations(nodes,overlay,levelId,unit,context) : {annotations:[],notices:[]},[nodes,overlay,levelId,unit,context,devicesVisible]);
+  const annotationReport=useMemo(()=>{
+    if (!overlay || !context || devicesVisible === false) return {annotations:[],notices:[]};
+    const report=buildPlanAnnotations(nodes,overlay,levelId,unit,context);
+    return {...report,annotations:report.annotations.map(annotation=>preserveAnnotationPresentation(annotation,overlay.constructionAnnotationLabelPlacementSignatures[annotation.id]))};
+  },[nodes,overlay,levelId,unit,context,devicesVisible]);
   const positionReport=useMemo(()=>overlay&&context&&devicesVisible!==false?buildPointPositionDimensionReport(nodes,overlay,levelId,context):{dimensions:[],notices:[]},[nodes,overlay,levelId,context,devicesVisible]);
   const report=useMemo(()=>({annotations:annotationReport.annotations,notices:[...annotationReport.notices,...positionReport.notices]}),[annotationReport,positionReport]);
   const positionDimensions=positionReport.dimensions;
@@ -35,6 +67,16 @@ export function useConstructionPlan({ nodes, overlay, levelId, hiddenNodeIds, un
   return {context,scale,report,layout,positionDimensions,installationSchedule,deviceVariants,annotationScale};
 }
 export type ConstructionPlan = ReturnType<typeof useConstructionPlan>;
+/** Kept outside individual drawing layers so hidden layers do not lose their stable layout. */
+export function ConstructionDrawingLayoutPersistence({plan}: {plan: ConstructionPlan}) {
+  const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit);
+  useEffect(()=>{
+    if (!overlay) return;
+    const updated=missingConstructionDrawingLayout(overlay,plan);
+    if (updated) commit(updated);
+  },[overlay,plan,commit]);
+  return null;
+}
 export function ConstructionAnnotations({plan,rotation,onSelect,onLabelPositionChange,toPlanPoint}: {plan:ConstructionPlan;rotation:number;onSelect:(id:string|null)=>void;onLabelPositionChange?:(id:string,label:Point,signature:string)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null}) {
   const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),[editing,setEditing]=useState<{ids:string[];value:string;left:number;top:number;width:number}|null>(null),[draftLabels,setDraftLabels]=useState<Record<string,Point>>({}),dragRef=useRef<{id:string;pointerId:number}|null>(null),lineHeight=.3*plan.annotationScale,fontSize=.2*plan.annotationScale;
   const rename=(ids:string[],value:string)=>{const selected=overlay?.devices.filter(device=>ids.includes(device.id))??[],trimmed=value.trim(),name=trimmed||(selected.every(device=>device.deviceType==='sensor')?'传感器':'');if(overlay&&name)commit({...overlay,devices:overlay.devices.map(device=>ids.includes(device.id)?{...device,name}:device)});setEditing(null);};

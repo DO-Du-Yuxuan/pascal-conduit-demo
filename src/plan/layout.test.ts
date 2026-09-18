@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {annotationPlacementSignature,annotationRuleSide,layoutAnnotations,layoutExteriorAnnotations,overlaps,rotatePoint} from './layout';
+import {annotationPlacementSignature,annotationRuleSide,layoutAnnotations,layoutExteriorAnnotations,overlaps,preserveAnnotationPresentation,rotatePoint} from './layout';
 import type {PlanAnnotation} from './model';
 import type {ExteriorDimensionReport} from '../geometry/exterior-dimensions';
 const a=(id:string):PlanAnnotation=>({id,sourceId:id,relatedIds:[id],levelId:'l',anchor:[2,3],kind:'height',text:`插座\nH=300 mm`,arrangement:'single',rows:[{sourceIds:[id],editableSourceId:id,label:'插座',count:1,height:'300 mm'}],measurementBasis:'derived',confidence:'limited',assumptions:[]});
@@ -36,6 +36,15 @@ it('uses a saved annotation-panel position for the current annotation group',()=
  const annotation=a('socket-a'),result=layoutExteriorAnnotations([annotation],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)});
  expect(result.placed[0]).toMatchObject({label:[7.5,-3.25],manual:true});
  expect(layoutExteriorAnnotations([{...annotation,anchor:[2.5,3]}],exterior,1,{'socket-a':[7.5,-3.25]},{'socket-a':annotationPlacementSignature(annotation)}).placed[0].manual).toBe(true);
+});
+
+it('keeps a placed callout group and row order when only device heights change',()=>{
+ const original:{[K in keyof PlanAnnotation]:PlanAnnotation[K]}={...a('socket-a'),id:'group:socket-a:socket-b',relatedIds:['socket-a','socket-b'],arrangement:'horizontal',rows:[{sourceIds:['socket-a','socket-b'],editableSourceId:'socket-a',label:'插座',count:2,height:'300 mm'}],text:'插座 × 2\nH=300 mm'};
+ const changed:PlanAnnotation={...original,arrangement:'vertical',rows:[{sourceIds:['socket-a'],editableSourceId:'socket-a',label:'插座',count:1,height:'300 mm',position:'上'},{sourceIds:['socket-b'],editableSourceId:'socket-b',label:'插座',count:1,height:'900 mm',position:'下'}],text:'插座 上\nH=300 mm\n插座 下\nH=900 mm'};
+ const stable=preserveAnnotationPresentation(changed,annotationPlacementSignature(original));
+ expect(stable.arrangement).toBe('horizontal');
+ expect(stable.rows).toEqual([{sourceIds:['socket-a','socket-b'],editableSourceId:'socket-a',label:'插座',count:2,height:'300 mm / 900 mm'}]);
+ expect(stable.text).toBe('插座 × 2\nH=300 mm / 900 mm');
 });
 
 it('only staggers colliding callouts and returns later callouts to the main rule line',()=>{

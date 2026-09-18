@@ -5,6 +5,34 @@ export type PlacedAnnotation = { annotation: PlanAnnotation; box: Rect; anchor: 
 export type ExteriorPlacedAnnotation = { annotation: PlanAnnotation; innerBend: Point; boundary: Point; outerBend: Point; label: Point; textWidth: number; textHeight: number; lane: number; outwardNormal: Point; manual: boolean };
 export const rotatePoint = (p: Point, rotation: number, scale = 1): Point => { const r = rotation * Math.PI / 180; return [(p[0] * Math.cos(r) - p[1] * Math.sin(r)) * scale, (p[0] * Math.sin(r) + p[1] * Math.cos(r)) * scale]; };
 export const annotationPlacementSignature = (annotation: PlanAnnotation) => JSON.stringify({ anchor: annotation.anchor, arrangement: annotation.arrangement, rows: annotation.rows.map(row => ({ sourceIds: row.sourceIds, label: row.label, count: row.count, height: row.height, position: row.position })) });
+type SavedAnnotationPresentation = Pick<PlanAnnotation, 'arrangement'> & { rows: Array<Pick<PlanAnnotation['rows'][number], 'sourceIds' | 'position'>> };
+const annotationText = (rows: PlanAnnotation['rows']) => rows.map(row => `${row.label}${row.count > 1 ? ` × ${row.count}` : ''}${row.position ? ` ${row.position}` : ''}\nH=${row.height}`).join('\n');
+
+/**
+ * Once a user has placed an automatic callout, its visual grouping becomes
+ * drawing layout rather than a consequence of a later height edit. Device
+ * names and heights remain live, but height alone cannot split, merge or
+ * reorder the placed panel.
+ */
+export function preserveAnnotationPresentation(annotation: PlanAnnotation, savedSignature?: string): PlanAnnotation {
+  if (!savedSignature) return annotation;
+  let saved: SavedAnnotationPresentation;
+  try { saved = JSON.parse(savedSignature) as SavedAnnotationPresentation; } catch { return annotation; }
+  if (!saved || (saved.arrangement !== 'single' && saved.arrangement !== 'horizontal' && saved.arrangement !== 'vertical') || !Array.isArray(saved.rows)) return annotation;
+  const savedIds = saved.rows.flatMap(row => Array.isArray(row.sourceIds) ? row.sourceIds : []).sort();
+  const currentIds = [...annotation.relatedIds].sort();
+  if (!savedIds.length || savedIds.length !== currentIds.length || savedIds.some((id, index) => id !== currentIds[index])) return annotation;
+  const liveBySourceId = new Map(annotation.rows.flatMap(row => row.sourceIds.map(sourceId => [sourceId, row] as const)));
+  const rows = saved.rows.map(savedRow => {
+    const sourceIds = savedRow.sourceIds, live = sourceIds.map(sourceId => liveBySourceId.get(sourceId)).filter((row): row is PlanAnnotation['rows'][number] => Boolean(row));
+    if (live.length !== sourceIds.length) return null;
+    const labels = [...new Set(live.map(row => row.label))], heights = [...new Set(live.map(row => row.height))];
+    return { sourceIds, editableSourceId: sourceIds[0]!, label: labels.join(' / '), count: labels.length === 1 ? sourceIds.length : 1, position: savedRow.position, height: heights.join(' / ') };
+  });
+  if (rows.some(row => !row)) return annotation;
+  const stableRows = rows as PlanAnnotation['rows'];
+  return { ...annotation, arrangement: saved.arrangement, rows: stableRows, text: annotationText(stableRows) };
+}
 export const overlaps = (a: Rect, b: Rect) => a.x < b.x + b.width + 4 && a.x + a.width + 4 > b.x && a.y < b.y + b.height + 4 && a.y + a.height + 4 > b.y;
 export const textWidth = (text: string) => Array.from(text).reduce((n, c) => n + (c.charCodeAt(0) > 255 ? 12 : 7.4), 0) + 12;
 /** Coordinates are rotated world coordinates in pixels: translation/panning is

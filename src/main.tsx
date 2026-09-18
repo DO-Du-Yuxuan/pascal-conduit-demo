@@ -8,7 +8,7 @@ import "./styles.css";
 import "./plan/plan.css";
 import { ExteriorDimensions } from "./plan/ExteriorDimensions";
 import { ConduitPlanOverlay } from "./plan/ConduitPlan";
-import { ConstructionAnnotations, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
+import { ConstructionAnnotations, ConstructionDrawingLayoutPersistence, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
 import { PointPositionDimensions } from "./plan/PointPositionDimensions";
 import { ConstructionLegend } from "./plan/ConstructionLegend";
 import { ManualCallouts } from "./plan/ManualCallouts";
@@ -1580,6 +1580,7 @@ function Plan({
           ))}
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
+          <ConstructionDrawingLayoutPersistence plan={constructionPlan} />
           <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
           {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} lineOffsets={conduitOverlay?.pointPositionDimensionLineOffsets} onPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}

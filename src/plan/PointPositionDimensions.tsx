@@ -3,7 +3,7 @@ import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-meas
 import { uprightDimensionAngle } from '../geometry/exterior-dimensions';
 import type { Point, PointPositionDimension } from './model';
 
-type DimensionPosition = { label: number; lineOffset: number };
+export type DimensionPosition = { label: number; lineOffset: number };
 const dot = (left: Point, right: Point) => left[0] * right[0] + left[1] * right[1];
 const POINT_DIMENSION_SNAP_ENTER_METERS = .05;
 const POINT_DIMENSION_SNAP_EXIT_METERS = .07;
