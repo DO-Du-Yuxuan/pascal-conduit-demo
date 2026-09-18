@@ -123,14 +123,14 @@ describe('2D point annotations', () => {
     const overlay=createEmptyOverlay('a','sha'),nearOpening=device('near-opening',3.2),nearEnd={...device('near-end',.4),deviceType:'switch' as const,systems:['lighting' as const]};overlay.devices=[nearOpening,nearEnd];
     const withOpening={...nodes,door:{id:'door',type:'door',parentId:'w',wallId:'w',position:[2,1,0],width:1}} as Record<string,NodeData>;
     const dimensions=buildPointPositionDimensions(withOpening,overlay,'l0');
-    expect(dimensions.map(d=>({id:d.sourceId,value:Math.round(d.valueMeters*1000),basis:d.referenceKind}))).toEqual([{id:'near-opening',value:700,basis:'opening-edge'},{id:'near-opening',value:800,basis:'wall-end'},{id:'near-end',value:400,basis:'wall-end'},{id:'near-end',value:1100,basis:'opening-edge'}]);
+    expect(dimensions.map(d=>({id:d.sourceId,value:Math.round(d.valueMeters*1000),basis:d.referenceKind}))).toEqual([{id:'near-opening',value:700,basis:'opening-edge'},{id:'near-opening',value:750,basis:'wall-end'},{id:'near-end',value:350,basis:'wall-end'},{id:'near-end',value:1100,basis:'opening-edge'}]);
     expect(dimensions.every(d=>d.measurementBasis==='derived'&&d.confidence==='high')).toBe(true);
   });
 
   it('chains same-type wall devices from one reference through their centres',()=>{
     const overlay=createEmptyOverlay('a','sha');overlay.devices=[device('a',.8),device('b',1.2),device('c',1.8)];
     const dimensions=buildPointPositionDimensions(nodes,overlay,'l0');
-    expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000),lane:d.lane}))).toEqual([{basis:'wall-end',value:800,lane:0},{basis:'device-center',value:400,lane:0},{basis:'device-center',value:600,lane:0},{basis:'wall-end',value:2200,lane:0}]);
+    expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000),lane:d.lane}))).toEqual([{basis:'wall-end',value:750,lane:0},{basis:'device-center',value:400,lane:0},{basis:'device-center',value:600,lane:0},{basis:'wall-end',value:2150,lane:0}]);
   });
 
   it('anchors wall-device symbols and witnesses on the attached physical wall face',()=>{
@@ -138,9 +138,9 @@ describe('2D point annotations', () => {
     overlay.devices=[{...device('surface',1),position:{position:[1,.3,0] as [number,number,number],attachment:host()}}];
     const [from,to]=buildPointPositionDimensions(wallNodes,overlay,'l0');
     expect(from.center).toEqual([1,.1]);
-    expect(from.reference).toEqual([0,.1]);
+    expect(from.reference).toEqual([.1,.1]);
     expect(to.center).toEqual([1,.1]);
-    expect(to.reference).toEqual([4,.1]);
+    expect(to.reference).toEqual([3.9,.1]);
   });
 
   it('uses the physical face witnesses themselves for a wall-position value',()=>{
@@ -153,11 +153,25 @@ describe('2D point annotations', () => {
     expect(from.valueMeters).toBeCloseTo(drawnDistance);
   });
 
+  it('closes a wall-device chain against the adjoining wall face instead of its centreline',()=>{
+    const overlay=createEmptyOverlay('a','sha'),wallNodes={
+      ...nodes,
+      w:{...nodes.w,thickness:.2},
+      end:{id:'end',type:'wall',parentId:'l0',start:[4,-2],end:[4,2],thickness:.4},
+    } as Record<string,NodeData>;
+    overlay.devices=[{...device('surface',1),position:{position:[1,.3,0] as [number,number,number],attachment:host()}}];
+    const [from,to]=buildPointPositionDimensions(wallNodes,overlay,'l0');
+    expect(from.reference).toEqual([.1,.1]);
+    expect(to.reference).toEqual([3.8,.1]);
+    expect(from.valueMeters).toBeCloseTo(.9);
+    expect(to.valueMeters).toBeCloseTo(2.8);
+  });
+
   it('splits a same-wall chain at an opening instead of dimensioning through it',()=>{
     const overlay=createEmptyOverlay('a','sha');overlay.devices=[device('left',1),device('right',3)];
     const withDoor={...nodes,door:{id:'door',type:'door',parentId:'w',wallId:'w',position:[2,1,0],width:1}} as Record<string,NodeData>;
     const dimensions=buildPointPositionDimensions(withDoor,overlay,'l0');
-    expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000)}))).toEqual([{basis:'wall-end',value:1000},{basis:'opening-edge',value:500},{basis:'opening-edge',value:500},{basis:'wall-end',value:1000}]);
+    expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000)}))).toEqual([{basis:'wall-end',value:950},{basis:'opening-edge',value:500},{basis:'opening-edge',value:500},{basis:'wall-end',value:950}]);
     expect(dimensions.some(d=>d.referenceKind==='device-center')).toBe(false);
   });
 
