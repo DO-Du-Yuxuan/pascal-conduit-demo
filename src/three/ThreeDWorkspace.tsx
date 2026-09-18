@@ -21,6 +21,7 @@ import { beamPlanarClearances, editBeamPlanarClearance, snapBeamPoint } from "..
 import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments, revalidateBeamPenetrations } from "../domain/beam-routing";
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
+import { overlayForProject, synchronizedOverlay } from './overlay-sync';
 import { routeCursorFromActiveWall } from "./active-host";
 import { cameraMouseButtons, type CameraProjection } from "./camera-navigation";
 import { syncExternalDeviceSelection } from "./device-selection";
@@ -187,7 +188,6 @@ function BeamAuthoringMarker({ pointer, state }: { pointer: BeamPointer | null; 
 
 const copy = (overlay: ConduitOverlayDocument) => structuredClone(overlay);
 const normalizeOverlay = (overlay: ConduitOverlayDocument | null, sourceFile: string, sourceSha: string, projectId: string | null) => overlay ? parseOverlay(copy(overlay)) : createEmptyOverlay(sourceFile, sourceSha, projectId ?? undefined);
-const overlayForProject = (overlay: ConduitOverlayDocument | null, sourceSha: string, projectId: string | null) => projectId ? overlay?.source.projectId === projectId ? overlay : null : overlay?.source.sha256 === sourceSha ? overlay : null;
 const routePoint = (hit: ThreeDSurfaceHit): RoutePoint => ({ position: hit.point, attachment: hit.attachment });
 const positioningContext = (scene: ThreeDSceneInput | null): DevicePositioningContext => {
   const levelFloorY: Record<string, number> = {}, wallSpans: Record<string, [number, number]> = {}, wallOpenings: Record<string, { id: string; start: number; end: number }[]> = {}, wallFaces: NonNullable<DevicePositioningContext["wallFaces"]>[number][] = [];
@@ -226,8 +226,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const markOverlayExported = useOverlayStore((state) => state.markExported);
   const publishRoutePreview = useOverlayStore((state) => state.publishPreview);
   const clearRoutePreview = useOverlayStore((state) => state.clearPreview);
+  const sharedOverlay = useOverlayStore((state) => state.overlay);
+  const sharedOverlayDirty = useOverlayStore((state) => state.dirty);
   const initialSharedState = useRef(useOverlayStore.getState()).current;
   const matchingOverlay = overlayForProject(initialSharedState.overlay, sourceSha, projectId);
+  const sharedOverlayMatchesProject = projectId ? sharedOverlay?.source.projectId === projectId : sharedOverlay?.source.sha256 === sourceSha;
   const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
   const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
   const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState({ widthMm: 300, heightMm: 500 }), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
@@ -316,6 +319,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const stored = useOverlayStore.getState(), restored = overlayForProject(stored.overlay, sourceSha, projectId);
     setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setControlBinding(null); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
   }, [scene?.sceneKey, sourceFile, sourceSha, projectId]);
+  useEffect(() => {
+    setOverlay(current => {
+      const next = synchronizedOverlay(current, sharedOverlay, sourceSha, projectId);
+      return next ? normalizeOverlay(next, sourceFile, sourceSha, projectId) : current;
+    });
+    if (sharedOverlayMatchesProject) setOverlayDirty(sharedOverlayDirty);
+  }, [sharedOverlay, sharedOverlayDirty, sharedOverlayMatchesProject, sourceFile, sourceSha, projectId]);
   useEffect(() => { publishOverlay(overlay, overlayDirty); }, [overlay, overlayDirty, publishOverlay]);
   useEffect(() => { setChaseFallbacks(new Set()); }, [appliedConstruction.surfaceChases, appliedConstruction.penetrations, scene?.sceneKey]);
   useEffect(() => {
