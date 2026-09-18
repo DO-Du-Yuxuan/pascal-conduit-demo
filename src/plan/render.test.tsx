@@ -128,12 +128,20 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0} annotationScale={2}/></svg>));
   expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('scale(0.036)');
  });
- it('anchors a wall-device symbol on its attached physical face instead of the wall axis',()=>{
+  it('anchors a wall-device symbol on its attached physical face instead of the wall axis',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[{...device,position:{...device.position,position:[1,.3,0] as [number,number,number]}}];const context=createPlanContext(nodes,overlay);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
-  expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('translate(1 0.1)');
- });
+    expect(div.querySelector('[data-device-symbol="socket"]')?.getAttribute('transform')).toContain('translate(1 0.1)');
+  });
+  it('uses a distinct square floor-socket symbol for slab-mounted sockets',()=>{
+    const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+    const overlay=createEmptyOverlay('a','sha'),floorSocket={...device,id:'floor-socket',position:{position:[1,0,2] as [number,number,number],attachment:{hostId:'floor',hostKind:'slab' as const,surface:'top',normal:[0,1,0] as [number,number,number],levelId:'l'}}};
+    overlay.devices=[floorSocket];const context=createPlanContext({...nodes,floor:{id:'floor',type:'slab',parentId:'l'}} as Record<string,NodeData>,overlay);
+    act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+    expect(div.querySelector('[data-device-symbol="socket"]')?.hasAttribute('data-floor-socket')).toBe(true);
+    expect(div.querySelector('[data-floor-socket-symbol]')).toBeTruthy();
+  });
  it('opens a screen-space editor only when the device description is double-clicked',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];useOverlayStore.getState().load(overlay);

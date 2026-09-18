@@ -1,12 +1,14 @@
 import React from 'react';
 import type { NetworkDeviceType, SprinklerDirection } from '../domain/overlay';
 /** Local units are screen pixels; callers anchor this to real model geometry. */
-export function DeviceSymbol({ type, switchGangs, sprinklerDirection = 'upright' }: { type: NetworkDeviceType | 'junction-box'; switchGangs?: number | null; sprinklerDirection?: SprinklerDirection }) {
+export function DeviceSymbol({ type, switchGangs, sprinklerDirection = 'upright', floorSocket = false }: { type: NetworkDeviceType | 'junction-box'; switchGangs?: number | null; sprinklerDirection?: SprinklerDirection; floorSocket?: boolean }) {
   switch (type) {
     case 'strong-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-6 4L6-4M-6-4L6 4"/></>;
     case 'weak-panel': return <><rect x="-8" y="-6" width="16" height="12"/><path d="M-5 0H5"/></>;
     case 'junction-box': return <><rect x="-7" y="-7" width="14" height="14"/><path d="M-3-3L3 3M3-3L-3 3"/></>;
-    case 'socket': return <><path d="M-8 3 A8 8 0 0 1 8 3 Z"/><path d="M-3-1V-5M3-1V-5M0 3V7"/></>;
+    case 'socket': return floorSocket
+      ? <g data-floor-socket-symbol><rect x="-7" y="-7" width="14" height="14" rx="1"/><circle r="4"/><path d="M-2-2V2M2-2V2"/></g>
+      : <><path d="M-8 3 A8 8 0 0 1 8 3 Z"/><path d="M-3-1V-5M3-1V-5M0 3V7"/></>;
     case 'switch': {
       const gangs = Math.max(1, Math.min(6, switchGangs ?? 1));
       const offsets = Array.from({ length: gangs }, (_, index) => (index - (gangs - 1) / 2) * 3);

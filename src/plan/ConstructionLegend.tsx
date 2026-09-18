@@ -9,7 +9,7 @@ export function ConstructionLegend({ sections, annotationScale }: { sections: In
     {sections.map(section => <section key={section.system} data-construction-schedule={section.system}>
       <h3>{section.label}</h3>
       {section.rows.map(row => <div key={`${row.deviceType}:${row.name}:${row.mounting}:${row.height}`} className="construction-schedule-row" data-schedule-row title={`来源：${row.sourceIds.join(', ')}\n依据：${row.measurementBasis}；置信度：${row.confidence}\n${row.assumptions.join('\n')}`}>
-        <svg viewBox="-12 -12 24 24" aria-label={`${row.name}图块`}><g fill="#fff" stroke="#343434" strokeWidth="1.5"><DeviceSymbol type={row.deviceType} /></g></svg>
+        <svg viewBox="-12 -12 24 24" aria-label={`${row.name}图块`}><g fill="#fff" stroke="#343434" strokeWidth="1.5"><DeviceSymbol type={row.deviceType} floorSocket={row.floorSocket} /></g></svg>
         <span className="construction-schedule-variant">{row.variant ?? ''}</span><span>{row.name}</span><span>{row.mounting}</span><span>H={row.height}</span><span>×{row.quantity}</span>
       </div>)}
     </section>)}
