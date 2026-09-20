@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, bindThermostat, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, HVAC_DEFAULT_SECTION_MM, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
+import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, bindThermostat, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
 import { createEmptyOverlay } from './overlay';
 
 const point = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number] });
@@ -32,6 +32,19 @@ describe('HVAC Overlay', () => {
     expect(indoorUnitPort(unit, 'return').position).toEqual([0.7, 2.85, 3]);
     expect(indoorUnitFootprint(unit).map(point => [Number(point[0].toFixed(3)), Number(point[2].toFixed(3))])).toEqual([[0.7, 3.5], [0.7, 2.5], [1.3, 2.5], [1.3, 3.5]]);
   });
+  it('measures all signed plan axes from the indoor-unit envelope to the first physical wall or indoor unit', () => {
+    const first = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
+    const second = placeIndoorUnit(first.overlay, point(2, 2.7, 0));
+    const references = hvacAxisPlanarReferences(second.unit, [
+      { id: 'west-wall', start: [-3, 0, -2], end: [-3, 0, 2], normal: [1, 0, 0], halfThickness: .1 },
+      { id: 'east-wall', start: [4, 0, -2], end: [4, 0, 2], normal: [-1, 0, 0], halfThickness: .1 },
+      { id: 'south-wall', start: [-2, 0, -4], end: [2, 0, -4], normal: [0, 0, 1], halfThickness: .1 },
+      { id: 'north-wall', start: [-2, 0, 5], end: [2, 0, 5], normal: [0, 0, -1], halfThickness: .1 },
+    ], second.overlay.hvac.indoorUnits);
+    expect(references.map(reference => [reference.label, reference.targetKind, reference.targetId, reference.millimeters])).toEqual([
+      ['+X', 'wall', 'east-wall', 1400], ['−X', 'indoor-unit', first.unit.id, 1000], ['+Z', 'wall', 'north-wall', 4600], ['−Z', 'wall', 'south-wall', 3600],
+    ]);
+  });
   it('uses the selected supply or return port normal as the first duct direction', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(1, 2.7, 3));
     expect(indoorUnitPortDirection(placed.unit, 'supply')).toEqual([0, 0, 1]);
@@ -54,15 +67,23 @@ describe('HVAC Overlay', () => {
     expect(editHvacOutlet(outlet.overlay, outlet.outlet.id, { sizeMm: [3000, 150] })).toHaveProperty('reason');
     expect(resizeHvacTerminalSegment(outlet.overlay, routed.duct.id, 1700)).toHaveProperty('reason');
   });
-  it('allows a selected outlet to be repositioned or redirected while keeping it inside its duct face', () => {
+  it('allows a selected outlet to be repositioned while keeping its placed face fixed', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
     const routed = createHvacDuct(placed.overlay, placed.unit.id, 'supply', point(0, 2.7, 0), point(0, 2.85, 2.3));
     if (!('duct' in routed)) throw new Error('fixture');
     const segmentId = routed.duct.segmentIds[0]!, outlet = addHvacOutlet(routed.overlay, routed.duct.id, segmentId, 'top', 100, [300, 150]);
     if (!('outlet' in outlet)) throw new Error('fixture');
-    const edited = editHvacOutlet(outlet.overlay, outlet.outlet.id, { face: 'right', offsetMm: 250 });
+    const edited = editHvacOutlet(outlet.overlay, outlet.outlet.id, { offsetMm: 250 });
     if ('reason' in edited) throw new Error('fixture');
-    expect(edited.overlay.hvac.outlets.find(item => item.id === outlet.outlet.id)).toMatchObject({ face: 'right', offsetMm: 250 });
+    expect(edited.overlay.hvac.outlets.find(item => item.id === outlet.outlet.id)).toMatchObject({ face: 'top', offsetMm: 250 });
+  });
+  it('derives the two editable edge clearances from the outlet and its duct face', () => {
+    const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
+    const routed = createHvacDuct(placed.overlay, placed.unit.id, 'supply', point(0, 2.7, 0), point(0, 2.85, 3.3));
+    if (!('duct' in routed)) throw new Error('fixture');
+    const outlet = addHvacOutlet(routed.overlay, routed.duct.id, routed.duct.segmentIds[0]!, 'top', 500, [300, 150]);
+    if (!('outlet' in outlet)) throw new Error('fixture');
+    expect(hvacOutletEdgeClearances(outlet.overlay, outlet.outlet.id)).toEqual({ fromStartMm: 500, toEndMm: 2200 });
   });
   it('keeps thermostat control one-to-one and wall-mounted', () => {
     const unit = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));

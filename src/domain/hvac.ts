@@ -53,6 +53,49 @@ export function indoorUnitFootprint(unit: HvacIndoorUnit): readonly [Vec3, Vec3,
   ];
   return [corner(-1, -1), corner(-1, 1), corner(1, 1), corner(1, -1)];
 }
+
+export type HvacMeasurementWall = { id: string; start: Vec3; end: Vec3; normal: Vec3; halfThickness?: number };
+export type HvacAxisPlanarReference = { key: 'px' | 'nx' | 'pz' | 'nz'; label: '+X' | '−X' | '+Z' | '−Z'; axis: 'x' | 'z'; sign: -1 | 1; start: Vec3; end: Vec3; millimeters: number; targetId: string; targetKind: 'wall' | 'indoor-unit' };
+
+const crossXZ = (left: Vec3, right: Vec3) => left[0] * right[2] - left[2] * right[0];
+const subtract = (left: Vec3, right: Vec3): Vec3 => [left[0] - right[0], left[1] - right[1], left[2] - right[2]];
+const addScaled = (point: Vec3, direction: Vec3, distance: number): Vec3 => [point[0] + direction[0] * distance, point[1] + direction[1] * distance, point[2] + direction[2] * distance];
+function raySegmentDistanceXZ(origin: Vec3, direction: Vec3, start: Vec3, end: Vec3): number | null {
+  const edge = subtract(end, start), offset = subtract(start, origin), denominator = crossXZ(direction, edge);
+  if (Math.abs(denominator) < 1e-8) return null;
+  const distance = crossXZ(offset, edge) / denominator, along = crossXZ(offset, direction) / denominator;
+  return distance >= -1e-8 && along >= -1e-8 && along <= 1 + 1e-8 ? Math.max(0, distance) : null;
+}
+function rayPolygonDistanceXZ(origin: Vec3, direction: Vec3, polygon: readonly Vec3[]): number | null {
+  const distances = polygon.map((point, index) => raySegmentDistanceXZ(origin, direction, point, polygon[(index + 1) % polygon.length]!)).filter((value): value is number => value !== null);
+  return distances.length ? Math.min(...distances) : null;
+}
+function wallFootprint(wall: HvacMeasurementWall): readonly [Vec3, Vec3, Vec3, Vec3] {
+  const magnitude = Math.hypot(wall.normal[0], wall.normal[2]) || 1, width = wall.halfThickness ?? 0, normal: Vec3 = [wall.normal[0] / magnitude, 0, wall.normal[2] / magnitude];
+  return [addScaled(wall.start, normal, width), addScaled(wall.end, normal, width), addScaled(wall.end, normal, -width), addScaled(wall.start, normal, -width)];
+}
+
+/**
+ * Four signed world-axis dimensions. Each starts on the selected unit's real
+ * footprint and ends at the first physical Wall or vertically-overlapping
+ * Indoor unit footprint in that direction.
+ */
+export function hvacAxisPlanarReferences(unit: HvacIndoorUnit, walls: readonly HvacMeasurementWall[], indoorUnits: readonly HvacIndoorUnit[]): HvacAxisPlanarReference[] {
+  const origin = unit.position.position, ownFootprint = indoorUnitFootprint(unit), axes: readonly { key: HvacAxisPlanarReference['key']; label: HvacAxisPlanarReference['label']; axis: HvacAxisPlanarReference['axis']; sign: -1 | 1; direction: Vec3 }[] = [
+    { key: 'px', label: '+X', axis: 'x', sign: 1, direction: [1, 0, 0] }, { key: 'nx', label: '−X', axis: 'x', sign: -1, direction: [-1, 0, 0] }, { key: 'pz', label: '+Z', axis: 'z', sign: 1, direction: [0, 0, 1] }, { key: 'nz', label: '−Z', axis: 'z', sign: -1, direction: [0, 0, -1] },
+  ];
+  const ownBottom = unit.position.position[1] - unit.sectionMm[1] / 2000, ownTop = unit.position.position[1] + unit.sectionMm[1] / 2000;
+  return axes.flatMap(axis => {
+    const ownExtent = Math.max(...ownFootprint.map(point => (point[0] - origin[0]) * axis.direction[0] + (point[2] - origin[2]) * axis.direction[2]));
+    const targets = [
+      ...walls.map(wall => ({ targetId: wall.id, targetKind: 'wall' as const, distance: rayPolygonDistanceXZ(origin, axis.direction, wallFootprint(wall)) })),
+      ...indoorUnits.filter(other => other.id !== unit.id && other.position.position[1] - other.sectionMm[1] / 2000 <= ownTop && other.position.position[1] + other.sectionMm[1] / 2000 >= ownBottom).map(other => ({ targetId: other.id, targetKind: 'indoor-unit' as const, distance: rayPolygonDistanceXZ(origin, axis.direction, indoorUnitFootprint(other)) })),
+    ].filter((target): target is { targetId: string; targetKind: 'wall' | 'indoor-unit'; distance: number } => target.distance !== null && target.distance >= ownExtent - 1e-8).sort((left, right) => left.distance - right.distance || left.targetId.localeCompare(right.targetId));
+    const target = targets[0];
+    if (!target) return [];
+    return [{ key: axis.key, label: axis.label, axis: axis.axis, sign: axis.sign, start: addScaled(origin, axis.direction, ownExtent), end: addScaled(origin, axis.direction, target.distance), millimeters: Math.max(0, Math.round((target.distance - ownExtent) * 1000)), targetId: target.targetId, targetKind: target.targetKind }];
+  });
+}
 export const hvacUnitConnected = (overlay: ConduitOverlayDocument, unitId: string) => overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.segmentIds.length > 0);
 
 /** A connected unit may change its shared duct section but never move, yaw, or change casing length. */
@@ -118,10 +161,19 @@ export function addHvacOutlet(overlay: ConduitOverlayDocument, ductId: string, s
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, outlets: [...overlay.hvac.outlets, outlet] } }, outlet };
 }
 
-export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string, change: Partial<Pick<HvacDuctOutlet, 'face' | 'offsetMm' | 'sizeMm'>>): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
+/** The two longitudinal clearances on the physical duct face which hosts an outlet. */
+export function hvacOutletEdgeClearances(overlay: ConduitOverlayDocument, outletId: string): { fromStartMm: number; toEndMm: number } | null {
+  const outlet = overlay.hvac.outlets.find(item => item.id === outletId), segment = outlet && overlay.hvac.segments.find(item => item.id === outlet.segmentId);
+  if (!outlet || !segment) return null;
+  const faceLengthMm = length(segment.start.position, segment.end.position) * 1000;
+  return { fromStartMm: outlet.offsetMm, toEndMm: faceLengthMm - outlet.offsetMm - outlet.sizeMm[0] };
+}
+
+/** The physical face is established by the placement hit and cannot be edited afterwards. */
+export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string, change: Partial<Pick<HvacDuctOutlet, 'offsetMm' | 'sizeMm'>>): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
   const outlet = overlay.hvac.outlets.find(item => item.id === outletId);
   if (!outlet) return { overlay, reason: '风口不存在。' };
-  const base = { ...overlay, hvac: { ...overlay.hvac, outlets: overlay.hvac.outlets.filter(item => item.id !== outletId) } }, candidate = addHvacOutlet(base, outlet.ductId, outlet.segmentId, change.face ?? outlet.face, change.offsetMm ?? outlet.offsetMm, change.sizeMm ?? outlet.sizeMm);
+  const base = { ...overlay, hvac: { ...overlay.hvac, outlets: overlay.hvac.outlets.filter(item => item.id !== outletId) } }, candidate = addHvacOutlet(base, outlet.ductId, outlet.segmentId, outlet.face, change.offsetMm ?? outlet.offsetMm, change.sizeMm ?? outlet.sizeMm);
   if ('reason' in candidate) return { overlay, reason: candidate.reason };
   const replacement = { ...candidate.outlet, id: outlet.id, createdAt: outlet.createdAt };
   return { overlay: { ...candidate.overlay, hvac: { ...candidate.overlay.hvac, outlets: [...candidate.overlay.hvac.outlets.filter(item => item.id !== candidate.outlet.id), replacement] } } };

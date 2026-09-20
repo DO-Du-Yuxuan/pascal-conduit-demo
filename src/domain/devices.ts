@@ -1,6 +1,7 @@
 import type { Circuit, ConduitOverlayDocument, DeviceFrame, DeviceMount, HostKind, NetworkDevice, NetworkDeviceType, NetworkPort, RouteFitting, RoutePoint, RouteSegment, RoutingSystem, SprinklerDirection, Vec3 } from "./overlay";
 import type { PlannedRoute } from "./routing";
 import { commitBranchRoute } from "./routing";
+import { SOURCE_PORTS_PER_EDGE, sourcePortTemplate } from "./source-ports";
 
 let sequence = 0;
 const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
@@ -48,26 +49,6 @@ export function setSprinklerDirection(overlay: ConduitOverlayDocument, deviceId:
 
 function devicePort(deviceId: string, index: number, point: RoutePoint, direction: Vec3, system: RoutingSystem, role: NetworkPort["role"], face?: NetworkPort["face"], slot?: NetworkPort["slot"]): NetworkPort {
   return { id: `${deviceId}:port:${index}`, owner: { kind: "device", id: deviceId }, position: clonePoint(point), direction: normalize(direction), role, system, connectedSegmentIds: [], face, slot, flow: "unknown" };
-}
-
-const SOURCE_PORT_ROWS = 10;
-const SOURCE_PORT_ROW_SPACING = .035;
-const SOURCE_PORT_LANE_SPACING = .12;
-
-function sourcePortPosition(position: RoutePoint, index: number, systemIndex = 0, systemCount = 1): RoutePoint {
-  const normal = normalize(position.attachment?.normal ?? [0, 0, 1]), fallbackU = Math.abs(normal[1]) < .9 ? normalize(cross([0, 1, 0], normal)) : [1, 0, 0] as Vec3;
-  const u = normalize(position.attachment?.basis?.u ?? fallbackU), v = normalize(position.attachment?.basis?.v ?? cross(normal, u));
-  // A panel output lane first uses its full vertical capacity. This keeps ten
-  // 20 mm conduits visibly separate on the default panel instead of spreading
-  // five across the face and then overlapping the next starts.
-  const row = index % SOURCE_PORT_ROWS, extraColumn = Math.floor(index / SOURCE_PORT_ROWS);
-  const lane = systemIndex + extraColumn * systemCount;
-  const offsetU = (lane - (systemCount - 1) / 2) * SOURCE_PORT_LANE_SPACING;
-  // Keep the original first source port on the device centreline. Subsequent
-  // ports alternate upward and downward, so all ten fit within the default
-  // panel height while previously authored first routes retain their level.
-  const offsetV = row === 0 ? 0 : Math.ceil(row / 2) * SOURCE_PORT_ROW_SPACING * (row % 2 ? 1 : -1);
-  return { ...clonePoint(position), position: position.position.map((value, axis) => value + u[axis] * offsetU + v[axis] * offsetV) as Vec3 };
 }
 
 export function deviceFrame(position: RoutePoint, tangent?: Vec3, frontOverride?: Vec3): DeviceFrame {
@@ -120,7 +101,10 @@ function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint,
   if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind) || hostKind === "beam" && position.attachment?.surface === "top")) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
   const id = nextId(deviceType), frame = deviceFrame(position, options.tangent, options.frameFront), orientation = frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
-    if (definition.source) return [devicePort(id, systemIndex, sourcePortPosition(position, 0, systemIndex, definition.systems.length), orientation, system, "source")];
+    if (definition.source) {
+      const dualSided = deviceType === "strong-panel" || deviceType === "weak-panel", sourcePortCount = dualSided ? SOURCE_PORTS_PER_EDGE * 2 : SOURCE_PORTS_PER_EDGE;
+      return Array.from({ length: sourcePortCount }, (_, sourceIndex) => sourcePortTemplate(id, position, orientation, system, sourceIndex, systemIndex, definition.systems.length, sizeMm, frame, dualSided));
+    }
     if (deviceType === "socket" || deviceType === "switch" || deviceType === "network-outlet") return boxPorts(id, position, frame, sizeMm, system, definition.portRole);
     if (deviceType === "luminaire") return luminairePorts(id, position, frame, sizeMm, system);
     return [devicePort(id, systemIndex, position, orientation, system, definition.portRole)];
@@ -172,7 +156,13 @@ export function nearestDeviceTargetPort(device: NetworkDevice, system: RoutingSy
 
 export function portCanStart(overlay: ConduitOverlayDocument, device: NetworkDevice, port: NetworkPort, system: RoutingSystem): boolean {
   if (port.role === "sink" || port.system !== system || port.connectedSegmentIds.length > 0 && !reassignablePeer(device, port, system)) return false;
-  if (isSourceDevice(device)) return deviceSupportsSystem(device, system);
+  if (isSourceDevice(device)) {
+    const sharedHoleOccupied = device.ports.some((candidate) => candidate.id !== port.id
+      && candidate.role === "source"
+      && candidate.connectedSegmentIds.length > 0
+      && Math.hypot(...subtract(candidate.position.position, port.position.position)) < 1e-6);
+    return deviceSupportsSystem(device, system) && !sharedHoleOccupied;
+  }
   const deviceSegments = device.ports.flatMap((candidate) => candidate.connectedSegmentIds);
   return overlay.circuits.some((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id)));
 }
@@ -225,7 +215,7 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
   let devices = workingOverlay.devices;
   if (!port && isSourceDevice(device) && !requestedPortId) {
     const systemIndex = device.systems.indexOf(system), sourcePortIndex = device.ports.filter((candidate) => candidate.system === system).length;
-    port = devicePort(device.id, device.ports.length, sourcePortPosition(device.position, sourcePortIndex, systemIndex < 0 ? 0 : systemIndex, device.systems.length), device.orientation, system, "source");
+    port = sourcePortTemplate(device.id, device.position, device.orientation, system, sourcePortIndex, systemIndex < 0 ? 0 : systemIndex, device.systems.length, device.sizeMm, device.frame, device.deviceType === "strong-panel" || device.deviceType === "weak-panel");
     devices = workingOverlay.devices.map((item) => item.id === device.id ? { ...item, ports: [...item.ports, port!] } : item);
   }
   if (!port) throw new Error("该设备没有可用的输出端口。");
@@ -400,7 +390,7 @@ export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: O
   const updatedTarget = endpoint.end === "start" ? { ...target, startPortId: ports[0].id } : { ...target, endPortId: ports[0].id };
   const updatedFirst = { ...first, startPortId: ports[1].id };
   const fitting: RouteFitting = { id, type: target.system === "sprinkler" ? "sprinkler-fitting" : "conduit-fitting", fitting: sameDirection ? "coupling" : "elbow", bendStyle: sameDirection ? undefined : (target.system === "sprinkler" ? "standard" : "right-angle"), system: target.system, diameterMm: target.diameterMm, position: clonePoint(endpoint.point), segmentIds: [target.id, first.id], ports };
-  const segments = plan.segments.map((segment, index) => index === 0 ? updatedFirst : segment);
+  const segments = plan.segments.map((segment, index) => ({ ...(index === 0 ? updatedFirst : segment), circuitId: endpoint.circuit.id }));
   let devices = overlay.devices;
   if (endDeviceId) {
     const endDevice = devices.find((device) => device.id === endDeviceId), endPort = endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0) ?? endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);

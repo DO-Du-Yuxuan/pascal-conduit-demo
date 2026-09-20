@@ -10,6 +10,7 @@ import { ExteriorDimensions } from "./plan/ExteriorDimensions";
 import { ConduitPlanOverlay } from "./plan/ConduitPlan";
 import { ConstructionAnnotations, ConstructionDrawingLayoutPersistence, ConstructionNotices, useConstructionPlan } from "./plan/ConstructionAnnotations";
 import { PointPositionDimensions } from "./plan/PointPositionDimensions";
+import { HvacSectionCallouts } from "./plan/HvacConstruction";
 import { ConstructionLegend } from "./plan/ConstructionLegend";
 import { ManualCallouts } from "./plan/ManualCallouts";
 import { manualCalloutTargetAnchor, newManualCalloutDraft } from "./plan/manual-callout-model";
@@ -781,6 +782,7 @@ function App() {
     const isEditableTarget = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
     const onSceneHistoryShortcut = (event: KeyboardEvent) => {
       if (event.isComposing || isEditableTarget(event.target) || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      if (document.querySelector('[data-point-position-dimension-selected="true"], [data-construction-annotation-selected="true"]')) return;
       const key = event.key.toLowerCase();
       if (key === "z") {
         event.preventDefault();
@@ -1364,7 +1366,7 @@ function Plan({
     cz = viewBox.minZ + viewBox.height / 2,
     vb = `${viewBox.minX} ${viewBox.minZ} ${viewBox.width} ${viewBox.height}`;
   const systemVisibility = useMemo(() => ({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler }), [visibility.conduitReceptacle, visibility.conduitLighting, visibility.conduitNetwork, visibility.conduitSprinkler]);
-  const constructionPlan = useConstructionPlan({ nodes, overlay: conduitOverlay, levelId, hiddenNodeIds, unit: measurementUnit, rotation, viewBox, planRef, selectedId, exterior: exteriorDimensions, dimensionsVisible: visibility.dimensions, measurements: manualMeasurements, systemVisibility, sensorVisible: visibility.conduitSensor, devicesVisible: visibility.devices, annotationScale: pointAnnotationScale });
+  const constructionPlan = useConstructionPlan({ nodes, overlay: conduitOverlay, levelId, hiddenNodeIds, unit: measurementUnit, rotation, viewBox, planRef, selectedId, exterior: exteriorDimensions, dimensionsVisible: visibility.dimensions, measurements: manualMeasurements, systemVisibility, sensorVisible: visibility.conduitSensor, devicesVisible: visibility.devices, hvacVisible: visibility.conduitHvac, annotationScale: pointAnnotationScale });
   viewBoxRef.current = viewBox;
   setViewBoxRef.current = setViewBox;
   const visibleEvaluationHighlights = activeEvaluationHighlight ? evaluationHighlights.filter((highlight) => highlight.ruleId === activeEvaluationHighlight.ruleId && highlight.targetIndex === activeEvaluationHighlight.targetIndex) : evaluationHighlights;
@@ -1587,6 +1589,7 @@ function Plan({
           {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={`visual-${n.id}`} node={n} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} visualOnly />)}
           {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} lineOffsets={conduitOverlay?.pointPositionDimensionLineOffsets} onPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} />}
+          {conduitOverlay && visibility.conduitHvac && <HvacSectionCallouts overlay={conduitOverlay} levelId={levelId} rotation={rotation} annotationScale={pointAnnotationScale} labelPositions={conduitOverlay.constructionAnnotationLabelPositions} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})}/>}
           <ManualCallouts callouts={visibleCallouts} preview={calloutTarget&&calloutHover?{anchor:calloutTarget.anchor,label:calloutHover}:null} rotation={rotation} annotationScale={pointAnnotationScale} selectedId={selectedCalloutId} autoEditId={autoEditCalloutId} onSelect={onSelectCallout} onUpdate={onUpdateCallout} onDelete={onDeleteCallout} onEditFinished={()=>setAutoEditCalloutId(null)} onMoveStart={(id,event)=>{event.stopPropagation();event.currentTarget.setPointerCapture(event.pointerId);const item=visibleCallouts.find(callout=>callout.id===id);if(item)setCalloutDrag({id,label:item.label,pointerId:event.pointerId});onSelectCallout(id);}} onMove={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;const point=eventWorldPoint(event);if(point)setCalloutDrag({...calloutDrag,label:point});}} onMoveEnd={event=>{if(!calloutDrag||event.pointerId!==calloutDrag.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);onUpdateCallout(calloutDrag.id,{label:eventWorldPoint(event)??calloutDrag.label});setCalloutDrag(null);}}/>
           <ManualMeasurements measurements={manualMeasurements} preview={measurementMode !== "off" && measurementStart && measurementHover ? { mode: activeMeasurementMode, start: measurementStart, end: measurementHover } : null} unit={measurementUnit} viewRotation={rotation} selectedId={selectedManualId} onSelect={onSelectManual} onDelete={onDeleteManual} />
           {measurementMode !== "off" && measurementHover && <SnapIndicator snap={measurementHover} active={Boolean(measurementStart)} />}

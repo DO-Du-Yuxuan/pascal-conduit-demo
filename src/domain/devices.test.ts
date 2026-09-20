@@ -51,9 +51,17 @@ describe("network devices and rooted circuits", () => {
     expect(() => createNetworkDevice("strong-panel", point(0, 0, 0, "slab"))).toThrow();
     const strong = createNetworkDevice("strong-panel", point(0, 1, 0));
     expect(strong.systems).toEqual(["receptacle", "lighting"]);
-    expect(strong.ports.map((port) => port.id)).toEqual([`${strong.id}:port:0`, `${strong.id}:port:1`]);
+    expect(strong.ports.filter((port) => port.system === "receptacle")).toHaveLength(20);
+    expect(strong.ports.filter((port) => port.system === "lighting")).toHaveLength(20);
+    expect(strong.ports.map((port) => port.id)).toContain(`${strong.id}:port:0`);
+    expect(strong.ports.map((port) => port.id)).toContain(`${strong.id}:port:1`);
     const weak = createNetworkDevice("weak-panel", point(1, 1, 0));
     expect(weak.systems).toEqual(["network"]);
+    expect(weak.ports).toHaveLength(20);
+    expect(weak.ports.filter((port) => port.position.position[1] < weak.position.position[1])).toHaveLength(10);
+    expect(weak.ports.filter((port) => port.position.position[1] > weak.position.position[1])).toHaveLength(10);
+    expect(weak.ports.slice(0, 10).every((port) => port.direction[1] < -.99)).toBe(true);
+    expect(weak.ports.slice(10).every((port) => port.direction[1] > .99)).toBe(true);
     const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.sprinklerDirection).toBe("upright");
@@ -108,16 +116,39 @@ describe("network devices and rooted circuits", () => {
     expect(second.port.position.position).not.toEqual(first.port.position.position);
   });
 
-  it("stacks ten conduits vertically on a strong-panel output lane before using another lane", () => {
+  it("places ten conduits side-by-side along the lower edge of a strong-panel", () => {
     let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", point(0, 1, 0));
-    const outputYs: number[] = [];
+    const outputXs: number[] = [], outputYs: number[] = [];
     for (let index = 0; index < 10; index += 1) {
       const started = startRouteFromDevice(overlay, overlay.devices[0].id, "receptacle");
+      outputXs.push(started.port.position.position[0]);
       outputYs.push(started.port.position.position[1]);
       overlay = commitDeviceRoute(started.overlay, planRoute("receptacle", 20, "surface", [started.port.position, point(index + 1, 1, 0)]), started.circuit, started.port);
     }
-    expect(new Set(outputYs.map((value) => value.toFixed(6))).size).toBe(10);
-    expect(Math.max(...outputYs) - Math.min(...outputYs)).toBeGreaterThan(.3);
+    expect(new Set(outputXs.map((value) => value.toFixed(6))).size).toBe(10);
+    expect(Math.max(...outputXs) - Math.min(...outputXs)).toBeGreaterThan(.3);
+    expect(new Set(outputYs.map((value) => value.toFixed(6))).size).toBe(1);
+    expect(outputYs[0]).toBeLessThan(.7);
+  });
+
+  it("gives both strong-panel systems the same twenty room-facing physical holes", () => {
+    const panel = createNetworkDevice("strong-panel", point(0, 1, 0));
+    const receptacle = panel.ports.filter((port) => port.system === "receptacle"), lighting = panel.ports.filter((port) => port.system === "lighting");
+    expect(receptacle).toHaveLength(20);
+    expect(lighting).toHaveLength(20);
+    expect(receptacle.map((port) => port.position.position)).toEqual(lighting.map((port) => port.position.position));
+    expect(receptacle.filter((port) => port.direction[1] < -.99)).toHaveLength(10);
+    expect(receptacle.filter((port) => port.direction[1] > .99)).toHaveLength(10);
+    expect(receptacle.every((port) => port.position.position[2] > panel.position.position[2] + panel.sizeMm[2] / 2000)).toBe(true);
+  });
+
+  it("prevents two systems from occupying the same shared panel hole", () => {
+    let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", point(0, 1, 0));
+    const panel = overlay.devices[0], redPort = panel.ports.find((port) => port.system === "receptacle")!;
+    const bluePort = panel.ports.find((port) => port.system === "lighting" && port.position.position.every((value, axis) => value === redPort.position.position[axis]))!;
+    const started = startRouteFromDevice(overlay, panel.id, "receptacle", redPort.id); overlay = started.overlay;
+    overlay = commitDeviceRoute(overlay, planRoute("receptacle", 20, "surface", [started.port.position, point(1, .5, .1)]), started.circuit, started.port);
+    expect(portCanStart(overlay, overlay.devices[0], overlay.devices[0].ports.find((port) => port.id === bluePort.id)!, "lighting")).toBe(false);
   });
 
   it("rejects a route commit when the supplied circuit has no valid matching source", () => {
@@ -202,12 +233,16 @@ describe("network devices and rooted circuits", () => {
     expect(openRouteEndpoints(outlet).some((endpoint) => endpoint.segmentId === endpoints[0].segmentId && endpoint.end === endpoints[0].end)).toBe(false);
   });
 
-  it("continues a rooted route from an open conduit end without a device", () => {
+  it("keeps the latest unconnected conduit end available for repeated continuation", () => {
     const base = rooted("receptacle"), endpoint = openRouteEndpoints(base)[0]!;
     const plan = planRoute(endpoint.system, 20, "surface", [endpoint.point, point(3, 1, 1)]);
     const extended = commitEndpointRoute(base, endpoint, plan);
     expect(extended.segments.length).toBeGreaterThan(base.segments.length);
     expect(extended.fittings.some((fitting) => fitting.segmentIds.includes(endpoint.segmentId))).toBe(true);
+    const nextEndpoint = openRouteEndpoints(extended).find((candidate) => candidate.segmentId !== endpoint.segmentId);
+    expect(nextEndpoint).toBeDefined();
+    const twiceExtended = commitEndpointRoute(extended, nextEndpoint!, planRoute(nextEndpoint!.system, 20, "surface", [nextEndpoint!.point, point(4, 1, 1)]));
+    expect(openRouteEndpoints(twiceExtended).some((candidate) => candidate.segmentId !== endpoint.segmentId)).toBe(true);
   });
 
   it("connects to a terminal device and continues the same circuit from a socket", () => {

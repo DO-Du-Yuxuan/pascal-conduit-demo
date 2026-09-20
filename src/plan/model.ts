@@ -125,7 +125,7 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
   return { scene, hostLevel, hostHidden, segmentLevels, deviceLevel, linkedLevel, segmentVisible, deviceVisible, devicePlanAnchor: (device: NetworkDevice) => devicePlanAnchor(nodes, device), hidden, systemVisibility, sensorVisible };
 }
 export type PlanContext = ReturnType<typeof createPlanContext>;
-export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context = createPlanContext(nodes, overlay)) {
+export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context = createPlanContext(nodes, overlay), includeHvac = true) {
   const annotations: PlanAnnotation[] = [], notices: PlanNotice[] = [];
   const units = unit === 'millimeters' ? ' mm' : '';
   const length = (m: number) => formatMeasurement(m, unit) + units;
@@ -154,6 +154,12 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     const level = context.linkedLevel(box.segmentIds, box.position.attachment);
     if (!level) notices.push({ sourceId: box.id, levelId: null, text: '楼层归属不明，未绘制检修盒' });
     else if (level === levelId && box.position.attachment?.hostKind === 'wall') { const height=length(box.position.position[1]-box.sizeMm[1]/2000-modelLevelBase(nodes,level)); annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${height}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]}); }
+  }
+  if (includeHvac) for (const thermostat of overlay.hvac.thermostats) {
+    const attachment=thermostat.position.attachment??(thermostat.mount?.kind==='host'?thermostat.mount.attachment:undefined), thermostatLevel=context.hostLevel(attachment);
+    if (thermostatLevel!==levelId||attachment?.hostKind!=='wall') continue;
+    const height=length(thermostat.position.position[1]-thermostat.sizeMm[1]/2000-modelLevelBase(nodes,levelId)), label=thermostat.name.trim()||'空调温控器';
+    annotations.push({id:`hvac:thermostat:${thermostat.id}`,sourceId:thermostat.id,relatedIds:[thermostat.id],levelId,anchor:devicePlanAnchor(nodes,thermostat as unknown as NetworkDevice),kind:'height',text:`${label}\nH=${height}`,arrangement:'single',rows:[{sourceIds:[thermostat.id],editableSourceId:thermostat.id,label,count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
   }
   return { annotations, notices };
 }

@@ -40,6 +40,13 @@ describe("conduit workspace UI contract", () => {
     expect(planSource).toContain('{hvacVisible && <HvacPlan');
   });
 
+  it("gives wall thermostats the same immediate edge-positioning interaction as switches", () => {
+    expect(threeDSource).toContain('aria-label="空调控温器边缘定位"');
+    expect(threeDSource).toContain("applyThermostatPosition");
+    expect(threeDSource).toContain("thermostatPositioningProxy");
+    expect(hvacSceneSource).toContain("HvacThermostatDimensions");
+  });
+
   it("renders the transient 3D route preview in the 2D plan overlay", () => {
     expect(planSource).toContain("state.preview");
     expect(planSource).toContain("conduit-plan-preview");
@@ -159,6 +166,13 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("Shift 切换正交");
   });
 
+  it("keeps HVAC duct clicks as confirmed vertices and finishes only on Enter or double-click", () => {
+    expect(threeDSource).toContain("const finishHvacDuct = () =>");
+    expect(threeDSource).toContain("finishHvacDuct(); return;");
+    expect(threeDSource).toContain("onSurfaceFinish={finishAtCursor}");
+    expect(threeDSource).toContain("单击逐段确认，双击或 Enter 完成");
+  });
+
   it("keeps the first HVAC segment controllable by the same XYZ and cancel arrow keys", () => {
     expect(threeDSource).toContain("draft.length || hvacRouteStart || activeHvacDuctId || event.key === \"ArrowDown\"");
     expect(threeDSource).toContain("if (tool === 'hvac-supply' || tool === 'hvac-return')");
@@ -176,10 +190,14 @@ describe("conduit workspace UI contract", () => {
     expect(hvacSceneSource).toContain("data-hvac-outlet-preview");
   });
 
-  it("keeps selected duct-outlet direction and offset editable after its physical-face placement", () => {
-    expect(threeDSource).toContain("风口方向");
-    expect(threeDSource).toContain("距风管起点");
+  it("keeps the placed duct face fixed while exposing its two editable edge clearances", () => {
+    expect(threeDSource).not.toContain("风口方向");
+    expect(threeDSource).toContain("起点净距");
+    expect(threeDSource).toContain("终点净距");
     expect(threeDSource).toContain("editHvacOutlet(overlay, selectedHvacOutlet.id");
+    expect(hvacSceneSource).toContain('function HvacOutletDimensions');
+    expect(hvacSceneSource).toContain('color="#ffffff"');
+    expect(hvacSceneSource).toContain('depthTest={false}');
   });
 
   it("uses a compact, direction-readable indoor-unit plan symbol instead of overlapping supply and return pills", () => {
@@ -193,6 +211,13 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("selectedIndoorUnitDimensions={selectedHvacUnit ?");
     expect(hvacSceneSource).toContain("function HvacIndoorUnitDimensions");
     expect(hvacSceneSource).toContain("内机底部标高");
+  });
+
+  it("shows signed X/Z indoor-unit dimensions from physical envelopes to walls or other indoor units", () => {
+    expect(threeDSource).toContain("hvacAxisPlanarReferences");
+    expect(threeDSource).toContain("{reference.label} 净距");
+    expect(hvacSceneSource).toContain("reference.start");
+    expect(hvacSceneSource).toContain("reference.end");
   });
 
   it("keeps permanent 2D network rendering separate from transient previews", () => {

@@ -53,6 +53,26 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain("activeTargetPortId");
   });
 
+  it("reveals the selected system's shared panel holes only while the pointer is over that panel", () => {
+    expect(scene).toContain('sourcePanel = device.deviceType === "strong-panel" || device.deviceType === "weak-panel"');
+    expect(scene).toContain("showStartPorts = tool === \"draw\" && draft.length === 0 && (!sourcePanel || hoverId === device.id)");
+    expect(scene).toContain("port.system === startSystem && portCanStart");
+    expect(workspace).toContain("routeSystem={system}");
+  });
+
+  it("starts a panel route only from the explicitly clicked source hole", () => {
+    expect(scene).toContain('else if (tool === "draw" && device.ports.length && !sourcePanel) onStartDeviceRoute(device, undefined');
+    expect(scene).toContain('onStartDeviceRoute(device, port.id');
+    expect(scene).toContain("sourcePortDisplayPosition(port, device)");
+    expect(scene).toContain('function sourcePortDisplayPosition(port: NetworkDevice["ports"][number], _device: NetworkDevice): Vec3 { return port.position.position; }');
+  });
+
+  it("keeps stable default depth rendering for permanent pipes and fittings", () => {
+    expect(scene).not.toContain("surfaceDisplayOverlay");
+    expect(scene).not.toContain("fittingDisplayOverlay");
+    expect(scene).not.toContain("depthWrite={!showAboveHost}");
+  });
+
   it("keeps the unhosted world-axis cursor in the rendered route preview", () => {
     expect(workspace).toContain('displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource })');
   });

@@ -129,7 +129,7 @@ A standalone, unpowered device point used to record a sensor's installation loca
 _Avoid_: Weak-current outlet, luminaire, conduit endpoint
 
 **Indoor air-handling unit**:
-An Overlay-owned, horizontally oriented central-air-conditioning indoor unit with one supply port and one return port. In the current HVAC version, the unit and both routes share one rectangular Duct section; it is positioned with the same host and physical-dimension interactions as a luminaire, rather than by raw world-coordinate fields.
+An Overlay-owned, horizontally oriented central-air-conditioning indoor unit with one supply port and one return port. In the current HVAC version, the unit and both routes share one rectangular Duct section; it is positioned with the same host and physical-dimension interactions as a luminaire, rather than by raw world-coordinate fields. Its selected horizontal dimensions are the signed world-axis `+X`, `−X`, `+Z`, and `−Z` clearances between real physical envelopes: the first Wall face or vertically overlapping Indoor-unit envelope in each direction is the witness, never an object center.
 _Avoid_: Outdoor unit, Pascal building node, generic device point
 
 **Indoor-unit port outward direction**:
@@ -149,7 +149,7 @@ A manually routed, non-branching rectangular air path that begins at an Indoor a
 _Avoid_: Electrical conduit, supply duct, condensate pipe
 
 **Duct outlet**:
-An adjustable rectangular opening attached to one exterior face of a rectangular duct segment. In placement mode, the currently hovered physical duct face and along-segment pointer location determine its transient preview; a click confirms that exact face and location. Its Supply or Return identity is derived from its owning duct, its rectangle must remain wholly inside that face, and multiple outlets may share a face.
+An adjustable rectangular opening attached to one exterior face of a rectangular duct segment. In placement mode, the currently hovered physical duct face and along-segment pointer location determine its white transient preview; a click confirms and fixes that exact face and location. Its Supply or Return identity is derived from its owning duct. Selection exposes the two longitudinal clearances to that physical face's start and end edges, used to reposition the opening; its rectangle must remain wholly inside that face, and multiple outlets may share a face.
 _Avoid_: Wall opening, Ceiling grille, device port
 
 **Thermostat point**:

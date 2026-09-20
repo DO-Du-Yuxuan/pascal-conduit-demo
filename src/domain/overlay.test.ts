@@ -13,6 +13,12 @@ describe("Conduit overlay", () => {
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay)))).toEqual(overlay);
   });
 
+  it("round-trips a thermostat's persisted wall-position reference", () => {
+    const overlay = createEmptyOverlay("thermostat.json", "abc");
+    overlay.hvac.thermostats = [{ id: "thermostat", type: "thermostat", name: "控温器", position: point(1, 1.3, 0), mount: { kind: "host", attachment: point(1, 1.3, 0).attachment }, positioning: { horizontal: { kind: "wall-end", referenceId: "wall-a:start", direction: -1 } }, sizeMm: [86, 86, 50], createdAt: "now" }];
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).hvac.thermostats[0]?.positioning).toEqual(overlay.hvac.thermostats[0]?.positioning);
+  });
+
   it("loads older overlays with no lighting control groups", () => {
     const raw = JSON.parse(JSON.stringify(createEmptyOverlay("default-layout.json", "abc")));
     raw.schemaVersion = "2.1";
@@ -58,8 +64,10 @@ describe("Conduit overlay", () => {
     const overlay = createEmptyOverlay("dimensions.json", "abc");
     overlay.pointPositionDimensionLabelPositions = { "socket-a:position:0:start": .2 };
     overlay.pointPositionDimensionLineOffsets = { "socket-a:position:0:start": .46 };
+    overlay.hiddenPointPositionDimensionIds = ["socket-a:position:0:start"];
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).pointPositionDimensionLabelPositions).toEqual(overlay.pointPositionDimensionLabelPositions);
     expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).pointPositionDimensionLineOffsets).toEqual(overlay.pointPositionDimensionLineOffsets);
+    expect(parseOverlay(JSON.parse(JSON.stringify(overlay))).hiddenPointPositionDimensionIds).toEqual(overlay.hiddenPointPositionDimensionIds);
   });
 
   it("round-trips saved automatic annotation-panel placements", () => {
