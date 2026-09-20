@@ -37,14 +37,19 @@ type OverlayState = {
 };
 
 const clone = (value: ConduitOverlayDocument) => structuredClone(value);
-// `planRoute` deliberately assigns persistent IDs and timestamps, even while it
-// is being used to draw a transient preview.  Those values change on every
-// render although the route shown to the author has not changed.  Treating them
-// as preview changes republishes the same draft through Zustand indefinitely in
-// a split 2D/3D workspace.
-const previewSignature = (preview: RoutePreviewSnapshot | null) => preview ? JSON.stringify(preview, (key, value) => {
-  if (["id", "createdAt", "segmentId", "segmentIds", "routeElementId", "startPortId", "endPortId", "connectedSegmentIds"].includes(key)) return undefined;
-  return value;
+// A planned route contains generated IDs, timestamps, fitting ports and
+// diagnostics.  It is rendering output, not drawing input, and may be freshly
+// allocated on every React render.  Publishing on those changes feeds the 2D
+// subscriber back into the 3D authoring render.  Only input that can visibly
+// move the preview is allowed to wake subscribers.
+const previewSignature = (preview: RoutePreviewSnapshot | null) => preview ? JSON.stringify({
+  sourceSha: preview.sourceSha,
+  system: preview.system,
+  diameterMm: preview.diameterMm,
+  levelId: preview.levelId,
+  points: preview.points,
+  branchNode: preview.branchNode,
+  deviceNode: preview.deviceNode,
 }) : "";
 const snapshotOverlayHistory = (workspace: WorkspaceState) => workspace.undoStack.map((snapshot) => snapshot.overlay).filter((overlay): overlay is ConduitOverlayDocument => Boolean(overlay));
 const syncWorkspace = (workspace: WorkspaceState, preview: RoutePreviewSnapshot | null) => ({ workspace, project: workspace.project, overlay: workspace.overlay, undoStack: snapshotOverlayHistory(workspace), redoStack: workspace.redoStack.map((snapshot) => snapshot.overlay).filter((overlay): overlay is ConduitOverlayDocument => Boolean(overlay)), projectDirty: workspace.projectDirty, dirty: workspace.overlayDirty, preview });

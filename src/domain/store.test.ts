@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyOverlay } from "./overlay";
+import { planRoute } from "./routing";
 import { useOverlayStore } from "./store";
 
 describe("overlay history", () => {
@@ -86,6 +87,19 @@ describe("overlay history", () => {
     let notifications = 0;
     const unsubscribe = useOverlayStore.subscribe(() => { notifications += 1; });
     store.publishPreview({ ...structuredClone(preview), plan: { ...structuredClone(preview.plan), segments: [{ ...preview.plan.segments[0], id: "conduit-second", createdAt: "second" }] } });
+    unsubscribe();
+    expect(notifications).toBe(0);
+  });
+
+  it("does not republish rendering-only route-plan changes for the same draft", () => {
+    const store = useOverlayStore.getState();
+    store.load(createEmptyOverlay("a.json", "a"));
+    const points = [{ position: [0, 0, 0] as [number, number, number] }, { position: [1, 0, 0] as [number, number, number] }];
+    const secondPlan = planRoute("receptacle", 20, "surface", points);
+    store.publishPreview({ sourceSha: "a", system: "receptacle", diameterMm: 20, levelId: "L0", points, plan: { ...secondPlan, canCommit: false, diagnostics: [{ code: "route_collision", message: "preview-only change" }] } });
+    let notifications = 0;
+    const unsubscribe = useOverlayStore.subscribe(() => { notifications += 1; });
+    store.publishPreview({ sourceSha: "a", system: "receptacle", diameterMm: 20, levelId: "L0", points, plan: planRoute("receptacle", 20, "surface", points) });
     unsubscribe();
     expect(notifications).toBe(0);
   });
