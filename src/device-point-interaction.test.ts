@@ -41,7 +41,7 @@ describe("device point interaction wiring", () => {
 
   it("uses the physical click position to choose the target device port", () => {
     expect(workspace).toContain("targetPoint?: [number, number, number]");
-    expect(scene).toContain("onStartDeviceRoute(device, undefined, [event.point.x, event.point.y, event.point.z])");
+    expect(scene).toContain("onStartDeviceRoute(device, port.id, [event.point.x, event.point.y, event.point.z])");
   });
 
   it("reveals open destination ports and replaces the large cursor ball with a target reticle", () => {
@@ -61,7 +61,7 @@ describe("device point interaction wiring", () => {
   });
 
   it("starts a panel route only from the explicitly clicked source hole", () => {
-    expect(scene).toContain('else if (tool === "draw" && device.ports.length && !sourcePanel) onStartDeviceRoute(device, undefined');
+    expect(scene).toContain('else if (tool === "draw" && device.ports.length) { /* Route starts only from the explicitly clicked green port. */ }');
     expect(scene).toContain('onStartDeviceRoute(device, port.id');
     expect(scene).toContain("sourcePortDisplayPosition(port, device)");
     expect(scene).toContain('function sourcePortDisplayPosition(port: NetworkDevice["ports"][number], _device: NetworkDevice): Vec3 { return port.position.position; }');

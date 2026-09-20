@@ -175,6 +175,7 @@ class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, 
     if (!this.state.error) return this.props.children;
     return <main style={{ margin: 24, maxWidth: 900, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
       <h1>页面渲染错误</h1>
+      <p>构建版本：{__BUILD_LABEL__}</p>
       <p>请截取以下内容并发送给开发者：</p>
       <pre data-debug-error="beam-white-screen">{`${this.state.error.name}: ${this.state.error.message}\n\n${this.state.error.stack || "未提供调用栈"}`}</pre>
       <button onClick={() => window.location.reload()}>刷新并重试</button>
@@ -845,6 +846,7 @@ function App() {
           <b>Pascal 施工管线路由</b>
         </div>
         <div className="actions">
+          <span className="build-version" title="当前页面的构建版本与时间">{__BUILD_LABEL__}</span>
           <div className="workspace-view-toggle" role="group" aria-label="工作区视图">
             <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D 平面</button>
             <button className={workspaceViewMode === "split" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("split"); setMeasurementMode("off"); }}>2D + 3D</button>

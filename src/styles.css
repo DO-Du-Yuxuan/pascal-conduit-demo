@@ -52,6 +52,12 @@ body{background:#f7f3ea}
   border-color:#e9e0d1;
   color:#817a71;
 }
+.build-version{
+  color:#817a71;
+  font:10px 'DM Mono',monospace;
+  white-space:nowrap;
+}
+@media(max-width:850px){.build-version{display:none}}
 button,select{
   background:#fffdfa;
   border-color:#e3d9ca;

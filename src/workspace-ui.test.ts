@@ -20,6 +20,12 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("3D 查看");
   });
 
+  it("shows the immutable build label in the top bar and crash report", () => {
+    expect(source).toContain('className="build-version"');
+    expect(source).toContain("构建版本：{__BUILD_LABEL__}");
+    expect(styles).toContain(".build-version");
+  });
+
   it("offers independent project export and protects dirty workspace replacement", () => {
     expect(source).toContain("导出项目 JSON");
     expect(source).toContain("makeProjectWritable");
