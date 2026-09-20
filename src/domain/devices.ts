@@ -3,8 +3,11 @@ import type { PlannedRoute } from "./routing";
 import { commitBranchRoute } from "./routing";
 import { SOURCE_PORTS_PER_EDGE, sourcePortTemplate } from "./source-ports";
 
-let sequence = 0;
-const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
+// Overlay files are imported into a fresh browser session.  An in-memory
+// counter would restart at one and can therefore reuse an imported device ID.
+// The device ID is also the prefix for every physical port, so reuse makes two
+// otherwise independent points indistinguishable to selection and editing.
+const nextId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 const normalize = (value: Vec3): Vec3 => { const size = Math.hypot(...value); return size < 1e-9 ? [0, 1, 0] : value.map((item) => item / size) as Vec3; };
 const clonePoint = (point: RoutePoint): RoutePoint => structuredClone(point);
 const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -403,4 +406,5 @@ export function commitEndpointRoute(overlay: ConduitOverlayDocument, endpoint: O
   return { ...overlay, devices, segments: nextSegments, fittings: [...overlay.fittings, fitting, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((circuit) => circuit.id === endpoint.circuit.id ? { ...circuit, status: stillOpen ? "broken" as const : "rooted" as const, segmentIds: [...new Set([...circuit.segmentIds, ...segments.map((segment) => segment.id)])] } : circuit) };
 }
 
-export function resetDeviceIdsForTests() { sequence = 0; }
+/** Kept as a test seam for callers from the former sequential-ID implementation. */
+export function resetDeviceIdsForTests() { /* UUID-backed IDs have no mutable sequence to reset. */ }

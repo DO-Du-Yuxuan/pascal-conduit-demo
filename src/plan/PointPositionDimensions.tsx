@@ -13,24 +13,26 @@ const lineDirection = (dimension: PointPositionDimension): Point => {
   return length > .000001 ? [x / length, y / length] : dimension.direction;
 };
 
-export function PointPositionDimensions({dimensions,unit,viewRotation,annotationScale,onSelect,labelPositions={},lineOffsets={},onPositionChange,onLabelPositionChange,toPlanPoint}:{dimensions:PointPositionDimension[];unit:MeasurementUnit;viewRotation:number;annotationScale:number;onSelect:(id:string)=>void;labelPositions?:Readonly<Record<string,number>>;lineOffsets?:Readonly<Record<string,number>>;onPositionChange?:(id:string,labelPosition:number,lineOffset:number)=>void;onLabelPositionChange?:(id:string,position:number)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null}){
+export function PointPositionDimensions({dimensions,unit,viewRotation,annotationScale,onSelect,labelPositions={},lineOffsets={},onPositionChange,onLabelPositionChange,toPlanPoint,selectionClearVersion=0}:{dimensions:PointPositionDimension[];unit:MeasurementUnit;viewRotation:number;annotationScale:number;onSelect:(id:string|null)=>void;labelPositions?:Readonly<Record<string,number>>;lineOffsets?:Readonly<Record<string,number>>;onPositionChange?:(id:string,labelPosition:number,lineOffset:number)=>void;onLabelPositionChange?:(id:string,position:number)=>void;toPlanPoint?:(clientX:number,clientY:number)=>Point|null;selectionClearVersion?:number}){
   const overlay=useOverlayStore(state=>state.overlay),commit=useOverlayStore(state=>state.commit),undo=useOverlayStore(state=>state.undo),redo=useOverlayStore(state=>state.redo);
   const baseOffset=.28*annotationScale,overshoot=.06*annotationScale,tick=.055*annotationScale;
   const [draftPositions,setDraftPositions]=React.useState<Record<string,DimensionPosition>>({});
   const [selectedDimensionId,setSelectedDimensionId]=React.useState<string|null>(null);
   const dragRef=React.useRef<{id:string;pointerId:number;start:Point;origin:DimensionPosition;position:DimensionPosition;mode:'label'|'line'|null;snapTargetId?:string}|null>(null);
   const [activeSnap,setActiveSnap]=React.useState<{sourceId:string;targetId:string}|null>(null);
+  React.useEffect(()=>{setSelectedDimensionId(null);setActiveSnap(null);},[selectionClearVersion]);
   React.useEffect(()=>{
     const onKeyDown=(event:KeyboardEvent)=>{
       if(!selectedDimensionId||event.isComposing||event.target instanceof HTMLInputElement||event.target instanceof HTMLTextAreaElement)return;
       const meta=event.metaKey||event.ctrlKey,key=event.key.toLowerCase();
-      if((event.key==='Delete'||event.key==='Backspace')&&!meta&&overlay){event.preventDefault();event.stopImmediatePropagation();commit({...overlay,hiddenPointPositionDimensionIds:[...new Set([...overlay.hiddenPointPositionDimensionIds,selectedDimensionId])]});setSelectedDimensionId(null);}
+      if(event.key==='Escape'){setSelectedDimensionId(null);setActiveSnap(null);onSelect(null);}
+      else if((event.key==='Delete'||event.key==='Backspace')&&!meta&&overlay){event.preventDefault();event.stopImmediatePropagation();commit({...overlay,hiddenPointPositionDimensionIds:[...new Set([...overlay.hiddenPointPositionDimensionIds,selectedDimensionId])]});setSelectedDimensionId(null);}
       else if(meta&&key==='z'){event.preventDefault();event.stopImmediatePropagation();event.shiftKey?redo():undo();}
       else if(meta&&key==='y'){event.preventDefault();event.stopImmediatePropagation();redo();}
     };
     window.addEventListener('keydown',onKeyDown,true);
     return()=>window.removeEventListener('keydown',onKeyDown,true);
-  },[selectedDimensionId,overlay,commit,undo,redo]);
+  },[selectedDimensionId,overlay,commit,undo,redo,onSelect]);
   const automaticOffset=(dimension:PointPositionDimension)=>baseOffset+dimension.lane*.18*annotationScale;
   const resolvedPosition=(dimension:PointPositionDimension):DimensionPosition=>draftPositions[dimension.id]??{label:labelPositions[dimension.id]??.5,lineOffset:lineOffsets[dimension.id]??automaticOffset(dimension)};
   const snapLineOffset=(dimension:PointPositionDimension, offset:number):{offset:number;targetId?:string}=>{
@@ -44,7 +46,7 @@ export function PointPositionDimensions({dimensions,unit,viewRotation,annotation
     return target?{offset:target.coordinate-dot(dimension.reference,dimension.normal),targetId:target.id}:{offset};
   };
   return <g className="point-position-dimensions" aria-label="点位定位尺寸">{dimensions.map(d=>{
-    const position=resolvedPosition(d),offset=position.lineOffset,start:[number,number]=[d.reference[0]+d.normal[0]*offset,d.reference[1]+d.normal[1]*offset],end:[number,number]=[d.center[0]+d.normal[0]*offset,d.center[1]+d.normal[1]*offset],axis=lineDirection(d),length=Math.max(.000001,Math.hypot(end[0]-start[0],end[1]-start[1])),labelPoint:[number,number]=[start[0]+(end[0]-start[0])*position.label,start[1]+(end[1]-start[1])*position.label],extension=(point:Point):Point=>[point[0]+d.normal[0]*(offset+overshoot),point[1]+d.normal[1]*(offset+overshoot)],tickVector:[number,number]=[(axis[0]+d.normal[0])*tick,(axis[1]+d.normal[1])*tick],angle=uprightDimensionAngle(axis,viewRotation),label=formatMeasurement(d.valueMeters,unit)+(unit==='millimeters'?' mm':''),isSnapped=activeSnap?.sourceId===d.id||activeSnap?.targetId===d.id;
+    const position=resolvedPosition(d),offset=position.lineOffset,start:[number,number]=[d.reference[0]+d.normal[0]*offset,d.reference[1]+d.normal[1]*offset],end:[number,number]=[d.center[0]+d.normal[0]*offset,d.center[1]+d.normal[1]*offset],axis=lineDirection(d),length=Math.max(.000001,Math.hypot(end[0]-start[0],end[1]-start[1])),labelPoint:[number,number]=[start[0]+(end[0]-start[0])*position.label,start[1]+(end[1]-start[1])*position.label],extension=(point:Point):Point=>[point[0]+d.normal[0]*(offset+overshoot),point[1]+d.normal[1]*(offset+overshoot)],tickVector:[number,number]=[(axis[0]+d.normal[0])*tick,(axis[1]+d.normal[1])*tick],angle=uprightDimensionAngle(axis,viewRotation),label=formatMeasurement(d.valueMeters,unit),isSnapped=activeSnap?.sourceId===d.id||activeSnap?.targetId===d.id;
     const finish=(event:React.PointerEvent,save:boolean)=>{const drag=dragRef.current;if(!drag||drag.id!==d.id||drag.pointerId!==event.pointerId)return;if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);dragRef.current=null;setActiveSnap(null);const next=drag.position;if(save){onPositionChange?.(d.id,next.label,next.lineOffset);onLabelPositionChange?.(d.id,next.label);}setDraftPositions(current=>{const {[d.id]:_,...rest}=current;return rest;});};
     const selected=selectedDimensionId===d.id;
     const select=(event:React.SyntheticEvent)=>{event.stopPropagation();(event.currentTarget as SVGElement).focus?.();setSelectedDimensionId(d.id);onSelect(d.sourceId);};

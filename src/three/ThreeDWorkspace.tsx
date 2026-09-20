@@ -1918,7 +1918,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                         )}
                         {positionDescription.planar?.map((reference, index) => (
                           <label key={reference.wallId}>
-                            平面净距 {index + 1}
+                            平面中心距 {index + 1}
                             <span>
                               <input
                                 type="number"

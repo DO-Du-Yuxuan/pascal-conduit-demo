@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, DEVICE_TYPES, parseOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
@@ -15,6 +15,22 @@ function rooted(system: RoutingSystem) {
 }
 
 describe("network devices and rooted circuits", () => {
+  it("creates a unique device and its physical ports after importing legacy sequential device IDs", () => {
+    resetDeviceIdsForTests();
+    const importedSocket = createNetworkDevice("socket", point(0, 1, 0));
+    const importedLuminaire = createNetworkDevice("luminaire", point(0, 2.7, 0, "ceiling"));
+    const imported = { ...createEmptyOverlay("imported.json", "sha"), devices: [importedSocket, importedLuminaire] };
+
+    resetDeviceIdsForTests();
+    const addedSocket = createNetworkDevice("socket", point(2, 1, 0));
+    const addedLuminaire = createNetworkDevice("luminaire", point(2, 2.7, 0, "ceiling"));
+    const allDeviceIds = [...imported.devices, addedSocket, addedLuminaire].map((device) => device.id);
+    const allPortIds = [...imported.devices, addedSocket, addedLuminaire].flatMap((device) => device.ports.map((port) => port.id));
+
+    expect(new Set(allDeviceIds)).toHaveLength(allDeviceIds.length);
+    expect(new Set(allPortIds)).toHaveLength(allPortIds.length);
+  });
+
   it("offers compatible open physical ports and selects the one nearest the pointer", () => {
     const socket = createNetworkDevice("socket", point(0, 1, 0));
     const occupiedId = socket.ports[0].id;
@@ -166,7 +182,14 @@ describe("network devices and rooted circuits", () => {
     expect(socket.ports).toHaveLength(8);
     expect(new Set(inserted.segments.flatMap((segment) => [segment.startPortId, segment.endPortId]).filter((id): id is string => Boolean(id?.startsWith(socket.id))))).toHaveLength(2);
     expect(inserted.segments.some((segment) => segment.start.position[0] < 1 && segment.end.position[0] > 1)).toBe(false);
-    expect(inserted.segments.every((segment) => [segment.start, segment.end].every((point) => Math.abs(point.position[1] - 1) < 1e-8 && Math.abs(point.position[2]) < 1e-8))).toBe(true);
+    const socketPortsById = new Map(socket.ports.map((port) => [port.id, port.position.position]));
+    const socketEndpoints = inserted.segments.flatMap((segment) => [
+      segment.startPortId && socketPortsById.has(segment.startPortId) ? { point: segment.start.position, port: socketPortsById.get(segment.startPortId)! } : null,
+      segment.endPortId && socketPortsById.has(segment.endPortId) ? { point: segment.end.position, port: socketPortsById.get(segment.endPortId)! } : null,
+    ]).filter((entry): entry is { point: [number, number, number]; port: [number, number, number] } => Boolean(entry));
+    expect(socketEndpoints).toHaveLength(2);
+    expect(socketEndpoints.every(({ point, port }) => point.every((value, axis) => Math.abs(value - port[axis]) < 1e-8))).toBe(true);
+    expect(inserted.segments.some((segment) => segment.startPortId === original.startPortId && segment.start.position.every((value, axis) => Math.abs(value - original.start.position[axis]) < 1e-8))).toBe(true);
     expect(portCanStart(inserted, socket, socket.ports[2], "receptacle")).toBe(true);
     expect(inserted.devices[0].ports.flatMap((port) => port.connectedSegmentIds)).not.toContain(original.id);
   });

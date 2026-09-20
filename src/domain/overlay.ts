@@ -227,6 +227,43 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
     const ports = migrateBoxPorts(device, { front, up, right }, normalizedPorts, parsed.schemaVersion);
     return { ...device, systems, frame: { front, up, right }, mount: device.mount ?? (device.position.attachment ? { kind: "host", attachment: device.position.attachment } : undefined), ...(device.deviceType === "sprinkler-head" ? { sprinklerDirection: device.sprinklerDirection ?? "upright" } : {}), ports };
   });
+  // These IDs are the shared selection and reference namespace for the
+  // Overlay.  Refuse an ambiguous imported document instead of silently
+  // selecting, moving, or reconnecting whichever duplicate is encountered
+  // first.  New objects use UUID-backed IDs, while existing IDs remain intact.
+  const uniqueIds = (kind: string, ids: Iterable<string>) => {
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) throw new Error(`${kind} ID 重复：${id}`);
+      seen.add(id);
+    }
+    return seen;
+  };
+  const objectIds = [
+    ...segments.map((segment) => segment.id),
+    ...fittings.map((fitting) => fitting.id),
+    ...junctionBoxes.map((box) => box.id),
+    ...devices.map((device) => device.id),
+    ...(parsed.circuits ?? []).map((circuit) => circuit.id),
+    ...(parsed.surfaceChases ?? []).map((chase) => chase.id),
+    ...(parsed.wallChases ?? []).map((chase) => chase.id),
+    ...parsed.penetrations.map((penetration) => penetration.id),
+    ...(parsed.lightingControlGroups ?? []).map((group) => group.id),
+    ...(parsed.manualCallouts ?? []).map((callout) => callout.id),
+    ...(parsed.hvac?.indoorUnits ?? []).map((unit) => unit.id),
+    ...(parsed.hvac?.ducts ?? []).map((duct) => duct.id),
+    ...(parsed.hvac?.segments ?? []).map((segment) => segment.id),
+    ...(parsed.hvac?.outlets ?? []).map((outlet) => outlet.id),
+    ...(parsed.hvac?.thermostats ?? []).map((thermostat) => thermostat.id),
+    ...(parsed.hvac?.controls ?? []).map((control) => control.id),
+    ...(parsed.hvac?.wallPenetrations ?? []).map((penetration) => penetration.id),
+  ];
+  uniqueIds("Overlay 对象", objectIds);
+  uniqueIds("Overlay 端口", [
+    ...devices.flatMap((device) => device.ports.map((port) => port.id)),
+    ...fittings.flatMap((fitting) => fitting.ports.map((port) => port.id)),
+    ...junctionBoxes.flatMap((box) => box.ports.map((port) => port.id)),
+  ]);
   const lightingControlGroups = parsed.lightingControlGroups ?? [];
   const devicesById = new Map(devices.map((device) => [device.id, device]));
   const groupIds = new Set<string>(), boundLuminaireIds = new Set<string>();

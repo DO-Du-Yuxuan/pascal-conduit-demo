@@ -113,7 +113,7 @@ describe("device point positioning transaction", () => {
     const moved = editDevicePosition(overlay, { deviceIds: [socket.id], elevationMm: 3000, planarClearanceMm: { "wall-x": 1000 } }, context, "commit");
     expect(moved.status).toBe("committed");
     expect(moved.overlay.devices[0].mount).toEqual({ kind: "reference-plane", levelId: "L0", elevationMm: 3000 });
-    expect(moved.overlay.devices[0].position.position).toEqual([expect.closeTo(1.043), 3, 3]);
+    expect(moved.overlay.devices[0].position.position).toEqual([1, 3, 3]);
     expect(moved.overlay.devices[0].position.attachment).toBeUndefined();
   });
 
@@ -124,7 +124,7 @@ describe("device point positioning transaction", () => {
     expect(result.overlay.devices.map((device) => Math.round((device.position.position[1] - device.sizeMm[1] / 2000) * 1000))).toEqual([500, 500]);
   });
 
-  it("uses a stable near-orthogonal wall pair for reference-plane edge clearances", () => {
+  it("uses a stable near-orthogonal wall pair for reference-plane centre dimensions", () => {
     const light = createReferencePlaneDevice("luminaire", [2, 2.7, 3], "L0", 2700);
     const overlay = { ...createEmptyOverlay("a", "sha"), devices: [light] };
     const context = { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces: [
@@ -132,9 +132,9 @@ describe("device point positioning transaction", () => {
       { id: "wall-z", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] },
     ] };
     const description = describeDevicePosition(overlay, light.id, context);
-    expect(description.planar?.map((item) => [item.wallId, item.millimeters])).toEqual([["wall-x", 1850], ["wall-z", 2980]]);
+    expect(description.planar?.map((item) => [item.wallId, item.millimeters])).toEqual([["wall-x", 2000], ["wall-z", 3000]]);
     const result = editDevicePosition(overlay, { deviceIds: [light.id], planarClearanceMm: { "wall-x": 1000 } }, context, "commit");
-    expect(result.overlay.devices[0].position.position[0]).toBeCloseTo(1.15);
+    expect(result.overlay.devices[0].position.position[0]).toBeCloseTo(1);
     expect(result.overlay.devices[0].positioning?.planarWallIds).toEqual(["wall-x", "wall-z"]);
   });
 

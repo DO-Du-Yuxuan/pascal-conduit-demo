@@ -63,4 +63,30 @@ describe("overlay history", () => {
     unsubscribe();
     expect(notifications).toBe(1);
   });
+
+  it("does not republish a route preview just because planning generated new IDs", () => {
+    const store = useOverlayStore.getState();
+    store.load(createEmptyOverlay("a.json", "a"));
+    const preview = {
+      sourceSha: "a",
+      system: "receptacle" as const,
+      diameterMm: 20,
+      levelId: "L0",
+      points: [{ position: [0, 0, 0] as [number, number, number] }, { position: [1, 0, 0] as [number, number, number] }],
+      plan: {
+        system: "receptacle" as const,
+        diameterMm: 20,
+        mode: "surface" as const,
+        points: [{ position: [0, 0, 0] as [number, number, number] }, { position: [1, 0, 0] as [number, number, number] }],
+        segments: [{ id: "conduit-first", type: "conduit-segment" as const, system: "receptacle" as const, diameterMm: 20, start: { position: [0, 0, 0] as [number, number, number] }, end: { position: [1, 0, 0] as [number, number, number] }, createdAt: "first" }],
+        fittings: [], junctionBoxes: [], surfaceChases: [], penetrations: [], diagnostics: [], canCommit: true,
+      },
+    };
+    store.publishPreview(preview);
+    let notifications = 0;
+    const unsubscribe = useOverlayStore.subscribe(() => { notifications += 1; });
+    store.publishPreview({ ...structuredClone(preview), plan: { ...structuredClone(preview.plan), segments: [{ ...preview.plan.segments[0], id: "conduit-second", createdAt: "second" }] } });
+    unsubscribe();
+    expect(notifications).toBe(0);
+  });
 });

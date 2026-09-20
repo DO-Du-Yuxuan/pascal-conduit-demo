@@ -2,8 +2,10 @@ import { DEFAULT_BEND_RADIUS_MM, type BendArc, type Circuit, type ConduitOverlay
 import { boxFrame, eightBoxPorts, sameFaceFreePeer } from "./box-ports";
 import { cleanLightingControlGroupsAfterDeviceDeletion } from "./lighting-controls";
 
-let sequence = 0;
-const nextId = (prefix: string) => `${prefix}_${(++sequence).toString(36)}`;
+// Plans may be created after importing an Overlay in a new browser session.
+// Use a persistent-safe ID rather than a module-local sequence, because these
+// IDs are stored for route segments, fittings, boxes, chases, and penetrations.
+const nextId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
 const EPSILON = 1e-6;
 const copyPoint = (point: RoutePoint): RoutePoint => {
   const attachment = point.attachment ? { ...point.attachment, normal: [...point.attachment.normal] as Vec3, localPosition: point.attachment.localPosition ? [...point.attachment.localPosition] as Vec3 : undefined, basis: point.attachment.basis ? { u: [...point.attachment.basis.u] as Vec3, v: [...point.attachment.basis.v] as Vec3 } : undefined } : undefined;
@@ -266,4 +268,5 @@ export function deleteNetworkObject(overlay: ConduitOverlayDocument, id: string)
   return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), lightingControlGroups: cleanLightingControlGroupsAfterDeviceDeletion(overlay, id), manualCallouts: overlay.manualCallouts.filter((callout) => callout.targetId !== id && !removedIds.has(callout.targetId)), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
 }
 
-export function resetRoutingIdsForTests() { sequence = 0; }
+/** Kept as a test seam for callers from the former sequential-ID implementation. */
+export function resetRoutingIdsForTests() { /* UUID-backed IDs have no mutable sequence to reset. */ }

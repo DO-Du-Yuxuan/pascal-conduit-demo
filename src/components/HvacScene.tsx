@@ -5,19 +5,20 @@ import { HVAC_COLORS, indoorUnitPort, type HvacAxisPlanarReference } from '../do
 import type { ConduitOverlayDocument, HvacDuctOutlet, HvacDuctSegment, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, Vec3 } from '../domain/overlay';
 import { HVAC_DEFAULT_OUTLET_MM } from '../domain/hvac';
 import type { DevicePositionDescription } from '../domain/device-positioning';
+import { PositionDimensionGuides, type PositionDimensionGuide } from './PositionDimensionGuides';
 
 const vector = (point: Vec3) => new Vector3(...point);
 function ductTransform(segment: HvacDuctSegment) { const start = vector(segment.start.position), end = vector(segment.end.position), delta = end.clone().sub(start); return { center: start.clone().add(end).multiplyScalar(.5), length: delta.length(), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), delta.normalize()) }; }
 type IndoorUnitDimensionState = { bottomElevationMm?: number; planar: readonly HvacAxisPlanarReference[] };
 export type HvacOutletPreview = { segmentId: string; face: HvacOutletFace; offsetMm: number };
 export function HvacIndoorUnitDimensions({ unit, state }: { unit: HvacIndoorUnit; state: IndoorUnitDimensionState }) {
-  const bottom: Vec3 = [unit.position.position[0], unit.position.position[1] - unit.sectionMm[1] / 2000, unit.position.position[2]], guides: { key: string; start: Vec3; end: Vec3; label: string }[] = [];
+  const bottom: Vec3 = [unit.position.position[0], unit.position.position[1] - unit.sectionMm[1] / 2000, unit.position.position[2]], guides: PositionDimensionGuide[] = [];
   if (state.bottomElevationMm !== undefined) guides.push({ key: 'bottom-elevation', start: bottom, end: [bottom[0], bottom[1] - state.bottomElevationMm / 1000, bottom[2]], label: `内机底部标高 ${state.bottomElevationMm} mm` });
   for (const reference of state.planar) guides.push({ key: reference.key, start: reference.start, end: reference.end, label: `${reference.label} ${reference.millimeters} mm` });
-  return <group name="hvac-indoor-unit-position-dimensions">{guides.map(guide => { const middle = guide.start.map((value, axis) => (value + guide.end[axis]) / 2) as Vec3; return <group key={guide.key}><Line points={[guide.start, guide.end]} color="#f97316" lineWidth={1.5} raycast={() => null} /><mesh position={guide.start} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><mesh position={guide.end} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><Html position={middle} center distanceFactor={9} pointerEvents="none"><span className="conduit-dimension-label">{guide.label}</span></Html></group>; })}</group>;
+  return <PositionDimensionGuides name="hvac-indoor-unit-position-dimensions" guides={guides} />;
 }
 export function HvacThermostatDimensions({ thermostat, description }: { thermostat: HvacThermostat; description: DevicePositionDescription }) {
-  const origin = thermostat.position.position, guides: { key: string; start: Vec3; end: Vec3; label: string }[] = [];
+  const origin = thermostat.position.position, guides: PositionDimensionGuide[] = [];
   if (description.vertical) {
     const start: Vec3 = [origin[0], origin[1] - thermostat.sizeMm[1] / 2000, origin[2]];
     guides.push({ key: 'vertical', start, end: [start[0], start[1] - description.vertical.millimeters / 1000, start[2]], label: `${description.vertical.millimeters} mm` });
@@ -27,7 +28,7 @@ export function HvacThermostatDimensions({ thermostat, description }: { thermost
     const start: Vec3 = [origin[0] + u[0] * thermostat.sizeMm[0] / 2000 * sign, origin[1] + u[1] * thermostat.sizeMm[0] / 2000 * sign, origin[2] + u[2] * thermostat.sizeMm[0] / 2000 * sign];
     guides.push({ key: 'horizontal', start, end: [start[0] + u[0] * description.horizontal.millimeters / 1000 * sign, start[1] + u[1] * description.horizontal.millimeters / 1000 * sign, start[2] + u[2] * description.horizontal.millimeters / 1000 * sign], label: `${description.horizontal.millimeters} mm` });
   }
-  return <group name="hvac-thermostat-position-dimensions">{guides.map(guide => { const middle = guide.start.map((value, axis) => (value + guide.end[axis]) / 2) as Vec3; return <group key={guide.key}><Line points={[guide.start, guide.end]} color="#f97316" lineWidth={1.5} raycast={() => null} /><mesh position={guide.start} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><mesh position={guide.end} raycast={() => null}><sphereGeometry args={[.02, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><Html position={middle} center distanceFactor={9} pointerEvents="none"><span className="conduit-dimension-label">{guide.label}</span></Html></group>; })}</group>;
+  return <PositionDimensionGuides name="hvac-thermostat-position-dimensions" guides={guides} />;
 }
 function IndoorUnitVisual({ unit, selected, preview = false, onSelect, onStartDuct }: { unit: HvacIndoorUnit; selected: boolean; preview?: boolean; onSelect?: () => void; onStartDuct?: (system: HvacSystem) => void }) {
   const casingLength = unit.sizeMm[0] / 1000, sectionWidth = unit.sectionMm[0] / 1000, sectionHeight = unit.sectionMm[1] / 1000;
@@ -55,7 +56,7 @@ export function HvacOutletDimensions({ segment, unit, outlet }: { segment: HvacD
     { key: 'start', start: [x, -visual.transform.length / 2, z] as Vec3, end: [x, outletStartY, z] as Vec3, label: `起点净距 ${Math.round(outlet.offsetMm)} mm` },
     { key: 'end', start: [x, outletEndY, z] as Vec3, end: [x, visual.transform.length / 2, z] as Vec3, label: `终点净距 ${Math.round(faceLengthMm - outlet.offsetMm - outlet.sizeMm[0])} mm` },
   ];
-  return <group name="hvac-outlet-edge-dimensions" position={visual.transform.center} quaternion={visual.transform.rotation}>{guides.map(guide => { const middle = guide.start.map((value, axis) => (value + guide.end[axis]) / 2) as Vec3; return <group key={guide.key} data-hvac-outlet-dimension={guide.key}><Line points={[guide.start, guide.end]} color="#f97316" lineWidth={1.5} raycast={() => null} /><mesh position={guide.start} raycast={() => null}><sphereGeometry args={[.016, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><mesh position={guide.end} raycast={() => null}><sphereGeometry args={[.016, 8, 6]} /><meshBasicMaterial color="#f97316" /></mesh><Html position={middle} center distanceFactor={9} pointerEvents="none"><span className="conduit-dimension-label">{guide.label}</span></Html></group>; })}</group>;
+  return <group name="hvac-outlet-edge-dimensions" position={visual.transform.center} quaternion={visual.transform.rotation}><PositionDimensionGuides name="hvac-outlet-edge-dimension-guides" guides={guides} /></group>;
 }
 function OutletVisual({ segment, unit, outlet, preview = false, onSelect }: { segment: HvacDuctSegment; unit: HvacIndoorUnit; outlet: Pick<HvacDuctOutlet, 'face' | 'offsetMm' | 'sizeMm'>; preview?: boolean; onSelect?: (event: ThreeEvent<MouseEvent>) => void }) {
   const visual = outletVisualTransform(segment, unit, outlet);

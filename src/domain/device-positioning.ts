@@ -38,7 +38,6 @@ const wallCoordinate = (device: NetworkDevice) => device.position.attachment?.lo
 const halfWallWidth = (device: NetworkDevice) => device.sizeMm[0] / 2000;
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-const footprintExtent = (device: NetworkDevice, normal: Vec3) => Math.abs(normal[0]) * device.sizeMm[0] / 2000 + Math.abs(normal[2]) * device.sizeMm[2] / 2000;
 
 function planarReferences(device: NetworkDevice, context: DevicePositioningContext): NonNullable<DevicePositionDescription["planar"]> {
   const levelId = referencePlaneLevelId(device);
@@ -51,7 +50,9 @@ function planarReferences(device: NetworkDevice, context: DevicePositioningConte
   }).map((face) => {
     const signed = dot(subtract(device.position.position, face.point), face.normal), direction = scale(face.normal, signed < 0 ? -1 : 1);
     const surfaceDistance = Math.max(0, Math.abs(signed) - (face.halfThickness ?? 0));
-    return { millimeters: Math.max(0, Math.round((surfaceDistance - footprintExtent(device, face.normal)) * 1000)), wallId: face.id, direction, distance: surfaceDistance };
+    // Point positioning, including luminaires, uses the insertion centre.
+    // Clearance-oriented objects retain their own envelope measurements.
+    return { millimeters: Math.max(0, Math.round(surfaceDistance * 1000)), wallId: face.id, direction, distance: surfaceDistance };
   });
   const persisted = device.positioning?.planarWallIds?.map((id) => candidates.find((candidate) => candidate.wallId === id)).filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate));
   const ordered = persisted?.length ? persisted : candidates.sort((a, b) => a.distance - b.distance || a.wallId.localeCompare(b.wallId));

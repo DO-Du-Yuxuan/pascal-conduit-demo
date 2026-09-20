@@ -12,7 +12,7 @@
 
 ## Overlay 归属与导入
 
-Overlay `source` 保存文件名、修订 SHA，以及可选的 `projectId`。旧 SHA-only Overlay 继续可读；项目首次成为可写项目时，活动 Overlay 会迁移到该稳定身份，同时保留最新修订 SHA 作为版本证据。
+Overlay `source` 保存文件名、修订 SHA，以及可选的 `projectId`。旧 SHA-only Overlay 继续可读；项目首次成为可写项目时，活动 Overlay 会迁移到该稳定身份，同时保留最新修订 SHA 作为版本证据。Overlay 内所有可寻址对象和物理端口的 ID 必须唯一；导入若发现重复 ID 会明确拒绝，而不会选择、移动或重新连接其中任一个。新建设备、线路、管件、分支盒、槽和穿孔使用新的稳定唯一 ID，导入保留原有合法 ID 不变。
 
 导入同一 `projectId` 的新修订版会保留当前 Overlay，并把其修订 SHA 更新为新项目版本。Overlay 的路线、点位和施工记录仍保留原有世界坐标；门洞、家具或其他只读建筑节点的外部位置修改不会自动移动、重挂或重布 Overlay。导入不同身份的项目会初始化独立 Overlay；若项目 JSON 或 Overlay 仍有未导出更改，界面会先要求确认。
 

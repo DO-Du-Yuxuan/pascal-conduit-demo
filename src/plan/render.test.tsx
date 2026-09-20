@@ -16,9 +16,9 @@ const device:NetworkDevice={id:'d',type:'network-device',deviceType:'socket',nam
 Object.assign(globalThis, {IS_REACT_ACT_ENVIRONMENT:true});
 const roots:ReturnType<typeof createRoot>[]=[];
 afterEach(()=>{act(()=>roots.splice(0).forEach(r=>r.unmount()));document.body.innerHTML='';useOverlayStore.setState({preview:null});vi.restoreAllMocks();});
-function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange}:{overlay:ConduitOverlayDocument;modelNodes?:Record<string,NodeData>;onAnnotationLabelPositionChange?:(id:string,label:[number,number],signature:string)=>void}) {
+function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange,selectionClearVersion=0}:{overlay:ConduitOverlayDocument;modelNodes?:Record<string,NodeData>;onAnnotationLabelPositionChange?:(id:string,label:[number,number],signature:string)=>void;selectionClearVersion?:number}) {
  const ref=useRef<HTMLDivElement>(null),plan=useConstructionPlan({nodes:modelNodes,overlay,levelId:'l',hiddenNodeIds:new Set(),unit:'millimeters',rotation:90,viewBox:{minX:-5,minZ:-5,width:10,height:10},planRef:ref,selectedId:null,exterior:buildExteriorDimensions(modelNodes,'l'),dimensionsVisible:true,measurements:[],annotationScale:1});
- return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
+ return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]} selectionClearVersion={selectionClearVersion}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
  it('records generated drawing layout once without replacing existing positions',()=>{
@@ -202,7 +202,21 @@ describe('construction plan rendering integration',()=>{
   expect(callout?.getAttribute('data-rule-side')).toBe('right');
   expect(Number(rule?.getAttribute('x1'))).toBeGreaterThan(0);
   const points=callout?.querySelector('polyline')?.getAttribute('points')?.trim().split(/\s+/).map(point=>point.split(',').map(Number));
-  expect(points?.[points.length-1]?.[0]).toBeCloseTo(points?.[points.length-2]?.[0] ?? NaN);
+ expect(points?.[points.length-1]?.[0]).toBeCloseTo(points?.[points.length-2]?.[0] ?? NaN);
+ });
+ it('clears an automatic annotation-panel selection with Escape or a canvas clear signal',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');overlay.devices=[device];
+  act(()=>root.render(<Harness overlay={overlay} selectionClearVersion={0}/>));
+  const annotation=div.querySelector('[data-annotation]')!;
+  act(()=>annotation.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+  expect(annotation.getAttribute('data-construction-annotation-selected')).toBe('true');
+  act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
+  expect(annotation.getAttribute('data-construction-annotation-selected')).toBeNull();
+  act(()=>annotation.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+  expect(annotation.getAttribute('data-construction-annotation-selected')).toBe('true');
+  act(()=>root.render(<Harness overlay={overlay} selectionClearVersion={1}/>));
+  expect(div.querySelector('[data-annotation]')?.getAttribute('data-construction-annotation-selected')).toBeNull();
  });
  it('renders ceiling-device installation information in the drawing schedule',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
@@ -224,8 +238,26 @@ describe('construction plan rendering integration',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
   act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} labelPositions={{position:.8}} /></svg>));
-  const label=div.querySelector('[data-point-position-dimension-label="position"]');
+ const label=div.querySelector('[data-point-position-dimension-label="position"]');
   expect(Number(label?.getAttribute('x'))).toBeCloseTo(8);
+ });
+ it('clears a point-position dimension selection with Escape or a canvas clear signal',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onSelect=vi.fn();roots.push(root);
+  const dimension={id:'position',sourceId:'d',levelId:'l',reference:[0,0] as [number,number],center:[10,0] as [number,number],referenceWitness:[0,0] as [number,number],centerWitness:[10,0] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:10,referenceKind:'wall-face' as const,relatedIds:['d','wall'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={onSelect} selectionClearVersion={0}/></svg>));
+  const group=div.querySelector('[data-point-position-dimension="d"]')!;
+  act(()=>group.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+  expect(group.getAttribute('data-point-position-dimension-selected')).toBe('true');
+  const label=group.querySelector('[data-point-position-dimension-label]')!;
+  expect(label.textContent).toContain('10000');
+  expect(label.textContent).not.toContain('10000 mm');
+  act(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})));
+  expect(group.getAttribute('data-point-position-dimension-selected')).toBeNull();
+  expect(onSelect).toHaveBeenCalledWith(null);
+  act(()=>group.dispatchEvent(new MouseEvent('click',{bubbles:true})));
+  expect(group.getAttribute('data-point-position-dimension-selected')).toBe('true');
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={onSelect} selectionClearVersion={1}/></svg>));
+  expect(div.querySelector('[data-point-position-dimension="d"]')?.getAttribute('data-point-position-dimension-selected')).toBeNull();
  });
  it('projects a dragged point-position label onto its own dimension and persists the relative position',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onChange=vi.fn();roots.push(root);

@@ -194,6 +194,28 @@ describe('2D point annotations', () => {
     const dimensions=buildPointPositionDimensions(rectangle,overlay,'l0',context);
     expect(dimensions.filter(d=>d.sourceId==='floor-socket')).toHaveLength(4);
     expect(dimensions.filter(d=>d.sourceId==='ceiling-socket')).toHaveLength(4);
+    expect(dimensions.filter(d=>d.sourceId==='floor-socket').map(d=>Math.round(d.valueMeters*1000)).sort((a,b)=>a-b)).toEqual([900,1900,3900,4900]);
+    expect(dimensions.filter(d=>d.sourceId==='floor-socket').every(d=>d.centerWitness[0]===1&&d.centerWitness[1]===2)).toBe(true);
+  });
+
+  it('measures non-wall point centres from default-thickness physical wall faces',()=>{
+    const overlay=createEmptyOverlay('a','sha'),rectangle={...nodes,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6]},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6]},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0]},south:{id:'south',type:'wall',parentId:'l0',start:[0,6],end:[6,6]},floor:{id:'floor',type:'slab',parentId:'l0',polygon:[[0,0],[6,0],[6,6],[0,6]]}} as Record<string,NodeData>;
+    const floorSocket={...device('floor-socket'),position:{position:[1,0,2] as [number,number,number],attachment:{hostId:'floor',hostKind:'slab' as const,surface:'top',normal:[0,1,0] as [number,number,number],levelId:'l0'}}};
+    overlay.devices=[floorSocket];
+    const dimensions=buildPointPositionDimensions(rectangle,overlay,'l0').filter(d=>d.sourceId==='floor-socket');
+    expect(dimensions.map(d=>Math.round(d.valueMeters*1000)).sort((a,b)=>a-b)).toEqual([950,1950,3950,4950]);
+    expect(dimensions.every(d=>d.referenceKind==='wall-face')).toBe(true);
+    expect(dimensions.every(d=>d.centerWitness[0]===1&&d.centerWitness[1]===2)).toBe(true);
+  });
+
+  it('intersects an angled physical wall face instead of offsetting its centreline by the axis thickness',()=>{
+    const overlay=createEmptyOverlay('a','sha'),plan={...nodes,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6],thickness:.2},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0],thickness:.2},south:{id:'south',type:'wall',parentId:'l0',start:[0,6],end:[6,6],thickness:.2},angled:{id:'angled',type:'wall',parentId:'l0',start:[3,0],end:[5,2],thickness:.2}} as Record<string,NodeData>;
+    const light={...device('light'),deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,2.7,1] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l0',elevationMm:2700}};
+    overlay.devices=[light];
+    const dimension=buildPointPositionDimensions(plan,overlay,'l0').find(d=>d.wallId==='angled'&&d.reference[0]>d.center[0]);
+    expect(dimension).toBeDefined();
+    expect(dimension!.valueMeters).toBeCloseTo(3-Math.SQRT1_2/5,6);
+    expect(dimension!.referenceWitness).toEqual(dimension!.reference);
   });
 
   it('forms one closed point-position chain for collinear ceiling devices',()=>{

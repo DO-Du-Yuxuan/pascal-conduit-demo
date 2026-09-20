@@ -21,11 +21,20 @@ Snapping runs in Level world coordinates after reversing the complete SVG/view r
 
 The 12-pixel interaction radius is converted to metres only to decide whether snapping feels usable at the current zoom. Committed coordinates and values never use pixel distances.
 
+## Positioning dimensions
+
+Automatic 2D positioning dimensions use one of two explicit bases:
+
+- Regular Overlay point devices — including wall sockets, floor sockets, ceiling devices, switches, luminaires, network and fire points — locate the device **centre**. Their boundary reference is the first physical wall face or opening edge in that direction, never a wall centreline. A missing wall thickness uses the 100 mm physical-wall default.
+- Clearance objects with their own physical envelope — currently HVAC indoor units, beams and air outlets in their applicable drawing/viewer workflows — measure from the relevant **outer entity edge**. Straight duct dimensions are endpoint-to-endpoint lengths, not point-position dimensions.
+
+These bases affect the derived number only. The saved 2D label position and dimension-line offset remain independent Overlay layout data, so correcting a wall-face calculation does not reset an existing drawing layout.
+
 ## Units
 
 All stored and calculated values remain metres.
 
-- Millimetres: `Math.round(metres * 1000)`, without a suffix.
+- Millimetres: `Math.round(metres * 1000)`, without a suffix on any 2D dimension-line label.
 - Feet–inches: rounded to the nearest 1/16 inch, for example `12'-7 9/16"`.
 
 The unit control changes both automatic exterior annotations and manual measurements without altering geometry or stored values.

@@ -96,6 +96,40 @@ describe("Conduit overlay", () => {
     for (const lightingControlGroups of invalidGroups) expect(() => parseOverlay({ ...valid, lightingControlGroups })).toThrow();
   });
 
+  it("rejects imported Overlay documents with duplicate object or physical-port IDs", () => {
+    const raw = JSON.parse(JSON.stringify(createEmptyOverlay("duplicate.json", "sha")));
+    raw.segments = [
+      { id: "duplicate", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: point(0, 1, 0), end: point(1, 1, 0), createdAt: "now" },
+      { id: "duplicate", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: point(1, 1, 0), end: point(2, 1, 0), createdAt: "now" },
+    ];
+    expect(() => parseOverlay(raw)).toThrow("Overlay 对象 ID 重复：duplicate");
+
+    const device = rawDevice("socket", "switch");
+    raw.segments = [];
+    raw.devices = [{ ...device, ports: [
+      { id: "duplicate-port", position: point(0, 1, 0), direction: [0, 0, 1], system: "lighting", role: "bidirectional", connectedSegmentIds: [] },
+      { id: "duplicate-port", position: point(0, 1, 0), direction: [0, 0, 1], system: "lighting", role: "bidirectional", connectedSegmentIds: [] },
+    ] }];
+    expect(() => parseOverlay(raw)).toThrow("Overlay 端口 ID 重复：duplicate-port");
+  });
+
+  it("creates unique route objects after importing legacy sequential route IDs", () => {
+    resetRoutingIdsForTests();
+    const imported = planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(1, 1, 0)]);
+
+    resetRoutingIdsForTests();
+    const added = planRoute("receptacle", 20, "surface", [point(2, 1, 0), point(3, 1, 0)]);
+    const ids = [imported, added].flatMap((plan) => [
+      ...plan.segments.map((segment) => segment.id),
+      ...plan.fittings.map((fitting) => fitting.id),
+      ...plan.junctionBoxes.map((box) => box.id),
+      ...plan.surfaceChases.map((chase) => chase.id),
+      ...plan.penetrations.map((penetration) => penetration.id),
+    ]);
+
+    expect(new Set(ids)).toHaveLength(ids.length);
+  });
+
   it("preserves local host anchors while accepting older overlay documents", () => {
     const overlay = createEmptyOverlay("default-layout.json", "abc");
     const anchored = { ...overlay, segments: [{ id: "pipe", type: "conduit-segment" as const, system: "receptacle" as const, diameterMm: 20, start: { position: [0, 1, 0] as [number, number, number], attachment: { ...point(0, 1, 0).attachment!, localPosition: [0.5, 1, 0], basis: { u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number] }, curveT: .25, wallSide: "interior" as const } }, end: point(1, 1, 0), createdAt: "now" }] };
