@@ -35,9 +35,8 @@ describe("Beam 3D interaction", () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     act(() => root.render(<Harness />));
     expect(container.querySelector('[data-beam-handle]')).toBeNull();
-    expect(container.querySelector('[data-beam-planar-dimension="cross-axis"]')).not.toBeNull();
-    const body = container.querySelector('[data-beam-body="beam"]')!;
-    expect(body.getAttribute("aria-label")).toBe("Beam body");
+    expect(container.querySelector('[name="beam-planar-dimension:cross-axis"]')).not.toBeNull();
+    const body = container.querySelector('[name="beam-body:beam"]')!;
     act(() => body.dispatchEvent(pointer("pointerdown", 1.5, 1)));
     act(() => body.dispatchEvent(pointer("pointerup", 1.6, 1.1)));
   });

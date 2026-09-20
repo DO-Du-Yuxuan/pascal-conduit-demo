@@ -187,7 +187,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).not.toContain("hvacOutletFace");
     expect(threeDSource).toContain("outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null}");
     expect(hvacSceneSource).toContain("onDuctOutletPreview");
-    expect(hvacSceneSource).toContain("data-hvac-outlet-preview");
+    expect(hvacSceneSource).toContain('name={preview ? "hvac-outlet-preview" : "hvac-outlet"}');
   });
 
   it("keeps the placed duct face fixed while exposing its two editable edge clearances", () => {
@@ -277,7 +277,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("selectedBeam.start.join");
     expect(threeDSource).not.toContain('addEventListener("beam-drag"');
     expect(pascalSceneSource).toContain("function BeamPlanarDimensionGuides");
-    expect(pascalSceneSource).toContain('data-beam-planar-dimension="cross-axis"');
+    expect(pascalSceneSource).toContain('name="beam-planar-dimension:cross-axis"');
     expect(pascalSceneSource).not.toContain("setBodyDrag");
     expect(pascalSceneSource).not.toContain("data-beam-handle");
     expect(pascalSceneSource).toContain("const rendered = beamPreview?.id === node.id ? beamPreview : node");

@@ -11,7 +11,7 @@ export function PositionDimensionGuides({ name, guides, color = "#f97316" }: { n
     const dimensionStart: Vec3 = [guide.start[0] + offset[0], guide.start[1] + offset[1], guide.start[2] + offset[2]];
     const dimensionEnd: Vec3 = [guide.end[0] + offset[0], guide.end[1] + offset[1], guide.end[2] + offset[2]];
     const middle: Vec3 = [(dimensionStart[0] + dimensionEnd[0]) / 2, (dimensionStart[1] + dimensionEnd[1]) / 2, (dimensionStart[2] + dimensionEnd[2]) / 2];
-    return <group key={guide.key} data-position-dimension={guide.key}>
+    return <group key={guide.key} name={`position-dimension:${guide.key}`}>
       <Line points={[guide.start, dimensionStart]} color={color} lineWidth={1.25} raycast={() => null} />
       <Line points={[guide.end, dimensionEnd]} color={color} lineWidth={1.25} raycast={() => null} />
       <Line points={[dimensionStart, dimensionEnd]} color={color} lineWidth={1.5} raycast={() => null} />
