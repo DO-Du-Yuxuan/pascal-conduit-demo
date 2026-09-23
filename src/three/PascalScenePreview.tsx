@@ -15,7 +15,7 @@ import { validateBeam, type BeamNode } from "../domain/beams";
 import { beamPlanarClearances, type BeamPlanarClearance } from "../domain/beam-positioning";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean; ctrlKey?: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; beamPreview?: BeamNode | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; activeLevelId?: string; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; beamPreview?: BeamNode | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
 type Point = [number, number, number];
 const EMPTY_CHASES: SurfaceChase[] = [];
 const EMPTY_PENETRATIONS: Penetration[] = [];
@@ -230,7 +230,7 @@ function Opening({ node, nodes, y, selected, onSelect }: { node: NodeData; nodes
   </mesh>;
 }
 
-export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, beamPreview, onSelect, overlay, appliedSurfaceChases, appliedPenetrations, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
+export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, activeLevelId, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, beamPreview, onSelect, overlay, appliedSurfaceChases, appliedPenetrations, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
   const sceneIndex = useMemo(() => {
     const nodes = Object.values(scene.nodes), levelIdByNode: Record<string, string | null> = {}, levelValueByNode: Record<string, number> = {}, openingsByWall: Record<string, NodeData[]> = {}, slabsByLevel: Record<string, NodeData[]> = {};
     const levelIdFor = (node: NodeData) => {
@@ -271,7 +271,7 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, wa
   const handleSurfaceHit = (hit: ThreeDSurfaceHit) => onSurfaceHit?.(transitionToAdjacentWall(hit, wallHosts, .14, previousRoutePoint, penetrationBypassHostId));
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
   const floorTopAt = (levelId: string | null, x: number, z: number) => Math.max(0, ...(sceneIndex.slabsByLevel[levelId ?? ""] ?? EMPTY_OPENINGS).filter((node) => Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));
-  const visible = (node: NodeData) => { const layer = typeLayer(node.type); return node.visible !== false && !hiddenNodeIds.has(node.id) && !!layer && layers[layer] && !(node.type === "beam" && !validateBeam(node, scene.nodes).valid) && !(node.type === "wall" && wallMode === "down") && (levelMode !== "solo" || levelFor(node) === 0); };
+  const visible = (node: NodeData) => { const layer = typeLayer(node.type); return node.visible !== false && !hiddenNodeIds.has(node.id) && !!layer && layers[layer] && !(node.type === "beam" && !validateBeam(node, scene.nodes).valid) && !(node.type === "wall" && wallMode === "down") && (levelMode !== "solo" || (activeLevelId ? levelIdFor(node) === activeLevelId : levelFor(node) === 0)); };
   return <group name="pascal-readonly-preview">
     <ambientLight intensity={1.25} />
     <directionalLight position={[14, 22, 10]} intensity={2.3} castShadow />

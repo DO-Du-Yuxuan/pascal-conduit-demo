@@ -1,6 +1,12 @@
+> Project persistence uses the unified 4.0 JSON. Manual measurement remains session-only; authored drawing dimensions and layout belong to Drawing nodes.
+
 # Manual CAD measurement
 
 Manual measurements are read-only derived overlays. They remain visible after the second click until explicitly deleted, but are not written into Pascal JSON or the 43-kind manifest. Importing a new project clears the current session's manual measurements.
+
+Authored ManualLeader callouts are separate from temporary measurements: they live under a Drawing in the unified Project JSON, retain target/source IDs, text, anchor, label position, and creation time. New callouts use the level’s default construction Drawing; editing an existing callout keeps its original Drawing owner. Automatic point dimensions and construction annotations retain source evidence and layout there; displayed numbers are recomputed from the model.
+
+The 2D Measure button, layer controls, callouts, object hiding, and selected-object inspector live in the resizable left **图纸** tab. The canvas has a single working drawing, selected through the shared level control at its upper left; split 2D/3D follows that same level. Existing Drawing nodes are preserved when switching levels or views.
 
 ## Mode and orthogonal lock
 
@@ -28,7 +34,7 @@ Automatic 2D positioning dimensions use one of two explicit bases:
 - Regular Overlay point devices — including wall sockets, floor sockets, ceiling devices, switches, luminaires, network and fire points — locate the device **centre**. Their boundary reference is the first physical wall face or opening edge in that direction, never a wall centreline. A missing wall thickness uses the 100 mm physical-wall default.
 - Clearance objects with their own physical envelope — currently HVAC indoor units, beams and air outlets in their applicable drawing/viewer workflows — measure from the relevant **outer entity edge**. Straight duct dimensions are endpoint-to-endpoint lengths, not point-position dimensions.
 
-These bases affect the derived number only. The saved 2D label position and dimension-line offset remain independent Overlay layout data, so correcting a wall-face calculation does not reset an existing drawing layout.
+These bases affect the derived number only. The saved 2D label position and dimension-line offset belong to Drawing nodes in the unified Project JSON, so correcting a wall-face calculation does not reset an existing drawing layout.
 
 ## Units
 

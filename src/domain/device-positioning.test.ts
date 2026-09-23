@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createNetworkDevice, createReferencePlaneDevice, openRouteEndpoints, placeNetworkDevice, startRouteFromDevice, commitDeviceRoute } from "./devices";
 import { createEmptyOverlay, type RoutePoint } from "./overlay";
 import { planRoute } from "./routing";
-import { describeDevicePosition, editDevicePosition, resizeDevicePoint } from "./device-positioning";
+import { describeDevicePosition, editDevicePosition, resizeDevicePoint, resizeSpotlight } from "./device-positioning";
 
 const wallPoint = (x: number, y: number): RoutePoint => ({
   position: [x, y, 0],
@@ -164,6 +164,18 @@ describe("device point positioning transaction", () => {
     const started = startRouteFromDevice(overlay, overlay.devices[0].id, "receptacle");
     overlay = commitDeviceRoute(started.overlay, planRoute("receptacle", 20, "surface", [started.port.position, overlay.devices[1].ports[0].position]), started.circuit, started.port, overlay.devices[1].id);
     expect(resizeDevicePoint(overlay, overlay.devices[1].id, [172, 86, 50])).toBe(overlay);
+  });
+
+  it("resizes a connected spotlight cylinder without moving its centre or physical ports", () => {
+    const spotlight = createNetworkDevice("luminaire", { position: [2, 2.7, 3], attachment: { hostId: "ceiling-a", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "L0" } });
+    const connected = { ...spotlight, ports: spotlight.ports.map((port, index) => index === 0 ? { ...port, connectedSegmentIds: ["lighting-run"] } : port) };
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [connected] };
+
+    const resized = resizeSpotlight(overlay, spotlight.id, 120, 180);
+
+    expect(resized.devices[0]).toMatchObject({ sizeMm: [120, 120, 180], position: connected.position, mount: connected.mount, ports: connected.ports });
+    expect(resized.devices[0].ports).toEqual(connected.ports);
+    expect(resizeSpotlight(overlay, spotlight.id, 0, 180)).toBe(overlay);
   });
 
   it("rejects a wall clearance that would move the device outside its host span", () => {

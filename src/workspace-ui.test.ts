@@ -15,9 +15,9 @@ const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 describe("conduit workspace UI contract", () => {
   it("keeps separate 2D, split and 3D view controls", () => {
-    expect(source).toContain("2D 平面");
-    expect(source).toContain("2D + 3D");
-    expect(source).toContain("3D 查看");
+    expect(source).toContain("视图与楼层");
+    expect(source).toContain("builder-view-toggle");
+    expect(source).toContain("selectWorkspaceLevel");
   });
 
   it("shows the immutable build label in the top bar and crash report", () => {
@@ -26,15 +26,25 @@ describe("conduit workspace UI contract", () => {
     expect(styles).toContain(".build-version");
   });
 
-  it("offers independent project export and protects dirty workspace replacement", () => {
-    expect(source).toContain("导出项目 JSON");
-    expect(source).toContain("makeProjectWritable");
-    expect(source).toContain("当前项目或施工 Overlay 尚有未导出的更改");
-    expect(threeDSource).toContain("source.projectId");
+  it("opens and saves one 3.0 project and protects dirty workspace replacement", () => {
+    expect(source).toContain("decodeUnifiedProject");
+    expect(source).toContain("encodeUnifiedProject");
+    expect(source).toContain("当前项目有未保存的更改");
+    expect(source).not.toContain("exportConduitOverlayFromTwoD");
+    expect(threeDSource).not.toContain("exportOverlay");
   });
 
-  it("provides a collapsible 2D overlay panel and an accessible divider", () => {
-    expect(source).toContain("two-d-floating-panel");
+  it("starts empty and waits for a project import", () => {
+    expect(source).toContain('useState("未导入文件")');
+    expect(source).not.toContain("default-unified-project.json");
+    expect(source).toContain("导入 JSON");
+  });
+
+  it("places drawing tools in the shared sidebar and keeps an accessible split divider", () => {
+    expect(source).toContain("builder-drawing-tools");
+    expect(source).not.toContain("two-d-floating-panel");
+    expect(source).not.toContain("+ 添加画布");
+    expect(threeDSource).not.toContain("three-d-toolbar");
     expect(source).toContain("调整 2D 与 3D 视图宽度");
     expect(styles).toContain("--split-ratio");
     expect(styles).toContain(".workspace-split-divider");

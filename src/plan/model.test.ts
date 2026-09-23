@@ -254,9 +254,9 @@ describe('2D point annotations', () => {
     expect(horizontal).toHaveLength(1);
   });
 
-  it('supports a non-wall fire inlet and reports unsupported curved wall positioning',()=>{
+  it('supports a non-wall sprinkler head and reports unsupported curved wall positioning',()=>{
     const rectangle={...nodes,west:{id:'west',type:'wall',parentId:'l0',start:[0,0],end:[0,6],thickness:.2},east:{id:'east',type:'wall',parentId:'l0',start:[6,0],end:[6,6],thickness:.2},north:{id:'north',type:'wall',parentId:'l0',start:[0,0],end:[6,0],thickness:.2},south:{id:'south',type:'wall',parentId:'l0',start:[0,6],end:[6,6],thickness:.2},ceiling:{id:'ceiling',type:'ceiling',parentId:'l0',polygon:[[0,0],[6,0],[6,6],[0,6]]}} as Record<string,NodeData>,overlay=createEmptyOverlay('a','sha');
-    overlay.devices=[{...device('fire'),deviceType:'fire-inlet' as const,systems:['sprinkler' as const],position:{position:[3,2.7,3] as [number,number,number],attachment:{hostId:'ceiling',hostKind:'ceiling' as const,surface:'bottom',normal:[0,-1,0] as [number,number,number],levelId:'l0'}}}];
+    overlay.devices=[{...device('fire'),deviceType:'sprinkler-head' as const,systems:['sprinkler' as const],position:{position:[3,2.7,3] as [number,number,number],attachment:{hostId:'ceiling',hostKind:'ceiling' as const,surface:'bottom',normal:[0,-1,0] as [number,number,number],levelId:'l0'}}}];
     expect(buildPointPositionDimensions(rectangle,overlay,'l0').filter(d=>d.sourceId==='fire')).toHaveLength(4);
     const curved={...nodes,w:{...nodes.w,curveOffset:.5}} as Record<string,NodeData>,wallOverlay=createEmptyOverlay('a','sha');wallOverlay.devices=[device('curved',1)];
     expect(buildPointPositionDimensionReport(curved,wallOverlay,'l0').notices).toContainEqual(expect.objectContaining({sourceId:'curved',text:'该方向定位尺寸链未闭合'}));

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { NodeData } from '../types';
-import type { ConduitOverlayDocument, RoutingSystem } from '../domain/overlay';
+import type { ConduitOverlayDocument, DrawingEvidence, RoutingSystem } from '../domain/overlay';
 import type { ViewBox } from '../geometry/transform';
 import type { ManualMeasurement, MeasurementUnit } from '../geometry/manual-measurement';
 import type { ExteriorDimensionReport } from '../geometry/exterior-dimensions';
@@ -17,6 +17,12 @@ import { useOverlayStore } from '../domain/store';
  * back to a newly calculated default lane or panel position.
  */
 export function missingConstructionDrawingLayout(overlay: ConduitOverlayDocument, plan: Pick<ConstructionPlan, 'layout' | 'report' | 'positionDimensions' | 'annotationScale'>) {
+  const pointEvidence = Object.fromEntries(plan.positionDimensions
+    .map(dimension => [dimension.id, { levelId: dimension.levelId, sourceObjectIds: [...new Set(dimension.relatedIds)], basis: { kind: dimension.measurementBasis, reference: dimension.referenceKind, assumptions: dimension.assumptions, confidence: dimension.confidence } }] as [string, DrawingEvidence])
+    .filter(([id, value]) => JSON.stringify(overlay.pointDimensionEvidence[id]) !== JSON.stringify(value)));
+  const annotationEvidence = Object.fromEntries(plan.report.annotations
+    .map(annotation => [annotation.id, { levelId: annotation.levelId, sourceObjectIds: [...new Set(annotation.relatedIds)], basis: { kind: annotation.measurementBasis, reference: annotation.kind, assumptions: annotation.assumptions, confidence: annotation.confidence } }] as [string, DrawingEvidence])
+    .filter(([id, value]) => JSON.stringify(overlay.constructionAnnotationEvidence[id]) !== JSON.stringify(value)));
   const annotationLabels = Object.fromEntries(plan.layout.placed
     .filter(item => !overlay.constructionAnnotationLabelPositions[item.annotation.id])
     .map(item => [item.annotation.id, item.label]));
@@ -29,9 +35,11 @@ export function missingConstructionDrawingLayout(overlay: ConduitOverlayDocument
   const pointLineOffsets = Object.fromEntries(plan.positionDimensions
     .filter(dimension => overlay.pointPositionDimensionLineOffsets[dimension.id] === undefined)
     .map(dimension => [dimension.id, .28 * plan.annotationScale + dimension.lane * .18 * plan.annotationScale]));
-  if (!Object.keys(annotationLabels).length && !Object.keys(annotationSignatures).length && !Object.keys(pointLabelPositions).length && !Object.keys(pointLineOffsets).length) return null;
+  if (!Object.keys(annotationLabels).length && !Object.keys(annotationSignatures).length && !Object.keys(pointLabelPositions).length && !Object.keys(pointLineOffsets).length && !Object.keys(pointEvidence).length && !Object.keys(annotationEvidence).length) return null;
   return {
     ...overlay,
+    pointDimensionEvidence: { ...overlay.pointDimensionEvidence, ...pointEvidence },
+    constructionAnnotationEvidence: { ...overlay.constructionAnnotationEvidence, ...annotationEvidence },
     constructionAnnotationLabelPositions: { ...overlay.constructionAnnotationLabelPositions, ...annotationLabels },
     constructionAnnotationLabelPlacementSignatures: { ...overlay.constructionAnnotationLabelPlacementSignatures, ...annotationSignatures },
     pointPositionDimensionLabelPositions: { ...overlay.pointPositionDimensionLabelPositions, ...pointLabelPositions },

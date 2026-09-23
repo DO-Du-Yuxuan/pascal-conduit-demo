@@ -13,7 +13,7 @@ function planArcPoints(arc: BendArc): Vec3[] {
   const tangent: Vec3 = [(normal[1] * start[2] - normal[2] * start[1]) / Math.max(1e-9, radius), (normal[2] * start[0] - normal[0] * start[2]) / Math.max(1e-9, radius), (normal[0] * start[1] - normal[1] * start[0]) / Math.max(1e-9, radius)];
   return Array.from({ length: 17 }, (_, index) => { const angle = arc.sweepRadians * index / 16; return [center[0] + start[0] * Math.cos(angle) + tangent[0] * radius * Math.sin(angle), center[1] + start[1] * Math.cos(angle) + tangent[1] * radius * Math.sin(angle), center[2] + start[2] * Math.cos(angle) + tangent[2] * radius * Math.sin(angle)]; });
 }
-const WALL_ORIENTED_TYPES=new Set(['socket','switch','network-outlet','strong-panel','weak-panel','fire-inlet']);
+const WALL_ORIENTED_TYPES=new Set(['socket','switch','network-outlet','strong-panel','weak-panel','rfid-reader']);
 const NETWORK_CONDUIT_OUTLINE='#00a6a0';
 const NETWORK_CONDUIT_CORE='#ffffff';
 function conduitStrokeLayers(system:keyof typeof PLAN_COLORS,scale:number,override?:string,widthPx=1.8){

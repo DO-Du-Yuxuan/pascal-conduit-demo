@@ -236,3 +236,16 @@ export function resizeDevicePoint(overlay: ConduitOverlayDocument, deviceId: str
   if (!device || device.ports.some((port) => port.connectedSegmentIds.length > 0)) return overlay;
   return { ...overlay, devices: overlay.devices.map((candidate) => candidate.id === deviceId ? rebuildNetworkDevice(candidate, sizeMm) : candidate) };
 }
+
+/**
+ * A Spotlight's installation centre and cable ports are physical references.
+ * Its cylinder can change diameter/depth without rebuilding that topology.
+ */
+export function resizeSpotlight(overlay: ConduitOverlayDocument, deviceId: string, diameterMm: number, depthMm: number): ConduitOverlayDocument {
+  if (!Number.isFinite(diameterMm) || diameterMm <= 0 || !Number.isFinite(depthMm) || depthMm <= 0) return overlay;
+  const device = overlay.devices.find((candidate) => candidate.id === deviceId);
+  if (!device || device.deviceType !== "luminaire") return overlay;
+  const sizeMm: [number, number, number] = [diameterMm, diameterMm, depthMm];
+  if (device.sizeMm.every((value, index) => value === sizeMm[index])) return overlay;
+  return { ...overlay, devices: overlay.devices.map((candidate) => candidate.id === deviceId ? { ...candidate, sizeMm } : candidate) };
+}

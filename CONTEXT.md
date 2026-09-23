@@ -4,6 +4,18 @@ This context describes the language used while interactively editing a Pascal bu
 
 ## Language
 
+**System category**:
+One of the ten always-visible authoring categories that corresponds one-to-one with a system container directly under Site. A category with no currently supported Demo entities remains visible and presents an explicit empty state.
+_Avoid_: Tool group, hidden system, Building subsystem
+
+**Placeable entity**:
+A persisted domain object that the author can create inside the selected System category, such as a distribution box, outlet, luminaire, or sprinkler head. It is distinct from the command used to draw, connect, branch, or bind objects.
+_Avoid_: Authoring action, toolbar command, generic item
+
+**System authoring action**:
+An editing command performed within a System category, such as drawing a route, creating a branch, adding a duct outlet, or binding a controller. The action may create or modify persisted entities but is not itself an entity type.
+_Avoid_: Placeable entity, equipment type, JSON node type
+
 **Ceiling**:
 The modeled upper surface of an interior space and a possible host for building elements or device points. It does not by itself mean a suspended or decorative ceiling system.
 _Avoid_: Suspended ceiling, slab, installation reference plane
@@ -120,48 +132,68 @@ _Avoid_: Luminaire count, lighting circuit count, preset switch size
 A device point representing one complete switch faceplate. Its control groups determine its gang count, while the physical left-to-right position of those controls is outside the MVP model.
 _Avoid_: Switch button, control channel, preset gang device
 
+**Network outlet point**:
+An 86-format data outlet that terminates one network conduit route. It is an Electrical-system endpoint rather than a network distribution panel or optical-network terminal.
+_Avoid_: Network panel, router, weak-current distribution box
+
+**Spotlight point**:
+A cylindrical Lighting-system spotlight that mounts to a Ceiling or Beam and may connect to a lighting conduit route. Its selected properties expose editable diameter and depth without changing its device identity.
+_Avoid_: Generic luminaire, ceiling lamp, linear light
+
+**RFID reader point**:
+A Smart-system device point representing one RFID reader/writer at an installation location.
+_Avoid_: Generic sensor, network outlet, access-control panel
+
 **Sprinkler direction**:
 An explicit presentation and installation property of a sprinkler-head device point: upright (向上喷) or pendent (向下喷). It controls the 3D geometry and 2D symbol/text label, defaults to upright for new and legacy points, and does not alter conduit topology or connection ports.
 _Avoid_: A separate sprinkler device type, automatic pipe reroute
 
-**Sensor point**:
-A standalone, unpowered device point used to record a sensor's installation location and editable purpose. It may mount to a wall, slab, ceiling, installation reference plane, or free space; it has no physical conduit port, circuit, or routing system. Its independent sensor layer controls its 2D and 3D display, while its location continues to participate in construction dimensions and installation-height schedules.
-_Avoid_: Weak-current outlet, luminaire, conduit endpoint
+**Free-start fire-water route**:
+A Fire-protection pipe route whose first confirmed point is the physical beginning of the pipe rather than a separate inlet device. It may also continue from an existing compatible open pipe end.
+_Avoid_: Fire-water inlet device, unrooted legacy route, automatic supply connection
 
-**Indoor air-handling unit**:
-An Overlay-owned, horizontally oriented central-air-conditioning indoor unit with one supply port and one return port. In the current HVAC version, the unit and both routes share one rectangular Duct section; it is positioned with the same host and physical-dimension interactions as a luminaire, rather than by raw world-coordinate fields. Its selected horizontal dimensions are the signed world-axis `+X`, `−X`, `+Z`, and `−Z` clearances between real physical envelopes: the first Wall face or vertically overlapping Indoor-unit envelope in each direction is the witness, never an object center.
-_Avoid_: Outdoor unit, Pascal building node, generic device point
+**Temperature-humidity sensor point**:
+An HVAC-system device point that records indoor temperature and humidity sensing at an installation location. It has no conduit port or routing-system identity in the current Demo.
+_Avoid_: Generic sensor, human-presence sensor, smoke alarm
 
-**Indoor-unit port outward direction**:
+**Fan coil unit**:
+An HVAC-system indoor fan coil unit with one supply port and one return port. In the current HVAC version, the FCU and both routes share one rectangular Duct section; its selected horizontal dimensions are clearances between real physical envelopes rather than object centers.
+_Avoid_: Air-handling unit, outdoor unit, generic indoor unit
+
+**FCU port outward direction**:
 The yaw-rotated horizontal normal of the specifically clicked Supply or Return port. It constrains only the first default Duct leg to leave that port; later legs regain ordinary orthogonal choice or explicit world-axis constraints.
 _Avoid_: Pointer-derived initial axis, a permanent route direction, port label orientation
 
 **Duct section**:
-The one shared width-and-height rectangle used by an Indoor air-handling unit and all of its Supply and Return ducts in the current HVAC version.
+The one shared width-and-height rectangle used by an FCU and all of its Supply and Return ducts in the current HVAC version.
 _Avoid_: Indoor-unit casing dimensions, circular pipe diameter, independently tapered duct
 
+**Galvanized sheet-metal duct**:
+A rectangular HVAC air duct made from galvanized sheet metal, representing the office-style duct currently authored by the Demo.
+_Avoid_: Generic air duct, flexible duct, round duct
+
 **Supply duct**:
-A manually routed, non-branching rectangular air path that begins at an Indoor air-handling unit's supply port. It may carry multiple Supply outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
+A manually routed, non-branching rectangular galvanized sheet-metal air path that begins at an FCU's supply port. It may carry multiple Supply outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
 _Avoid_: Electrical conduit, return duct, refrigerant pipe
 
 **Return duct**:
-A manually routed, non-branching rectangular air path that begins at an Indoor air-handling unit's return port. It may carry multiple Return outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
+A manually routed, non-branching rectangular galvanized sheet-metal air path that begins at an FCU's return port. It may carry multiple Return outlets and is allowed to remain explicitly without an outlet while the design is incomplete.
 _Avoid_: Electrical conduit, supply duct, condensate pipe
 
 **Duct outlet**:
 An adjustable rectangular opening attached to one exterior face of a rectangular duct segment. In placement mode, the currently hovered physical duct face and along-segment pointer location determine its white transient preview; a click confirms and fixes that exact face and location. Its Supply or Return identity is derived from its owning duct. Selection exposes the two longitudinal clearances to that physical face's start and end edges, used to reposition the opening; its rectangle must remain wholly inside that face, and multiple outlets may share a face.
 _Avoid_: Wall opening, Ceiling grille, device port
 
-**Thermostat point**:
-An 86-panel device point that has a one-to-one logical control relationship with one Indoor air-handling unit. The relationship is independent of physical ducts, electrical conduit, and location, and is visibly presented in 2D and 3D like a lighting-control relationship.
+**FCU thermostat point**:
+An 86-panel thermostat point that has a one-to-one logical control relationship with one FCU. The relationship is independent of physical ducts, electrical conduit, and location, and is visibly presented in 2D and 3D like a lighting-control relationship.
 _Avoid_: Switch device point, lighting control group, air outlet
 
 **Duct penetration**:
 A fixed-clearance rectangular opening through a Wall, explicitly created by Ctrl while drafting a duct. It is Overlay-owned construction evidence and does not imply structural approval.
 _Avoid_: Adjustable wall opening, Beam penetration, automatic wall cut
 
-**Connected Indoor air-handling unit**:
-An Indoor air-handling unit with at least one connected Supply or Return duct. Its position and horizontal rotation cannot be changed until every connected duct has been deleted.
+**Connected FCU**:
+An FCU with at least one connected Supply or Return duct. Its position and horizontal rotation cannot be changed until every connected duct has been deleted.
 _Avoid_: Auto-routed unit, stretchable duct anchor
 
 **Rectangular duct elbow**:

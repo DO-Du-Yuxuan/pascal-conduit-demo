@@ -196,15 +196,23 @@ export function startRouteFromJunctionBox(overlay: ConduitOverlayDocument, boxId
   return { overlay: workingOverlay, box, port, circuit };
 }
 
-export function commitJunctionBoxRoute(overlay: ConduitOverlayDocument, start: JunctionBoxRouteStart, plan: PlannedRoute): ConduitOverlayDocument {
+export function commitJunctionBoxRoute(overlay: ConduitOverlayDocument, start: JunctionBoxRouteStart, plan: PlannedRoute, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   if (!plan.canCommit || !plan.segments.length || plan.system !== start.box.system) return overlay;
   const box = overlay.junctionBoxes.find((item) => item.id === start.box.id), circuit = overlay.circuits.find((item) => item.id === start.circuit.id && item.status === "rooted");
   const storedPort = box?.ports.find((port) => port.id === start.port.id);
   if (!box || !circuit || !storedPort || storedPort.connectedSegmentIds.length) return overlay;
   const segments = plan.segments.map((segment) => ({ ...segment, circuitId: circuit.id, legacyUnrooted: false }));
   segments[0].startPortId = storedPort.id;
+  let devices = overlay.devices;
+  if (endDeviceId) {
+    const endDevice = devices.find((device) => device.id === endDeviceId);
+    const endPort = endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+    if (!endPort || (endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length))) return overlay;
+    segments[segments.length - 1].endPortId = endPort.id;
+    devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);
+  }
   const boxes = overlay.junctionBoxes.map((item) => item.id !== box.id ? item : { ...item, segmentIds: [...new Set([...item.segmentIds, ...segments.map((segment) => segment.id)])], ports: item.ports.map((port) => port.id === storedPort.id ? { ...port, connectedSegmentIds: [...port.connectedSegmentIds, segments[0].id], segmentId: segments[0].id } : port) });
-  return { ...overlay, junctionBoxes: boxes, segments: [...overlay.segments, ...segments], fittings: [...overlay.fittings, ...plan.fittings], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((item) => item.id === circuit.id ? { ...item, segmentIds: [...new Set([...item.segmentIds, ...segments.map((segment) => segment.id)])] } : item) };
+  return { ...overlay, devices, junctionBoxes: boxes, segments: [...overlay.segments, ...segments], fittings: [...overlay.fittings, ...plan.fittings], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations], circuits: overlay.circuits.map((item) => item.id === circuit.id ? { ...item, segmentIds: [...new Set([...item.segmentIds, ...segments.map((segment) => segment.id)])] } : item) };
 }
 
 /** Legacy helper retained for callers; the editor uses the full branch route. */

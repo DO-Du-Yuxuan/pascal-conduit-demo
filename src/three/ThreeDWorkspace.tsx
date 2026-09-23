@@ -1,17 +1,17 @@
 import { CameraControls, CameraControlsImpl } from "@react-three/drei";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BackSide, Box3, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
 import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
 import { addHvacOutlet, addHvacWallPenetration, bindThermostat, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment } from "../domain/hvac";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
-import { migrateOverlayOwnership, overlayBelongsToProject } from "../domain/workspace";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
-import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
+import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { createLightingControlGroup, removeLightingControlGroup, replaceLightingControlGroup } from "../domain/lighting-controls";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { connectedRouteElementIds } from "../domain/route-selection";
@@ -27,13 +27,14 @@ import { overlayForProject, synchronizedOverlay } from './overlay-sync';
 import { routeCursorFromActiveWall } from "./active-host";
 import { cameraMouseButtons, type CameraProjection } from "./camera-navigation";
 import { syncExternalDeviceSelection } from "./device-selection";
-import { saveJsonFile } from "./save-json-file";
+import { overlayForLevel } from "./level-overlay";
+import { canUseCatalogSystem, canUseCatalogTool, type BuilderAuthorTool, type BuilderCatalogLock } from "../builder-workbench";
+
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
-import { DEFAULT_3D_LAYERS, type ThreeDLevelMode, type ThreeDViewPreset, type ThreeDWallMode, viewStateForPreset } from "./view-state";
+import { DEFAULT_3D_LAYERS, type ThreeDViewPreset, type ThreeDWallMode } from "./view-state";
 
 export type ThreeDLayerVisibility = { walls: boolean; floors: boolean; ceilings: boolean; beams: boolean; roofs: boolean; openings: boolean; furniture: boolean; zones: boolean };
 type ViewPreset = ThreeDViewPreset;
-type LevelMode = ThreeDLevelMode;
 type WallMode = ThreeDWallMode;
 type Tool = ConduitTool | "beam" | "hvac-unit" | "hvac-duct" | "hvac-supply" | "hvac-return" | "hvac-outlet" | "hvac-thermostat" | "hvac-bind";
 type BeamPointer = { point: [number, number, number]; shiftKey: boolean; ctrlKey?: boolean; levelId?: string | null };
@@ -220,7 +221,8 @@ const branchAttachment = (segment: RouteSegment, t: number): HostAttachment | un
   return { ...start, localPosition: start.localPosition && end.localPosition ? start.localPosition.map((value, axis) => value + (end.localPosition![axis] - value) * t) as [number, number, number] : start.localPosition, curveT: start.curveT !== undefined && end.curveT !== undefined ? start.curveT + (end.curveT - start.curveT) * t : start.curveT };
 };
 
-export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null }) {
+export type ThreeDAuthorCommand = { id: number; tool: BuilderAuthorTool | null; system?: RoutingSystem; deviceType?: NetworkDeviceType; viewPreset?: "top"; catalogLock?: BuilderCatalogLock };
+export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId, authorCommand, panelHost, activeLevelId }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null; authorCommand?: ThreeDAuthorCommand | null; panelHost?: HTMLElement | null; activeLevelId: string }) {
   const publishOverlay = useOverlayStore((state) => state.publish);
   const loadSharedWorkspace = useOverlayStore((state) => state.loadWorkspace);
   const commitSharedOverlay = useOverlayStore((state) => state.commit);
@@ -229,7 +231,6 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const redoSharedWorkspace = useOverlayStore((state) => state.redo);
   const sharedUndoStack = useOverlayStore((state) => state.undoStack);
   const sharedRedoStack = useOverlayStore((state) => state.redoStack);
-  const markOverlayExported = useOverlayStore((state) => state.markExported);
   const publishRoutePreview = useOverlayStore((state) => state.publishPreview);
   const clearRoutePreview = useOverlayStore((state) => state.clearPreview);
   const sharedOverlay = useOverlayStore((state) => state.overlay);
@@ -237,19 +238,20 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const initialSharedState = useRef(useOverlayStore.getState()).current;
   const matchingOverlay = overlayForProject(initialSharedState.overlay, sourceSha, projectId);
   const sharedOverlayMatchesProject = projectId ? sharedOverlay?.source.projectId === projectId : sharedOverlay?.source.sha256 === sourceSha;
-  const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [levelMode, setLevelMode] = useState<LevelMode>("stacked"), [wallMode, setWallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
+  const [preset, setPreset] = useState<ViewPreset>("exterior"), [layers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [wallMode] = useState<WallMode>("up"), [projection] = useState<"perspective" | "orthographic">("perspective");
   const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
   const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState({ widthMm: 300, heightMm: 500 }), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
+  const catalogLock = authorCommand?.catalogLock;
+  const allowedSystems = catalogLock?.systems;
+  const allowedDeviceTypes = catalogLock?.deviceTypes;
+  const availableDeviceTypes = allowedDeviceTypes ?? (["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "sensor", "rfid-reader"] satisfies NetworkDeviceType[]);
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
   const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [thermostatPositionDraft, setThermostatPositionDraft] = useState<{ horizontal?: number; vertical?: number }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
   const [activeTargetPortId, setActiveTargetPortId] = useState<string | null>(null);
   const [controlBinding, setControlBinding] = useState<ControlBindingSession | null>(null);
   const [activeHvacDuctId, setActiveHvacDuctId] = useState<string | null>(null), [hvacRouteStart, setHvacRouteStart] = useState<{ unitId: string; system: HvacSystem } | null>(null), [hvacOutletPreview, setHvacOutletPreview] = useState<HvacOutletPreview | null>(null);
-  const levels = useMemo(() => Object.values(scene?.nodes ?? {}).filter((node) => node.type === "level").sort((a, b) => Number(a.level ?? 0) - Number(b.level ?? 0) || a.id.localeCompare(b.id)), [scene]);
-  const [activeLevelId, setActiveLevelId] = useState<string | null>(null);
   const [appliedConstruction, setAppliedConstruction] = useState<AppliedConstruction>({ surfaceChases: [], penetrations: [] });
-  const overlayInput = useRef<HTMLInputElement>(null);
   const rawSurfaceHit = useRef<ThreeDSurfaceHit | null>(null);
   const surfaceOccluded = useRef(false);
   const orthogonalDirection = useRef<[number, number, number] | null>(null);
@@ -291,8 +293,6 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const positionDescription = useMemo(() => selectedDevice ? describeDevicePosition(overlay, selectedDevice.id, devicePositioningContext) : {}, [overlay, selectedDevice, devicePositioningContext]);
   const thermostatPositionProxyValue = useMemo(() => selectedThermostat ? thermostatPositioningProxy(selectedThermostat) : null, [selectedThermostat]);
   const thermostatPositionDescription = useMemo(() => thermostatPositionProxyValue ? describeDevicePosition({ ...overlay, devices: [...overlay.devices, thermostatPositionProxyValue] }, thermostatPositionProxyValue.id, devicePositioningContext) : {}, [overlay, thermostatPositionProxyValue, devicePositioningContext]);
-  useEffect(() => { if (!activeLevelId || !levels.some((level) => level.id === activeLevelId)) setActiveLevelId(levels[0]?.id ?? null); }, [levels, activeLevelId]);
-  useEffect(() => { if (selectedDevice?.mount?.kind === "reference-plane") setActiveLevelId(selectedDevice.mount.levelId); }, [selectedDevice?.id]);
   const referencePlaneElevationMm = activeLevelId ? overlay.installationReferencePlanes.find((plane) => plane.levelId === activeLevelId)?.elevationMm ?? 2700 : 2700;
   const layoutReferencePlane = activeLevelId && scene ? layoutReferencePlaneFor(scene.nodes, overlay.layoutReferencePlanes, activeLevelId) : null;
   const layoutReferencePlaneY = activeLevelId ? Number(scene?.nodes[activeLevelId]?.level ?? 0) * 3.2 + (layoutReferencePlane?.elevationMm ?? 2700) / 1000 : 2.7;
@@ -304,7 +304,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const referencePlaneY = activeLevelId ? (devicePositioningContext.levelFloorY[activeLevelId] ?? 0) + referencePlaneElevationMm / 1000 : 2.7;
   const selectedHvacLevelId = selectedHvacUnit?.mount?.kind === 'reference-plane' ? selectedHvacUnit.mount.levelId : selectedHvacUnit?.position.attachment?.levelId ?? (selectedHvacUnit?.mount?.kind === 'host' ? selectedHvacUnit.mount.attachment.levelId : null);
   const selectedHvacFloorY = selectedHvacLevelId ? devicePositioningContext.levelFloorY[selectedHvacLevelId] : undefined;
-  const selectedHvacBottomElevationMm = selectedHvacUnit && selectedHvacFloorY !== undefined ? Math.round((selectedHvacUnit.position.position[1] - selectedHvacUnit.sectionMm[1] / 2000 - selectedHvacFloorY) * 1000) : undefined;
+  const selectedHvacBottomElevationMm = selectedHvacUnit && selectedHvacFloorY !== undefined ? Math.round((selectedHvacUnit.position.position[1] - selectedHvacUnit.sizeMm[2] / 2000 - selectedHvacFloorY) * 1000) : undefined;
   const selectedHvacPlanarReferences = useMemo(() => {
     if (!selectedHvacUnit || !selectedHvacLevelId) return [];
     const walls = (devicePositioningContext.wallFaces ?? []).filter(face => face.levelId === selectedHvacLevelId && face.start && face.end).map(face => ({ id: face.id, start: face.start!, end: face.end!, normal: face.normal, halfThickness: face.halfThickness }));
@@ -418,6 +418,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const current = useOverlayStore.getState(), project = current.project;
       if (!project?.raw.nodes || typeof project.raw.nodes !== "object") return;
       const { [selectedBeam.id]: _removed, ...nodes } = project.raw.nodes as Record<string, unknown>;
+      const level = nodes[selectedBeam.parentId!] as { children?: string[] } | undefined;
+      if (level) nodes[selectedBeam.parentId!] = { ...level, children: (level.children ?? []).filter((id) => id !== selectedBeam.id) };
       const penetrations = overlay.penetrations.filter((penetration) => penetration.hostId !== selectedBeam.id), nextOverlay = penetrations.length === overlay.penetrations.length ? overlay : { ...overlay, penetrations };
       commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, nextOverlay, true, current.dirty || nextOverlay !== current.overlay);
       setBeamEditPreview(null); onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
@@ -459,7 +461,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const nextPosition = [...selectedHvacUnit.position.position] as Vec3;
     if (change.bottomElevationMm !== undefined) {
       if (selectedHvacFloorY === undefined || !Number.isFinite(change.bottomElevationMm) || change.bottomElevationMm < 0) { setStatus('内机底部标高必须是非负有效数值。'); return; }
-      nextPosition[1] = selectedHvacFloorY + change.bottomElevationMm / 1000 + selectedHvacUnit.sectionMm[1] / 2000;
+      nextPosition[1] = selectedHvacFloorY + change.bottomElevationMm / 1000 + selectedHvacUnit.sizeMm[2] / 2000;
     }
     for (const reference of selectedHvacPlanarReferences) {
       const requested = change.planarClearanceMm?.[reference.key];
@@ -475,8 +477,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const next = selectedHvacUnit.mount?.kind === 'reference-plane' && elevationMm !== undefined ? { ...result.overlay, hvac: { ...result.overlay.hvac, indoorUnits: result.overlay.hvac.indoorUnits.map(unit => unit.id === selectedHvacUnit.id ? { ...unit, mount: { ...unit.mount!, elevationMm } } : unit) } } : result.overlay;
     commit(next); setStatus('空调内机定位已更新。');
   };
-  const selectSystem = (next: RoutingSystem) => { const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); };
-  const canDrawWithoutSource = tool === "draw" && system === "network";
+  const rejectLockedSystem = (candidate: RoutingSystem) => {
+    if (canUseCatalogSystem(catalogLock, candidate)) return false;
+    setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[candidate].label}。`);
+    return true;
+  };
+  const selectSystem = (next: RoutingSystem) => { if (rejectLockedSystem(next)) return; const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); };
+  const canDrawWithoutSource = tool === "draw" && (system === "network" || system === "sprinkler");
   const validatedPlan = (points: RoutePoint[], ignoredSegmentId?: string, ignoredDeviceId?: string): PlannedRoute => {
     const plan = ignoredSegmentId
       ? planBranchContinuation(overlay, ignoredSegmentId, points, constructionParameters, explicitPenetrations)
@@ -543,6 +550,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       return;
     }
     if (tool !== "draw" && tool !== "branch") return;
+    if (rejectLockedSystem(system)) return;
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (penetrationSession) return;
     const preview = completionMode === "include-preview" ? resolveEffectiveCursor(latestCursor.current) : null;
@@ -561,6 +569,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const finishAtCursor = () => {
     if (tool === 'hvac-supply' || tool === 'hvac-return') { finishHvacDuct(); return; }
     if ((tool !== "draw" && tool !== "branch") || !cursor) return finishCurrentRoute();
+    if (rejectLockedSystem(system)) return;
     if (penetrationSession) return;
     const point = resolveEffectiveCursor(latestCursor.current);
     if (!point) return;
@@ -617,7 +626,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!project) { setStatus("当前项目尚未就绪，不能创建梁。"); return; }
     const beam = { ...candidate.beam, name: `梁 ${Object.values(scene?.nodes ?? {}).filter((node) => node.type === "beam").length + 1}` }, rawNodes = project.raw.nodes;
     if (!rawNodes || typeof rawNodes !== "object") { setStatus("当前项目没有可写入的节点集合。"); return; }
-    const nextProject = { ...project, raw: { ...project.raw, nodes: { ...(rawNodes as Record<string, unknown>), [beam.id]: beam } } };
+    const level = (rawNodes as Record<string, unknown>)[beam.parentId!] as { children?: string[] } | undefined;
+    if (!level) { setStatus("当前梁的楼层不存在，不能创建。"); return; }
+    const nextProject = { ...project, raw: { ...project.raw, nodes: { ...(rawNodes as Record<string, unknown>), [beam.parentId!]: { ...level, children: [...(level.children ?? []), beam.id] }, [beam.id]: beam } } };
     commitSharedWorkspace(nextProject, current.overlay, true, current.dirty);
     onSelect(beam.id); setBeamStart(null); setBeamPointer(null); setStatus("已创建 Beam；工具保持开启，可继续绘制。");
   };
@@ -713,6 +724,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
+    if (rejectLockedSystem(system)) return;
     const clickedPoint = routePoint(hit);
     const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(hit.attachment.hostKind === "beam" ? clickedPoint : latestCursor.current), hit.attachment.hostKind === "beam" && orthogonal && !worldAxis ? null : clickedPoint);
     if (!point) return;
@@ -729,6 +741,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   const onStartDeviceRoute = (device: NetworkDevice, portId?: string, targetPoint?: [number, number, number]) => {
     if (tool !== "draw") { onSelect(device.id); return; }
+    if (!canUseCatalogSystem(catalogLock, system)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[system].label}。`); return; }
     const targetPort = () => {
       const reference = targetPoint ?? draft[draft.length - 1]?.position;
       return portId ? deviceTargetPorts(device, system).find((port) => port.id === portId) : reference ? nearestDeviceTargetPort(device, system, reference) : undefined;
@@ -751,8 +764,20 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!plan.canCommit) { rejectDiagnostics(plan); return; }
       commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port, device.id, endPort.id)); clearCompletedDraft(); setDeviceRouteStart(null); return;
     }
+    if (junctionRouteStart && draft.length) {
+      const endPort = targetPort();
+      if (!endPort) { setStatus("目标设备没有兼容的开放端口。"); return; }
+      const points = routePointsToTarget(endPort.position, endPort.id, `${device.name || DEVICE_DEFAULTS[device.deviceType].label}端口`, device.id);
+      if (!points) return;
+      const plan = validatedPlan(points, undefined, device.id);
+      if (!plan.canCommit) { rejectDiagnostics(plan); return; }
+      const next = commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan, device.id, endPort.id);
+      if (next === junctionRouteStart.overlay) { setStatus("目标设备端口无法连接。"); return; }
+      commit(next); clearCompletedDraft(); setStatus("已从 86 底盒连接到设备端口。"); return;
+    }
     const availableSystem = device.systems.includes(system) ? system : device.systems[0];
     if (!availableSystem) return;
+    if (!canUseCatalogSystem(catalogLock, availableSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[availableSystem].label}。`); return; }
     try {
       const started = startRouteFromDevice(overlay, device.id, availableSystem, portId);
       selectSystem(availableSystem); setDeviceRouteStart(started); setJunctionRouteStart(null); setEndpointRouteStart(null); setDraft([structuredClone(started.port.position)]); setCursor(null);
@@ -760,17 +785,22 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   const onStartEndpoint = (endpoint: OpenRouteEndpoint) => {
     if (tool !== "draw" || deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
+    const candidateSystem = endpoint.system;
+    if (!canUseCatalogSystem(catalogLock, candidateSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[candidateSystem].label}。`); return; }
     selectSystem(endpoint.system); setEndpointRouteStart(endpoint); setDraft([structuredClone(endpoint.point)]); setCursor(null); setStatus("已从开放管端开始续画。");
   };
   const onStartJunctionRoute = (boxId: string, portId: string) => {
     if (tool !== "draw" || deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
     try {
       const started = startRouteFromJunctionBox(overlay, boxId, portId);
+      const candidateSystem = started.box.system;
+      if (!canUseCatalogSystem(catalogLock, candidateSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[candidateSystem].label}。`); return; }
       selectSystem(started.box.system); setJunctionRouteStart(started); setDraft([structuredClone(started.port.position)]); setCursor(null);
     } catch { setStatus("该 86 底盒孔位没有可用的同侧连接或合法来源。"); }
   };
   const onConnectLegacy = (segment: RouteSegment, projected: [number, number, number]) => {
     if (tool !== "draw" || !deviceRouteStart || !draft.length || !segment.legacyUnrooted) return;
+    if (rejectLockedSystem(segment.system)) return;
     if (segment.system !== system) { setStatus("旧线路与当前来源系统不兼容。"); return; }
     const distance = (point: RoutePoint) => Math.hypot(...point.position.map((value, axis) => value - projected[axis]));
     const target = distance(segment.start) <= distance(segment.end) ? segment.start : segment.end;
@@ -786,6 +816,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool !== "branch") return;
     const segment = overlay.segments.find((item) => item.id === segmentId);
     if (!segment) return;
+    const candidateSystem = segment.system;
+    if (!canUseCatalogSystem(catalogLock, candidateSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[candidateSystem].label}。`); return; }
     if (segment.system === "network") { setStatus("网络线路不允许分支。"); return; }
     if (segment.legacyUnrooted) { setStatus("旧线路尚未接入合法源设备，不能继续分支。"); return; }
     const total = Math.hypot(...segment.end.position.map((value, axis) => value - segment.start.position[axis])), fromStart = Math.hypot(...position.map((value, axis) => value - segment.start.position[axis])), clearance = segment.system === "sprinkler" ? segment.diameterMm / 1000 : overlay.settings.junctionBoxSizeMm[0] / 2000;
@@ -804,20 +836,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commit(deleteNetworkObject(overlay, id));
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
-  const importOverlay = async (file: File) => { const imported = parseOverlay(JSON.parse(await file.text())), project = useOverlayStore.getState().project; if (!project || !overlayBelongsToProject(imported, project)) { window.alert("该 Overlay 不属于当前项目，未导入。"); return; } const migrated = migrateOverlayOwnership(imported, project); setOverlay(migrated); setOverlayDirty(JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); loadSharedWorkspace(project, migrated, JSON.stringify(migrated.source) !== JSON.stringify(imported.source)); setAppliedConstruction({ surfaceChases: [], penetrations: [] }); };
-  const exportOverlay = async () => {
-    try {
-      const result = await saveJsonFile(new Blob([JSON.stringify(overlay, null, 2)], { type: "application/json" }), "conduit-overlay.json");
-      if (result === "cancelled") return;
-      setOverlayDirty(false);
-      markOverlayExported();
-    } catch {
-      setStatus("无法保存 Overlay 文件，请检查目标位置后重试。");
-    }
-  };
-  const choosePreset = (next: Extract<ViewPreset, "exterior" | "interior" | "floor" | "ceiling">) => { const nextState = viewStateForPreset({ preset, layers, levelMode, wallMode, walkthrough: false }, next); setPreset(nextState.preset); setLayers(nextState.layers); setLevelMode(nextState.levelMode); setWallMode(nextState.wallMode); };
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setControlBinding(null); setHvacRouteStart(null); setHvacOutletPreview(null); orthogonalDirection.current = null; };
-  const chooseTool = (next: Tool) => { setTool(next); resetRouteSession(); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-bind'].includes(next)) onSelect(null); };
+  const canUseTool = (next: Tool) => next === "hvac-supply" || next === "hvac-return" ? canUseCatalogTool(catalogLock, "hvac-duct") : canUseCatalogTool(catalogLock, next);
+  const chooseTool = (next: Tool) => { if (!canUseTool(next)) { setStatus("当前 Builder 卡片不允许切换到该工具。"); return; } setTool(next); resetRouteSession(); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-bind'].includes(next)) onSelect(null); };
+  const handledAuthorCommand = useRef<number | null>(null);
+  useEffect(() => {
+    if (!authorCommand || handledAuthorCommand.current === authorCommand.id) return;
+    handledAuthorCommand.current = authorCommand.id;
+    if (authorCommand.system) selectSystem(authorCommand.system);
+    if (authorCommand.deviceType) setDeviceType(authorCommand.deviceType);
+    if (authorCommand.tool) chooseTool(authorCommand.tool);
+    if (authorCommand.viewPreset) setPreset(authorCommand.viewPreset);
+  }, [authorCommand]);
   const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || deviceRouteStart || junctionRouteStart || endpointRouteStart);
   const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
   const activeBeamCandidate = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer) : null;
@@ -862,6 +892,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const onEmptyCanvasClick = (shiftKey = false, ctrlKey = false) => {
     if (tool === "beam") { if (beamPointer) commitBeam({ ...beamPointer, shiftKey, ctrlKey }); return; }
     if (!canDrawWithoutSource) { selectWhileBrowsing(null); return; }
+    if (rejectLockedSystem(system)) return;
     const point = resolveEffectiveCursor(latestCursor.current);
     if (!point) return;
     const candidate = [...draft, point].filter((item, index, points) => index === 0 || !sameRoutePoint(points[index - 1], item));
@@ -870,124 +901,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!plan.canCommit) { rejectDiagnostics(plan); return; }
     }
     setDraft(candidate); setCursor(null); orthogonalDirection.current = null;
-    setStatus(candidate.length === 1 ? "已确定白色管道悬空起点；继续逐点绘制。" : "已确定悬空落点；按 Enter 或双击生成白色管道。");
+    const routeLabel = system === "sprinkler" ? "消防管" : "白色网络管";
+    setStatus(candidate.length === 1 ? `已确定${routeLabel}自由起点；继续逐点绘制。` : `已确定${routeLabel}落点；按 Enter 或双击生成。`);
   };
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
   if (!scene.rootNodeIds.length) return <section className="three-d-empty"><b>无法建立 3D 场景</b>{scene.diagnostics.map((diagnostic) => <span key={diagnostic.code}>{diagnostic.message}</span>)}</section>;
   return (
     <section className="three-d-workspace">
-    <header className="three-d-toolbar">
-        <div className="three-d-group">
-          <b>3D 视图</b>
-          {(["exterior", "interior", "floor", "ceiling"] as const).map(
-            (item) => (
-              <button
-                className={preset === item ? "active" : ""}
-                onClick={() => choosePreset(item)}
-                key={item}
-              >
-                {
-                  (
-                    {
-                      exterior: "外观",
-                      interior: "室内",
-                      floor: "地板",
-                      ceiling: "天花",
-                    } as const
-                  )[item]
-                }
-              </button>
-            ),
-          )}
-        </div>
-        <div className="three-d-group">
-          <span>角度</span>
-          {(
-            ["top", "front", "back", "left", "right", "isometric"] as const
-          ).map((item) => (
-            <button onClick={() => setPreset(item)} key={item}>
-              {
-                (
-                  {
-                    top: "顶",
-                    front: "前",
-                    back: "后",
-                    left: "左",
-                    right: "右",
-                    isometric: "等轴",
-                  } as const
-                )[item]
-              }
-            </button>
-          ))}
-        </div>
-        <div className="three-d-group">
-          <label>
-            投影{" "}
-            <select
-              value={projection}
-              onChange={(event) =>
-                setProjection(event.target.value as typeof projection)
-              }
-            >
-              <option value="perspective">透视</option>
-              <option value="orthographic">正交</option>
-            </select>
-          </label>
-          <label>
-            楼层{" "}
-            <select
-              value={levelMode}
-              onChange={(event) =>
-                setLevelMode(event.target.value as LevelMode)
-              }
-            >
-              <option value="stacked">叠放</option>
-              <option value="exploded">爆炸</option>
-              <option value="solo">单层</option>
-            </select>
-          </label>
-          <label>
-            墙体{" "}
-            <select
-              value={wallMode}
-              onChange={(event) => setWallMode(event.target.value as WallMode)}
-            >
-              <option value="up">完整</option>
-              <option value="cutaway">剖开</option>
-              <option value="translucent">半透明</option>
-              <option value="down">隐藏</option>
-            </select>
-          </label>
-        </div>
-        <div className="three-d-group three-d-layers">
-          {(
-            Object.entries({
-              walls: "墙",
-              floors: "地板",
-              ceilings: "天花",
-              beams: "梁",
-              roofs: "屋顶",
-              openings: "门窗",
-              furniture: "家具",
-              zones: "Zone",
-            }) as Array<[keyof ThreeDLayerVisibility, string]>
-          ).map(([key, label]) => (
-            <label key={key}>
-              <input
-                type="checkbox"
-                checked={layers[key]}
-                onChange={() =>
-                  setLayers((current) => ({ ...current, [key]: !current[key] }))
-                }
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-    </header>
     <div className="three-d-canvas">
-        <aside
+        {panelHost && createPortal(<aside
           className={`conduit-panel ${panelCollapsed ? "collapsed" : ""}`}
           aria-label="管线编辑工具"
         >
@@ -1028,7 +950,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           </div>
           {!panelCollapsed && (
             <>
-          <nav className="conduit-tool-grid" aria-label="编辑工具">
+          {!catalogLock && <nav className="conduit-tool-grid" aria-label="编辑工具">
                 {(
                   [
                     "select",
@@ -1080,7 +1002,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     }
                   </button>
                 ))}
-          </nav>
+          </nav>}
               {hvacPanelOpen && (
               <section className="conduit-context-section" aria-label="空调编辑工具">
                 <div className="conduit-section-title"><b>空调</b><span>Overlay</span></div>
@@ -1363,7 +1285,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     <b>{tool === "branch" ? "分支设置" : "画管设置"}</b>
                     <span>{SYSTEM_DEFAULTS[system].label}</span>
                   </div>
-                  {tool === "draw" && (
+                  {tool === "draw" && !allowedSystems && (
                     <div className="conduit-system-grid">
                       {(Object.keys(SYSTEM_DEFAULTS) as RoutingSystem[]).map(
                         (key) => (
@@ -1448,8 +1370,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             </div>
                   )}
                   <small className="conduit-context-hint">
-                    {system === "network" && tool === "draw"
-                      ? "白色网络管可在空白处直接起画；"
+                    {(system === "network" || system === "sprinkler") && tool === "draw"
+                      ? `${system === "sprinkler" ? "消防管" : "白色网络管"}可在空白处直接起画；`
                       : "先选合法来源或开放管端；"}
                     Shift 切正交，Tab 穿透，方向键锁定世界轴。
                   </small>
@@ -1462,65 +1384,17 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     <b>放置点位</b>
                     <span>{DEVICE_DEFAULTS[deviceType].label}</span>
                   </div>
-                  <label className="conduit-full-field">
+                  {allowedDeviceTypes ? <label className="conduit-full-field">设备<span>{DEVICE_DEFAULTS[deviceType].label}</span></label> : <label className="conduit-full-field">
                     设备
-                    <select
-                      value={deviceType}
-                      onChange={(event) =>
-                        setDeviceType(event.target.value as NetworkDeviceType)
-                      }
-                    >
+                    <select value={deviceType} onChange={(event) => setDeviceType(event.target.value as NetworkDeviceType)}>
                       <optgroup label="来源设备">
-                        {(
-                          [
-                            "strong-panel",
-                            "weak-panel",
-                            "fire-inlet",
-                          ] satisfies NetworkDeviceType[]
-                        ).map((key) => (
-                          <option key={key} value={key}>
-                            {DEVICE_DEFAULTS[key].label}
-                          </option>
-                        ))}
+                        {availableDeviceTypes.filter((key) => ["strong-panel", "weak-panel"].includes(key)).map((key) => <option key={key} value={key}>{DEVICE_DEFAULTS[key].label}</option>)}
                       </optgroup>
                       <optgroup label="终端点位">
-                        {(
-                          [
-                            "socket",
-                            "switch",
-                            "luminaire",
-                            "network-outlet",
-                            "sprinkler-head",
-                            "sensor",
-                          ] satisfies NetworkDeviceType[]
-                        ).map((key) => (
-                          <option key={key} value={key}>
-                            {DEVICE_DEFAULTS[key].label}
-                          </option>
-                        ))}
+                        {availableDeviceTypes.filter((key) => !["strong-panel", "weak-panel"].includes(key)).map((key) => <option key={key} value={key}>{DEVICE_DEFAULTS[key].label}</option>)}
                       </optgroup>
                     </select>
-                  </label>
-                  {(deviceType === "luminaire" ||
-                    deviceType === "sprinkler-head" ||
-                    deviceType === "sensor") &&
-                    levels.length > 0 && (
-                      <label className="conduit-full-field">
-                        安装楼层
-                        <select
-                          value={activeLevelId ?? ""}
-                          onChange={(event) =>
-                            setActiveLevelId(event.target.value)
-                          }
-                        >
-                          {levels.map((level) => (
-                            <option key={level.id} value={level.id}>
-                              {level.name || level.id}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
+                  </label>}
                   {eligibleLayoutPoint && layoutReferencePlane && (
                     <>
                       <b>布局参考面</b>
@@ -1964,7 +1838,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           。
                         </small>
                       </div>
-                      <details className="conduit-object-details">
+                      {selectedDevice.deviceType === "luminaire" ? <section className="conduit-context-section" aria-label="圆柱形射灯尺寸">
+                        <b>圆柱形射灯尺寸</b>
+                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, Math.max(1, Number(event.target.value)), selectedDevice.sizeMm[2]))} /> mm</span></label>
+                        <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, selectedDevice.sizeMm[0], Math.max(1, Number(event.target.value))))} /> mm</span></label>
+                        <small>修改外形尺寸不会移动安装中心，也不会改变既有线路端口或连接。</small>
+                      </section> : <details className="conduit-object-details">
                         <summary>尺寸与宿主</summary>
                         {(["宽", "高", "深"] as const).map((label, axis) => (
                           <label key={label}>
@@ -2004,6 +1883,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                               "悬空管段挂载")}
                         </small>
                       </details>
+                      }
                     </>
                   )}
                   {selectedSegment && (
@@ -2169,27 +2049,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 >
                   重做
                 </button>
-                <button onClick={() => overlayInput.current?.click()}>
-                  导入
-                </button>
-                <button className="primary" onClick={() => void exportOverlay()}>
-                  导出
-                </button>
               </div>
-              <input
-                ref={overlayInput}
-                hidden
-                type="file"
-                accept="application/json"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void importOverlay(file);
-                  event.currentTarget.value = "";
-                }}
-              />
             </>
           )}
-      </aside>
+      </aside>, panelHost)}
         {beamPointerState && (
           <div
             className="beam-pointer-feedback"
@@ -2304,7 +2167,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             scene={scene}
             layers={layers}
             hiddenNodeIds={hiddenNodeIds}
-            levelMode={levelMode}
+            levelMode="solo"
+            activeLevelId={activeLevelId}
             wallMode={wallMode}
             selectedId={selectedId}
             highlightHostId={
@@ -2330,7 +2194,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onChaseFallback={reportChaseFallback}
           />
           <ConduitScene
-            overlay={renderedOverlay}
+            overlay={overlayForLevel(renderedOverlay, activeLevelId)}
             departingSegments={departingSegments}
             selectedId={selectedId}
             selectedSegmentIds={selectedSegmentIds}
@@ -2439,7 +2303,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onStartEndpoint={onStartEndpoint}
             onDelete={deleteObject}
           />
-          <HvacScene overlay={overlay} selectedId={selectedId} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} selectedThermostatDimensions={selectedThermostat ? thermostatPositionDescription : undefined} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
+          <HvacScene overlay={overlayForLevel(overlay, activeLevelId)} selectedId={selectedId} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} selectedThermostatDimensions={selectedThermostat ? thermostatPositionDescription : undefined} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
+            if (!canUseTool('hvac-duct')) { setStatus('当前 Builder 卡片不允许绘制镀锌铁皮风管。'); return; }
             if (overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.system === system)) { setStatus(`该内机${system === 'supply' ? '送风' : '回风'}口已经有一条路线。`); return; }
             setTool(system === 'supply' ? 'hvac-supply' : 'hvac-return'); setCursor(null); setActiveHvacDuctId(null); setHvacRouteStart({ unitId, system }); onSelect(unitId);
             setStatus(`已从${system === 'supply' ? '送风' : '回风'}口起画；移动鼠标预览，点击确认第一段。`);

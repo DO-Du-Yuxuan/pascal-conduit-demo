@@ -67,8 +67,27 @@ function changedProjectNodeKinds(before: ProjectDocument | null, after: ProjectD
   const ids = new Set([...Object.keys(beforeNodes), ...Object.keys(afterNodes)]);
   return [...ids].flatMap((id) => {
     if (stableJson(beforeNodes[id]) === stableJson(afterNodes[id])) return [];
+    if (isBeamChildListChange(id, beforeNodes, afterNodes)) return [];
     const node = afterNodes[id] ?? beforeNodes[id];
     return node && typeof node === "object" && typeof (node as { type?: unknown }).type === "string" ? [(node as { type: string }).type] : ["invalid"];
+  });
+}
+
+function isBeamChildListChange(levelId: string, beforeNodes: Record<string, unknown>, afterNodes: Record<string, unknown>): boolean {
+  const before = beforeNodes[levelId], after = afterNodes[levelId];
+  if (!before || !after || typeof before !== "object" || typeof after !== "object") return false;
+  const oldNode = before as Record<string, unknown>, newNode = after as Record<string, unknown>;
+  if (oldNode.type !== "level" || newNode.type !== "level") return false;
+  const { children: oldChildren, ...oldFields } = oldNode, { children: newChildren, ...newFields } = newNode;
+  if (stableJson(oldFields) !== stableJson(newFields)) return false;
+  const oldIds = Array.isArray(oldChildren) ? oldChildren : [], newIds = Array.isArray(newChildren) ? newChildren : [];
+  if (new Set(newIds).size !== newIds.length || new Set(oldIds).size !== oldIds.length) return false;
+  const oldSet = new Set(oldIds), newSet = new Set(newIds);
+  const changed = [...oldIds.filter((id) => !newSet.has(id)), ...newIds.filter((id) => !oldSet.has(id))];
+  if (!changed.length || stableJson(oldIds.filter((id) => newSet.has(id))) !== stableJson(newIds.filter((id) => oldSet.has(id)))) return false;
+  return changed.every((id) => {
+    const node = afterNodes[id] ?? beforeNodes[id];
+    return node && typeof node === "object" && (node as { type?: unknown; parentId?: unknown }).type === "beam" && (node as { parentId?: unknown }).parentId === levelId;
   });
 }
 

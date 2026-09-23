@@ -1,7 +1,7 @@
 import type { ConduitOverlayDocument, HvacControl, HvacDuct, HvacDuctOutlet, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, HvacWallPenetration, RoutePoint, Vec3 } from './overlay';
 
-export const HVAC_DEFAULT_UNIT_SIZE_MM: [number, number, number] = [600, 1000, 300];
-export const HVAC_DEFAULT_SECTION_MM: [number, number] = [1000, 300];
+export const HVAC_DEFAULT_UNIT_SIZE_MM: [number, number, number] = [1000, 600, 300];
+export const HVAC_DEFAULT_SECTION_MM: [number, number] = [500, 200];
 export const HVAC_DEFAULT_OUTLET_MM: [number, number] = [300, 150];
 export const HVAC_COLORS: Record<HvacSystem, string> = { supply: '#0ea5e9', return: '#f97316' };
 const stamp = () => new Date().toISOString();
@@ -28,6 +28,11 @@ export function indoorUnitPort(unit: HvacIndoorUnit, system: HvacSystem): RouteP
   };
 }
 
+/** Three.js casing geometry is [width, height, length]; the duct section has its own dimensions. */
+export function indoorUnitCasingSizeMeters(unit: HvacIndoorUnit): [number, number, number] {
+  return [unit.sizeMm[1] / 1000, unit.sizeMm[2] / 1000, unit.sizeMm[0] / 1000];
+}
+
 /** The first rectangular duct leaves its clicked port along this outward airflow normal. */
 export function indoorUnitPortDirection(unit: HvacIndoorUnit, system: HvacSystem): Vec3 {
   const yaw = unit.rotationYDegrees * Math.PI / 180, sign = system === 'supply' ? 1 : -1;
@@ -45,7 +50,7 @@ export function indoorUnitFootprint(unit: HvacIndoorUnit): readonly [Vec3, Vec3,
   const yaw = unit.rotationYDegrees * Math.PI / 180;
   const right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)];
   const forward: Vec3 = [Math.sin(yaw), 0, Math.cos(yaw)];
-  const halfWidth = unit.sectionMm[0] / 2000, halfLength = unit.sizeMm[0] / 2000;
+  const halfWidth = unit.sizeMm[1] / 2000, halfLength = unit.sizeMm[0] / 2000;
   const corner = (longitudinal: -1 | 1, lateral: -1 | 1): Vec3 => [
     unit.position.position[0] + right[0] * lateral * halfWidth + forward[0] * longitudinal * halfLength,
     unit.position.position[1],
@@ -84,12 +89,12 @@ export function hvacAxisPlanarReferences(unit: HvacIndoorUnit, walls: readonly H
   const origin = unit.position.position, ownFootprint = indoorUnitFootprint(unit), axes: readonly { key: HvacAxisPlanarReference['key']; label: HvacAxisPlanarReference['label']; axis: HvacAxisPlanarReference['axis']; sign: -1 | 1; direction: Vec3 }[] = [
     { key: 'px', label: '+X', axis: 'x', sign: 1, direction: [1, 0, 0] }, { key: 'nx', label: '−X', axis: 'x', sign: -1, direction: [-1, 0, 0] }, { key: 'pz', label: '+Z', axis: 'z', sign: 1, direction: [0, 0, 1] }, { key: 'nz', label: '−Z', axis: 'z', sign: -1, direction: [0, 0, -1] },
   ];
-  const ownBottom = unit.position.position[1] - unit.sectionMm[1] / 2000, ownTop = unit.position.position[1] + unit.sectionMm[1] / 2000;
+  const ownBottom = unit.position.position[1] - unit.sizeMm[2] / 2000, ownTop = unit.position.position[1] + unit.sizeMm[2] / 2000;
   return axes.flatMap(axis => {
     const ownExtent = Math.max(...ownFootprint.map(point => (point[0] - origin[0]) * axis.direction[0] + (point[2] - origin[2]) * axis.direction[2]));
     const targets = [
       ...walls.map(wall => ({ targetId: wall.id, targetKind: 'wall' as const, distance: rayPolygonDistanceXZ(origin, axis.direction, wallFootprint(wall)) })),
-      ...indoorUnits.filter(other => other.id !== unit.id && other.position.position[1] - other.sectionMm[1] / 2000 <= ownTop && other.position.position[1] + other.sectionMm[1] / 2000 >= ownBottom).map(other => ({ targetId: other.id, targetKind: 'indoor-unit' as const, distance: rayPolygonDistanceXZ(origin, axis.direction, indoorUnitFootprint(other)) })),
+      ...indoorUnits.filter(other => other.id !== unit.id && other.position.position[1] - other.sizeMm[2] / 2000 <= ownTop && other.position.position[1] + other.sizeMm[2] / 2000 >= ownBottom).map(other => ({ targetId: other.id, targetKind: 'indoor-unit' as const, distance: rayPolygonDistanceXZ(origin, axis.direction, indoorUnitFootprint(other)) })),
     ].filter((target): target is { targetId: string; targetKind: 'wall' | 'indoor-unit'; distance: number } => target.distance !== null && target.distance >= ownExtent - 1e-8).sort((left, right) => left.distance - right.distance || left.targetId.localeCompare(right.targetId));
     const target = targets[0];
     if (!target) return [];
@@ -106,18 +111,18 @@ export function editIndoorUnit(overlay: ConduitOverlayDocument, unitId: string, 
   if (connected && (change.position || change.rotationYDegrees !== undefined || change.sizeMm && change.sizeMm[0] !== unit.sizeMm[0])) return { overlay, reason: '已连接风管的内机不能移动、旋转或修改外壳长度。' };
   const sectionMm = change.sectionMm ? [...change.sectionMm] as [number, number] : unit.sectionMm;
   const requestedSize = change.sizeMm ? [...change.sizeMm] as [number, number, number] : unit.sizeMm;
-  const next = { ...unit, ...change, sizeMm: [requestedSize[0], sectionMm[0], sectionMm[1]] as [number, number, number], sectionMm };
+  const next = { ...unit, ...change, sizeMm: requestedSize, sectionMm };
   if (next.sectionMm.some(value => !Number.isFinite(value) || value <= 0)) return { overlay, reason: '风管截面必须为正数。' };
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, indoorUnits: overlay.hvac.indoorUnits.map(item => item.id === unitId ? next : item) } } };
 }
 
-export function placeIndoorUnit(overlay: ConduitOverlayDocument, position: RoutePoint, name = '空调内机'): { overlay: ConduitOverlayDocument; unit: HvacIndoorUnit } {
+export function placeIndoorUnit(overlay: ConduitOverlayDocument, position: RoutePoint, name = 'FCU 空调内机'): { overlay: ConduitOverlayDocument; unit: HvacIndoorUnit } {
   const supportedCenter: RoutePoint = { ...clone(position), position: [position.position[0], position.position[1] + HVAC_DEFAULT_UNIT_SIZE_MM[2] / 2000, position.position[2]] };
   const unit: HvacIndoorUnit = { id: id('hvac-unit'), type: 'indoor-air-handling-unit', name, position: supportedCenter, mount: position.attachment ? { kind: 'host', attachment: clone(position.attachment) } : undefined, sizeMm: [...HVAC_DEFAULT_UNIT_SIZE_MM], sectionMm: [...HVAC_DEFAULT_SECTION_MM], rotationYDegrees: 0, createdAt: stamp() };
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, indoorUnits: [...overlay.hvac.indoorUnits, unit] } }, unit };
 }
 
-export function placeThermostat(overlay: ConduitOverlayDocument, position: RoutePoint, name = '空调控温器'): { overlay: ConduitOverlayDocument; thermostat: HvacThermostat } | { overlay: ConduitOverlayDocument; reason: string } {
+export function placeThermostat(overlay: ConduitOverlayDocument, position: RoutePoint, name = 'FCU 温控器'): { overlay: ConduitOverlayDocument; thermostat: HvacThermostat } | { overlay: ConduitOverlayDocument; reason: string } {
   if (position.attachment?.hostKind !== 'wall' && position.attachment?.hostKind !== 'beam') return { overlay, reason: '控温器只能安装在墙面或梁侧面。' };
   const thermostat: HvacThermostat = { id: id('thermostat'), type: 'thermostat', name, position: clone(position), mount: { kind: 'host', attachment: clone(position.attachment) }, sizeMm: [86, 86, 50], createdAt: stamp() };
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, thermostats: [...overlay.hvac.thermostats, thermostat] } }, thermostat };

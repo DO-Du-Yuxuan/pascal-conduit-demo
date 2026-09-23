@@ -13,3 +13,9 @@ A Beam follows the effective elevation of its host Ceiling and may cross multipl
 All device types may mount on an exposed Beam face. A later Beam edit never moves mounted devices or conduit implicitly: each keeps its world geometry, any no-longer-valid attachment becomes explicitly unhosted, and conflicts remain for manual correction. Deleting a Beam is blocked while it still hosts devices; otherwise deletion removes orphaned Beam penetrations but preserves conduit.
 
 Beam authoring uses a default-visible per-Level Layout reference plane so it remains available when Ceiling geometry is hidden; this plane is Overlay-owned editing state and never changes committed geometry when moved. A Beam normally stops at a conflicting Ceiling elevation, but holding Ctrl or Command explicitly crosses that boundary while retaining the source Ceiling elevation, keeping the member straight rather than stepping or splitting it.
+
+## Supersession
+
+ADR 0006 updates the current public schema to Project 4.0 and its specific type catalog; this historical decision does not authorize retired generic public types. See [0006-project-4-system-catalog.md](0006-project-4-system-catalog.md).
+
+ADR 0005 replaces the separate Project/Overlay file ownership and export decision in this record. The physical modeling, authoring limits, and reconnection behavior remain applicable; the Overlay is now an internal editor adapter and its authored content is saved in the unified Project JSON.

@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, DEVICE_TYPES, parseOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
-import { commitBranchRoute, commitJunctionBoxRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
+import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostKind: HostKind = "wall"): RoutePoint => ({ position: [x, y, z], attachment: { hostId: `${hostKind}-a`, hostKind, surface: hostKind === "wall" ? "interior" : "top", normal: hostKind === "wall" ? [0, 0, 1] : [0, 1, 0], levelId: "L0" } });
 function rooted(system: RoutingSystem) {
-  const sourceType = system === "network" ? "weak-panel" : system === "sprinkler" ? "fire-inlet" : "strong-panel";
-  const host: HostKind = sourceType === "fire-inlet" ? "slab" : "wall";
+  if (system === "sprinkler") return commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("sprinkler", 50, "suspended", [point(0, 1, 0, "slab"), point(2, 1, 0, "slab")]));
+  const sourceType = system === "network" ? "weak-panel" : "strong-panel";
+  const host: HostKind = "wall";
   let overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), sourceType, point(0, 1, 0, host));
   const start = startRouteFromDevice(overlay, overlay.devices[0].id, system); overlay = start.overlay;
-  const end = system === "sprinkler" ? point(2, 1, 0, "slab") : point(2, 1, 0);
-  return commitDeviceRoute(overlay, planRoute(system, system === "sprinkler" ? 50 : 20, system === "sprinkler" ? "suspended" : "surface", [start.port.position, end]), start.circuit, start.port);
+  const end = point(2, 1, 0);
+  return commitDeviceRoute(overlay, planRoute(system, 20, "surface", [start.port.position, end]), start.circuit, start.port);
 }
 
 describe("network devices and rooted circuits", () => {
@@ -57,10 +58,18 @@ describe("network devices and rooted circuits", () => {
     expect(committed.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(true);
   });
 
-  it.each(["receptacle", "lighting", "network", "sprinkler"] as const)("commits an open %s route from its legal source", (system) => {
+  it.each(["receptacle", "lighting", "network"] as const)("commits an open %s route from its legal source", (system) => {
     const overlay = rooted(system);
     expect(overlay.segments.some((segment) => segment.system === system && segment.legacyUnrooted === false)).toBe(true);
     expect(overlay.circuits.some((circuit) => circuit.system === system && circuit.status === "rooted")).toBe(true);
+  });
+
+  it("commits a free-start fire-water route without a Circuit", () => {
+    const overlay = rooted("sprinkler");
+    expect(overlay.segments[0]?.system).toBe("sprinkler");
+    expect(overlay.segments[0]?.circuitId).toBeUndefined();
+    expect(overlay.circuits).toEqual([]);
+    expect(deviceDiagnostics(overlay)).toEqual([]);
   });
 
   it("enforces device hosts and source system capabilities", () => {
@@ -83,13 +92,13 @@ describe("network devices and rooted circuits", () => {
     expect(head.sprinklerDirection).toBe("upright");
   });
 
-  it("mounts every device type on exposed Beam faces with face-derived frames and ports", () => {
+  it("mounts every compatible device type on exposed Beam faces with face-derived frames and ports", () => {
     const faces = [
       { surface: "bottom", normal: [0, -1, 0] as [number, number, number], u: [0, 0, 1] as [number, number, number], v: [1, 0, 0] as [number, number, number] },
       { surface: "side-a", normal: [0, 0, -1] as [number, number, number], u: [1, 0, 0] as [number, number, number], v: [0, 1, 0] as [number, number, number] },
       { surface: "end-a", normal: [-1, 0, 0] as [number, number, number], u: [0, 0, 1] as [number, number, number], v: [0, 1, 0] as [number, number, number] },
     ];
-    for (const face of faces) for (const type of DEVICE_TYPES) {
+    for (const face of faces) for (const type of DEVICE_TYPES.filter((type) => type !== "rfid-reader" || face.surface !== "bottom")) {
       const position: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: face.surface, normal: face.normal, levelId: "L0", basis: { u: face.u, v: face.v } } };
       const device = createNetworkDevice(type, position);
       expect(device.position.attachment).toMatchObject({ hostId: "beam-a", hostKind: "beam", surface: face.surface });
@@ -104,9 +113,23 @@ describe("network devices and rooted circuits", () => {
     for (const type of DEVICE_TYPES) expect(() => createNetworkDevice(type, top)).toThrow();
   });
 
+  it("allows RFID readers on a wall or Beam side, but rejects Beam top and bottom faces", () => {
+    const wall: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "wall-a", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0" } };
+    const side: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: "side-a", normal: [0, 0, -1], levelId: "L0" } };
+    const bottom: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0" } };
+    const top: RoutePoint = { position: [1, 2, 3], attachment: { hostId: "beam-a", hostKind: "beam", surface: "top", normal: [0, 1, 0], levelId: "L0" } };
+    const reader = createNetworkDevice("rfid-reader", wall);
+    expect(reader.position.attachment?.hostKind).toBe("wall");
+    expect(reader.sizeMm).toEqual([86, 130, 25]);
+    expect(reader.ports).toEqual([]);
+    expect(createNetworkDevice("rfid-reader", side).position.attachment?.surface).toBe("side-a");
+    expect(() => createNetworkDevice("rfid-reader", bottom)).toThrow(/RFID/);
+    expect(() => createNetworkDevice("rfid-reader", top)).toThrow(/RFID/);
+  });
+
   it("creates a sensor point without conduit ports or systems", () => {
     const sensor = createNetworkDevice("sensor", point(1, 2, 0, "ceiling"));
-    expect(sensor.name).toBe("传感器");
+    expect(sensor.name).toBe("温湿度传感器");
     expect(sensor.systems).toEqual([]);
     expect(sensor.ports).toEqual([]);
   });
@@ -224,6 +247,23 @@ describe("network devices and rooted circuits", () => {
     expect(committed.segments.length).toBeGreaterThan(started.overlay.segments.length);
   });
 
+  it("connects a route started at an 86 box to the clicked device port", () => {
+    const base = rooted("receptacle");
+    const branched = commitBranchRoute(base, base.segments[0].id, [point(1, 1, 0), point(1, 1, 1)], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 });
+    const target = createNetworkDevice("socket", point(1, 1, 2));
+    const withTarget = { ...branched, devices: [...branched.devices, target] };
+    const box = withTarget.junctionBoxes[0];
+    const startPort = box.ports.find((port) => junctionBoxPortCanStart(withTarget, box, port))!;
+    const started = startRouteFromJunctionBox(withTarget, box.id, startPort.id);
+    const endPort = deviceTargetPorts(target, "receptacle")[0];
+    const plan = planRoute("receptacle", 20, "surface", [started.port.position, endPort.position]);
+    const connected = commitJunctionBoxRoute(started.overlay, started, plan, target.id, endPort.id);
+    const lastSegment = connected.segments[connected.segments.length - 1]!;
+    expect(connected).not.toBe(started.overlay);
+    expect(lastSegment.endPortId).toBe(endPort.id);
+    expect(connected.devices.find((device) => device.id === target.id)?.ports.find((port) => port.id === endPort.id)?.connectedSegmentIds).toEqual([lastSegment.id]);
+  });
+
   it("allows every 86 box on floor and ceiling faces while keeping panels wall-only", () => {
     const original = rooted("receptacle"), segment = original.segments[0], routed = { ...original, segments: [{ ...segment, start: point(0, 0, 0, "slab"), end: point(2, 0, 0, "slab") }] };
     const inserted = insertDeviceOnSegment(routed, segment.id, "socket", [1, 0, 0]);
@@ -306,8 +346,8 @@ describe("network devices and rooted circuits", () => {
 
   it("inserts a sprinkler head on a floating segment after a standard elbow", () => {
     let overlay = rooted("sprinkler");
-    const circuit = overlay.circuits[0], first = overlay.segments[0];
-    overlay = { ...overlay, segments: [{ ...first, start: { position: [0, 2, 0] }, end: { position: [1, 2, 0] }, circuitId: circuit.id }] };
+    const first = overlay.segments[0]!;
+    overlay = { ...overlay, segments: [{ ...first, start: { position: [0, 2, 0] }, end: { position: [1, 2, 0] } }] };
     const extension = planRoute("sprinkler", 50, "suspended", [{ position: [1, 2, 0] }, { position: [1, 2, 1] }]);
     const endpoint = openRouteEndpoints(overlay).find((candidate) => candidate.end === "end")!;
     overlay = commitEndpointRoute(overlay, endpoint, extension);

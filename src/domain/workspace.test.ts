@@ -88,5 +88,7 @@ describe("workspace project lifecycle", () => {
     const state = createWorkspace(project, createEmptyOverlay("one.json", "one"));
     const edited = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as object), level: { id: "level", type: "level", name: "edited" } } } };
     expect(commitWorkspaceTransaction(state, { project: edited })).toMatchObject({ status: "rejected" });
+    const nonBeamChild = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as object), level: { id: "level", type: "level", children: ["wall"] }, wall: { id: "wall", type: "wall", parentId: "level" } } } };
+    expect(commitWorkspaceTransaction(state, { project: nonBeamChild })).toMatchObject({ status: "rejected" });
   });
 });

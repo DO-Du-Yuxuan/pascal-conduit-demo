@@ -1,12 +1,38 @@
 // @ts-nocheck -- Vitest runs this Node-only source contract outside the browser bundle.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { BUILDER_CARDS, canUseCatalogSystem, catalogLockForBuilderCard } from "./builder-workbench";
 
 const workspace = readFileSync(new URL("./three/ThreeDWorkspace.tsx", import.meta.url), "utf8");
 const compactWorkspace = workspace.replace(/\s+/g, " ");
 const scene = readFileSync(new URL("./components/ConduitScene.tsx", import.meta.url), "utf8");
 
 describe("device point interaction wiring", () => {
+  it("blocks route and branch clicks that cross the active Builder system lock", () => {
+    const receptacleBranch = catalogLockForBuilderCard(BUILDER_CARDS.electrical.find((card) => card.tool === "branch")!);
+    const lightingRoute = catalogLockForBuilderCard(BUILDER_CARDS.lighting.find((card) => card.tool === "draw")!);
+    expect(canUseCatalogSystem(receptacleBranch, "lighting")).toBe(false);
+    expect(canUseCatalogSystem(lightingRoute, "network")).toBe(false);
+    expect(canUseCatalogSystem(lightingRoute, "receptacle")).toBe(false);
+    expect(canUseCatalogSystem(receptacleBranch, "receptacle")).toBe(true);
+    expect(canUseCatalogSystem(lightingRoute, "lighting")).toBe(true);
+
+    const routeEntrances = [
+      workspace.slice(workspace.indexOf("const onStartDeviceRoute ="), workspace.indexOf("const onStartEndpoint =")),
+      workspace.slice(workspace.indexOf("const onStartEndpoint ="), workspace.indexOf("const onStartJunctionRoute =")),
+      workspace.slice(workspace.indexOf("const onStartJunctionRoute ="), workspace.indexOf("const onConnectLegacy =")),
+      workspace.slice(workspace.indexOf("const onBranch ="), workspace.indexOf("const deleteObject =")),
+    ];
+    expect(routeEntrances[0]).toContain("canUseCatalogSystem(catalogLock, availableSystem)");
+    expect(routeEntrances[1]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
+    expect(routeEntrances[2]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
+    expect(routeEntrances[3]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
+    expect(routeEntrances[0].indexOf("canUseCatalogSystem(catalogLock, availableSystem)")).toBeLessThan(routeEntrances[0].search(/selectSystem\(|setDraft\(/));
+    for (const entrance of routeEntrances.slice(1)) {
+      expect(entrance.indexOf("canUseCatalogSystem(catalogLock, candidateSystem)")).toBeLessThan(entrance.search(/selectSystem\(|setDraft\(|set(?:Device|Junction|Endpoint)RouteStart\(/));
+    }
+  });
+
   it("renders every Ctrl/Command-selected device with selected styling", () => {
     expect(workspace).toContain("displaySelected: selectedDeviceIds.includes(device.id)");
     expect(scene).toContain("displaySelected");
@@ -77,8 +103,8 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain('displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource })');
   });
 
-  it("allows only the white network system to begin and commit in empty space", () => {
-    expect(workspace).toContain('const canDrawWithoutSource = tool === "draw" && system === "network"');
+  it("allows network and fire-water systems to begin and commit in empty space", () => {
+    expect(workspace).toContain('const canDrawWithoutSource = tool === "draw" && (system === "network" || system === "sprinkler")');
     expect(workspace).toContain("pointOnViewPlane(draft[draft.length - 1]?.position ?? scene?.bounds.center ?? [0, 0, 0], origin, direction)");
     expect(workspace).toContain("commit(commitPlannedRoute(overlay, plan))");
   });

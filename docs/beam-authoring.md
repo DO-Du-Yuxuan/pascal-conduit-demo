@@ -1,6 +1,6 @@
 # Demo Beam authoring
 
-`beam` is a Pascal Conduit Routing Demo extension, not a Pascal Core node kind. It is the only editable building node: all imported Pascal nodes and unknown fields remain read-only and are preserved verbatim. Beam geometry is stored in project JSON; conduit, devices, construction state, and future Beam penetrations remain in the independent Overlay.
+`beam` is a Pascal Conduit Routing Demo extension, not a Pascal Core node kind. It is the only editable building node: all imported Pascal nodes and unknown fields remain read-only and are preserved verbatim. Beam geometry, construction systems and Level reference planes are saved in one unified Project JSON. The editor keeps an Overlay-shaped in-memory adapter for construction edits.
 
 ## First authoring slice
 
@@ -8,7 +8,7 @@ The 3D **梁** tool starts on a Ceiling underside. Click once to fix the plan ax
 
 ## Layout reference plane
 
-The Beam tool also has one Overlay-owned **Layout reference plane** per Level. It is visible by default, derives its height from the largest valid Ceiling polygon on that Level (or the identified 2700 mm fallback), and can be hidden or given an explicit millimetre height in either the Beam panel or an eligible horizontal point-device panel. These settings survive Overlay export/import and do not enter Pascal project JSON. The plane supplies only the active two-click interaction coordinates: accepted Beams still validate against Ceiling geometry and retain their Ceiling ids, elevation and basis. Changing the plane never moves an existing Beam or device point. When a transient Beam is shown it is deliberately non-pickable, so it cannot intercept the second authoring click.
+The Beam tool also has one **Layout reference plane** per Level. It is visible by default, derives its height from the largest valid Ceiling polygon on that Level (or the identified 2700 mm fallback), and can be hidden or given an explicit millimetre height in either the Beam panel or an eligible horizontal point-device panel. These settings survive unified Project export/import in the owning `Level.layoutReferencePlanes` array; installation planes use `Level.installationReferencePlanes`. The imported building geometry remains read-only. The plane supplies only the active two-click interaction coordinates: accepted Beams still validate against Ceiling geometry and retain their Ceiling ids, elevation and basis. Changing the plane never moves an existing Beam or device point. When a transient Beam is shown it is deliberately non-pickable, so it cannot intercept the second authoring click.
 
 Beam authoring uses a persistent **Orthogonal lock** state. Its panel control is visible whenever the Beam tool is active; Shift toggles the same state and gives immediate pointer-adjacent feedback. When on, the live candidate resolves to world X or Z from the confirmed start, and when off it remains freely angled. The start must lie in an effective Ceiling region; the endpoint is free and may optionally snap to a physical Wall, Column, existing Beam face, or Ceiling polygon edge. Centrelines are not snap targets. The complete Beam axis must intersect at least one Ceiling. A normal candidate cannot cross into a Ceiling region with a different effective elevation. Ctrl on Windows/Linux, or Command on macOS, makes that exceptional crossing explicit: the committed Beam remains one straight member at its start Ceiling elevation and records that explicit crossing rather than stepping or adopting the target height.
 
@@ -26,7 +26,7 @@ Invalid imported Beam records remain in raw project JSON and receive parser diag
 
 3D renders a selectable oriented gray solid on a default-on Beam layer. The 2D building layer renders only its selectable gray footprint: no persistent dimension text and no 2D editing. Creating a Beam is one project workspace transaction, so shared undo/redo restores the project document and its independent dirty state.
 
-Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis, including explicit elevation-crossing evidence. The Layout reference plane and all conduit/device/construction data remain Overlay-owned and never become Beam hosts in project JSON.
+Project export and re-import retain Beam geometry, identity, name, Level/Ceiling relationships, elevation value and basis, including explicit elevation-crossing evidence. A created Beam is added to both `nodes` and its owning `Level.children`; deletion removes both entries. The workspace permits only this Beam child-list change on an imported Level, leaving its other fields read-only. The Layout reference plane is saved under its Level, while conduit, device and construction data are saved under their system containers. The plane never becomes a Beam host.
 
 ## 3D geometry editing
 
