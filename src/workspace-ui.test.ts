@@ -56,8 +56,9 @@ describe("conduit workspace UI contract", () => {
     expect(planSource).toContain('{hvacVisible && <HvacPlan');
   });
 
-  it("gives wall thermostats the same immediate edge-positioning interaction as switches", () => {
-    expect(threeDSource).toContain('aria-label="空调控温器边缘定位"');
+  it("gives wall thermostats the same four-direction center positioning as other points", () => {
+    expect(threeDSource).toContain('aria-label="空调控温器中心定位"');
+    expect(threeDSource).toContain("thermostatPositionDraft.planar");
     expect(threeDSource).toContain("applyThermostatPosition");
     expect(threeDSource).toContain("thermostatPositioningProxy");
     expect(hvacSceneSource).toContain("HvacThermostatDimensions");
@@ -76,6 +77,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("devicePreview=");
     expect(threeDSource).toContain("onDevicePreview={scheduleInlineDevicePreview}");
     expect(threeDSource).toContain("rootLegacyNetwork");
+    expect(threeDSource).toContain("完成地标高");
+    expect(threeDSource).toContain("下方首个实体净距");
+    expect(threeDSource).toContain("deviceIds: bulkVertical ? selectedDeviceIds");
     expect(threeDSource).toContain('if (tool === "point")');
     expect(conduitSceneSource).toContain("ignorePreviewRay");
     expect(threeDSource).not.toContain("网络线路必须连接到网络面板终点");
@@ -136,11 +140,31 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain('tool === "draw" || tool === "branch"');
     expect(threeDSource).toContain('tool === "point"');
     expect(threeDSource).toContain('tool === "select"');
-    expect(threeDSource).toContain('className="conduit-panel-details"');
+    expect(threeDSource).toContain('className="conduit-panel-details conduit-shortcuts"');
     expect(threeDSource).not.toContain("施工与槽孔");
-    expect(threeDSource).toContain("管线图层");
+    expect(threeDSource).not.toContain("管线图层");
     expect(threeDSource).toContain('className="conduit-utility-grid"');
     expect(styles).toContain("grid-template-columns:repeat(5,minmax(0,1fr))");
+  });
+
+  it("exposes independent 3D building and construction layers from the canvas", () => {
+    expect(threeDSource).toContain('className="three-d-layer-popover"');
+    expect(threeDSource).toContain('aria-label="3D 图层"');
+    expect(threeDSource).toContain('["ceilings", "天花"]');
+    expect(threeDSource).toContain('["furniture", "家具与楼梯"]');
+    expect(threeDSource).toContain('checked={overlay.settings.visibleSystems[key]} onChange={() => toggleSystemLayer(key)}');
+    expect(threeDSource).toContain('checked={overlay.settings.sensorVisible} onChange={toggleSensorLayer}');
+    expect(threeDSource).toContain('checked={overlay.hvac.visible} onChange={toggleHvacLayer}');
+    expect(threeDSource).toContain('checked={layers[layer]} onChange={() => toggleBuildingLayer(layer)}');
+    expect(styles).toContain(".three-d-layer-popover{position:absolute;right:12px;top:12px");
+    expect(styles).toContain(".three-d-layer-popover-content");
+  });
+
+  it("shows selected object properties in a narrow right-side system panel", () => {
+    expect(threeDSource).toContain('className="conduit-panel conduit-selection-panel"');
+    expect(threeDSource).toContain('aria-label={selectedObjectPanelTitle}');
+    expect(threeDSource).toContain('hasSelectedObject && (');
+    expect(styles).toContain('.conduit-selection-panel{left:auto;right:12px;top:58px;width:min(260px');
   });
 
   it("keeps an explicit indoor-unit placement action inside the HVAC tool group", () => {

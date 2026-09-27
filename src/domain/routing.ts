@@ -148,10 +148,10 @@ export function commitPlannedRoute(overlay: ConduitOverlayDocument, plan: Planne
 
 export type JunctionBoxRouteStart = { overlay: ConduitOverlayDocument; box: JunctionBox; port: NetworkPort; circuit: Circuit };
 
-const boxHasRootedCircuit = (overlay: ConduitOverlayDocument, box: JunctionBox) => overlay.circuits.find((circuit) => circuit.status === "rooted" && circuit.system === box.system && circuit.segmentIds.some((id) => box.segmentIds.includes(id)));
+const boxCircuitForStart = (overlay: ConduitOverlayDocument, box: JunctionBox) => overlay.circuits.find((circuit) => (circuit.status === "rooted" || circuit.status === "broken") && circuit.system === box.system && circuit.segmentIds.some((id) => box.segmentIds.includes(id)));
 
 export function junctionBoxPortCanStart(overlay: ConduitOverlayDocument, box: JunctionBox, port: NetworkPort) {
-  if (port.system !== box.system || !boxHasRootedCircuit(overlay, box)) return false;
+  if (port.system !== box.system || !boxCircuitForStart(overlay, box)) return false;
   return port.connectedSegmentIds.length === 0 || Boolean(sameFaceFreePeer(box.ports, port, box.system));
 }
 
@@ -191,14 +191,14 @@ export function startRouteFromJunctionBox(overlay: ConduitOverlayDocument, boxId
     workingOverlay = released.overlay; box = workingOverlay.junctionBoxes.find((item) => item.id === boxId)!;
   }
   const port = box.ports.find((candidate) => candidate.id === requestedPortId)!;
-  const circuit = boxHasRootedCircuit(workingOverlay, box);
+  const circuit = boxCircuitForStart(workingOverlay, box);
   if (!circuit || port.connectedSegmentIds.length) throw new Error("底盒未接入合法来源或孔位不可用。");
   return { overlay: workingOverlay, box, port, circuit };
 }
 
 export function commitJunctionBoxRoute(overlay: ConduitOverlayDocument, start: JunctionBoxRouteStart, plan: PlannedRoute, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   if (!plan.canCommit || !plan.segments.length || plan.system !== start.box.system) return overlay;
-  const box = overlay.junctionBoxes.find((item) => item.id === start.box.id), circuit = overlay.circuits.find((item) => item.id === start.circuit.id && item.status === "rooted");
+  const box = overlay.junctionBoxes.find((item) => item.id === start.box.id), circuit = overlay.circuits.find((item) => item.id === start.circuit.id && (item.status === "rooted" || item.status === "broken"));
   const storedPort = box?.ports.find((port) => port.id === start.port.id);
   if (!box || !circuit || !storedPort || storedPort.connectedSegmentIds.length) return overlay;
   const segments = plan.segments.map((segment) => ({ ...segment, circuitId: circuit.id, legacyUnrooted: false }));

@@ -87,6 +87,12 @@ describe("network devices and rooted circuits", () => {
     expect(weak.ports.filter((port) => port.position.position[1] > weak.position.position[1])).toHaveLength(10);
     expect(weak.ports.slice(0, 10).every((port) => port.direction[1] < -.99)).toBe(true);
     expect(weak.ports.slice(10).every((port) => port.direction[1] > .99)).toBe(true);
+    for (const panel of [strong, weak]) {
+      const sourcePort = panel.ports[0]!, normal = panel.frame!.front;
+      const normalOffset = sourcePort.position.position.reduce((sum, value, axis) => sum + (value - panel.position.position[axis]!) * normal[axis]!, 0);
+      expect(normalOffset).toBeCloseTo(0);
+      expect(sourcePort.position.attachment).toEqual(panel.position.attachment);
+    }
     const head = createNetworkDevice("sprinkler-head", point(1, 2, 0, "ceiling"));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.sprinklerDirection).toBe("upright");
@@ -170,7 +176,7 @@ describe("network devices and rooted circuits", () => {
     expect(outputYs[0]).toBeLessThan(.7);
   });
 
-  it("gives both strong-panel systems the same twenty room-facing physical holes", () => {
+  it("keeps shared panel ports on the mounting surface and separates only overflow rows", () => {
     const panel = createNetworkDevice("strong-panel", point(0, 1, 0));
     const receptacle = panel.ports.filter((port) => port.system === "receptacle"), lighting = panel.ports.filter((port) => port.system === "lighting");
     expect(receptacle).toHaveLength(20);
@@ -178,7 +184,7 @@ describe("network devices and rooted circuits", () => {
     expect(receptacle.map((port) => port.position.position)).toEqual(lighting.map((port) => port.position.position));
     expect(receptacle.filter((port) => port.direction[1] < -.99)).toHaveLength(10);
     expect(receptacle.filter((port) => port.direction[1] > .99)).toHaveLength(10);
-    expect(receptacle.every((port) => port.position.position[2] > panel.position.position[2] + panel.sizeMm[2] / 2000)).toBe(true);
+    expect(receptacle.every((port) => port.position.position[2] === panel.position.position[2])).toBe(true);
   });
 
   it("prevents two systems from occupying the same shared panel hole", () => {
@@ -361,6 +367,30 @@ describe("network devices and rooted circuits", () => {
     const overlay = rooted("lighting"), sourceId = overlay.devices[0].id, removed = deleteNetworkObject(overlay, sourceId);
     expect(removed.devices).toHaveLength(0); expect(removed.circuits).toHaveLength(0); expect(removed.segments).toHaveLength(0);
     expect(deviceDiagnostics(removed)).toEqual([]);
+  });
+
+  it("keeps the surviving 86-box ports usable after deleting an adjacent conduit segment", () => {
+    const base = rooted("receptacle");
+    const inserted = insertDeviceOnSegment(base, base.segments[0].id, "socket", [1, 1, 0]);
+    const socket = inserted.devices.find((device) => device.deviceType === "socket")!;
+    const downstream = socket.ports.flatMap((port) => port.connectedSegmentIds)
+      .map((id) => inserted.segments.find((segment) => segment.id === id)!)
+      .find((segment) => segment.end.position[0] > 1.5 || segment.start.position[0] > 1.5)!;
+    const afterDelete = deleteNetworkObject(inserted, downstream.id);
+    const remainingSocket = afterDelete.devices.find((device) => device.id === socket.id)!;
+    const usablePorts = remainingSocket.ports.filter((port) => portCanStart(afterDelete, remainingSocket, port, "receptacle"));
+
+    expect(afterDelete.circuits[0].status).toBe("broken");
+    expect(usablePorts.length).toBeGreaterThan(0);
+    const started = startRouteFromDevice(afterDelete, remainingSocket.id, "receptacle", usablePorts[0].id);
+    const continuation = planRoute("receptacle", 20, "surface", [started.port.position, point(1, 2, 0)]);
+    expect(commitDeviceRoute(started.overlay, continuation, started.circuit, started.port).segments.length)
+      .toBeGreaterThan(afterDelete.segments.length);
+
+    const allGone = afterDelete.segments.reduce((current, segment) => deleteNetworkObject(current, segment.id), afterDelete);
+    const disconnectedSocket = allGone.devices.find((device) => device.id === socket.id)!;
+    expect(disconnectedSocket.ports.every((port) => !portCanStart(allGone, disconnectedSocket, port, "receptacle"))).toBe(true);
+    expect(() => startRouteFromDevice(allGone, disconnectedSocket.id, "receptacle")).toThrow();
   });
 
   it("roots an entire compatible legacy component after reaching its open end", () => {

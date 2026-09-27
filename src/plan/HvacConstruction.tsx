@@ -51,7 +51,6 @@ function unitDimension(unit: HvacIndoorUnit, walls: readonly WallFace[], levelId
 }
 
 export function buildHvacPositionDimensions(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string): PointPositionDimension[] {
-  if (!overlay.hvac.visible) return [];
   const walls = wallsOnLevel(nodes, levelId), units = overlay.hvac.indoorUnits.filter(unit => levelFor(unit) === levelId);
   const unitDimensions = units.flatMap((unit, index) => unitDimension(unit, walls, levelId, index * 3));
   const ductDimensions = overlay.hvac.ducts.filter(duct => units.some(unit => unit.id === duct.indoorUnitId)).flatMap((duct, ductIndex) => duct.segmentIds.flatMap((id, segmentIndex) => {

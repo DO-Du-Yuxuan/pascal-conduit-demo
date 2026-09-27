@@ -43,6 +43,24 @@ describe("routing collision validation", () => {
     expect(checked.canCommit).toBe(true);
   });
 
+  it("keeps an open-end helper separate from a physical connection", () => {
+    const overlay = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(0, 0, 0), point(1, 0, 0)]));
+    const coincidentHelper = planRoute("receptacle", 20, "surface", [point(1, 0, 1), point(1, 0, 0)]);
+    const projectedHelper = planRoute("receptacle", 20, "surface", [point(1, 0, 1), point(1, 0, .1)]);
+
+    // A helper click does not supply the endpoint-contact exception used by
+    // explicit continuation, so it cannot leave a second route pretending to
+    // connect at the same physical location.
+    expect(withCollisionDiagnostics(overlay, coincidentHelper).canCommit).toBe(false);
+    const checkedProjection = withCollisionDiagnostics(overlay, projectedHelper);
+    expect(checkedProjection.canCommit).toBe(true);
+
+    const next = commitPlannedRoute(overlay, checkedProjection);
+    expect(next.segments).toHaveLength(2);
+    expect(next.segments[0]?.endPortId).toBeUndefined();
+    expect(next.segments[1]?.startPortId).toBeUndefined();
+  });
+
   it("checks branch box clearance against other network objects", () => {
     const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(0, 0, 0), point(2, 0, 0)]));
     const other = commitPlannedRoute(base, planRoute("network", 20, "surface", [point(1, 0, -.2), point(1, 0, .2)]));

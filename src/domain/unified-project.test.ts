@@ -250,6 +250,30 @@ it("accepts route authoring only under ElectricalSystem or LightingSystem", () =
   }
 });
 
+it("exports a bridge bend through the public ConduitElbow fitting discriminator", () => {
+  const raw = project();
+  const loaded = decodeUnifiedProject(raw, "bridge.json", "sha");
+  const bridge = {
+    id: "bridge-fitting",
+    type: "conduit-fitting" as const,
+    fitting: "bridge-bend" as const,
+    bendStyle: "sweep" as const,
+    radiusMm: 150,
+    system: "receptacle" as const,
+    diameterMm: 20,
+    position: { position: [1, 0.2, 0] as [number, number, number] },
+    segmentIds: ["bridge-before", "bridge-after"],
+    ports: [],
+    bridge: { obstacleSegmentId: "crossing", entry: [0.9, 0, 0] as [number, number, number], crestStart: [0.95, 0.1, 0] as [number, number, number], crestEnd: [1.05, 0.1, 0] as [number, number, number], exit: [1.1, 0, 0] as [number, number, number], riseMm: 100, clearanceMm: 10 },
+  };
+  const overlay = { ...loaded.overlay, fittings: [bridge] };
+  const saved = encodeUnifiedProject(loaded.projectRaw, overlay);
+  expect(saved.nodes[bridge.id]).toMatchObject({ type: "ConduitElbow", fitting: "elbow", bridge: bridge.bridge });
+  const reopened = decodeUnifiedProject(saved, "bridge-saved.json", "sha2");
+  expect(reopened.overlay.fittings[0]).toMatchObject({ id: bridge.id, fitting: "bridge-bend", bridge: bridge.bridge });
+  expect(encodeUnifiedProject(reopened.projectRaw, reopened.overlay).nodes[bridge.id]).toMatchObject({ type: "ConduitElbow", fitting: "elbow", bridge: bridge.bridge });
+});
+
 it("rejects Circuit fields on FireWaterPipe", () => {
   const forbiddenFields: Array<[string, unknown]> = [["circuitId", "circuit-1"], ["legacyUnrooted", true]];
   for (const [field, value] of forbiddenFields) {

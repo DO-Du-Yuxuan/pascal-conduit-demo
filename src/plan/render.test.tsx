@@ -4,9 +4,11 @@ import {createRoot} from 'react-dom/client';
 import {afterEach,describe,expect,it,vi} from 'vitest';
 import type {NodeData} from '../types';
 import {createEmptyOverlay,type ConduitOverlayDocument,type NetworkDevice} from '../domain/overlay';
+import {createHvacDuct,placeIndoorUnit} from '../domain/hvac';
 import {createPlanContext} from './model';
 import {ConduitPlanOverlay,devicePlanRotation} from './ConduitPlan';
 import {ConstructionAnnotations,ConstructionNotices,missingConstructionDrawingLayout,useConstructionPlan} from './ConstructionAnnotations';
+import {buildHvacPositionDimensions} from './HvacConstruction';
 import {ConstructionLegend} from './ConstructionLegend';
 import {PointPositionDimensions} from './PointPositionDimensions';
 import {buildExteriorDimensions} from '../geometry/exterior-dimensions';
@@ -21,6 +23,19 @@ function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange,selec
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]} selectionClearVersion={selectionClearVersion}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
+ it('keeps 2D HVAC geometry and dimensions independent of the persisted 3D HVAC visibility',()=>{
+  const placed=placeIndoorUnit(createEmptyOverlay('a','sha'),{position:[0,2.7,0]});
+  const mounted={...placed.overlay,hvac:{...placed.overlay.hvac,indoorUnits:placed.overlay.hvac.indoorUnits.map(unit=>({...unit,mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}}))}};
+  const routed=createHvacDuct(mounted,placed.unit.id,'supply',{position:[0,2.7,0]},{position:[2,2.85,.3]});
+  if(!('duct' in routed)) throw new Error('fixture');
+  routed.overlay.hvac.visible=false;
+  const segmentId=routed.duct.segmentIds[0]!;
+  const context=createPlanContext(nodes,routed.overlay),div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={routed.overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} hvacVisible={true}/></svg>));
+  expect(div.querySelector('[data-hvac-indoor-unit]')).not.toBeNull();
+  expect(div.querySelector(`[data-hvac-duct-segment="${segmentId}"]`)).not.toBeNull();
+  expect(buildHvacPositionDimensions(nodes,routed.overlay,'l').some(dimension=>dimension.sourceId===segmentId)).toBe(true);
+ });
  it('records generated drawing layout once without replacing existing positions',()=>{
   const overlay=createEmptyOverlay('a','sha');
   const oldLabel:[number,number]=[9,-3],oldOffset=.91;

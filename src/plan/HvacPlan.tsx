@@ -65,7 +65,6 @@ function IndoorUnitSymbol({ unit, selected, scale, rotation, onSelect }: { unit:
 }
 
 export function HvacPlan({ overlay, levelId, selectedId, onSelect, scale, rotation }: { overlay: ConduitOverlayDocument; levelId: string; selectedId: string | null; onSelect: (id: string) => void; scale: number; rotation: number }) {
-  if (!overlay.hvac.visible) return null;
   const units = overlay.hvac.indoorUnits.filter(unit => levelFor(unit) === levelId);
   const unitIds = new Set(units.map(unit => unit.id));
   const ducts = overlay.hvac.ducts.filter(duct => unitIds.has(duct.indoorUnitId));

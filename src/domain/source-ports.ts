@@ -3,7 +3,6 @@ import type { DeviceFrame, NetworkPort, RoutePoint, RoutingSystem, Vec3 } from "
 export const SOURCE_PORTS_PER_EDGE = 10;
 const SOURCE_PORT_EDGE_INSET = .045;
 const SOURCE_PORT_LANE_SPACING = .035;
-const SOURCE_PORT_FACE_CLEARANCE = .013;
 
 const add = (left: Vec3, right: Vec3): Vec3 => [left[0] + right[0], left[1] + right[1], left[2] + right[2]];
 const scale = (value: Vec3, amount: number): Vec3 => [value[0] * amount, value[1] * amount, value[2] * amount];
@@ -19,9 +18,12 @@ export function sourcePortPosition(position: RoutePoint, index: number, _systemI
   const column = index % SOURCE_PORTS_PER_EDGE, overflowRow = Math.floor(index / (dualSided ? SOURCE_PORTS_PER_EDGE * 2 : SOURCE_PORTS_PER_EDGE));
   const usableWidth = Math.max(0, width - SOURCE_PORT_EDGE_INSET * 2), pitch = SOURCE_PORTS_PER_EDGE <= 1 ? 0 : usableWidth / (SOURCE_PORTS_PER_EDGE - 1);
   const offsetU = (column - (SOURCE_PORTS_PER_EDGE - 1) / 2) * pitch;
-  // Electrical systems share the same physical holes. Keep every real route
-  // anchor on the room-facing side instead of separating systems through the wall depth.
-  const offsetNormal = depth / 2 + SOURCE_PORT_FACE_CLEARANCE + overflowRow * SOURCE_PORT_LANE_SPACING;
+  // Panel bodies project out from their mounting face, but their conduit
+  // centerlines follow the same host-surface plane as ordinary wall routes.
+  // This keeps the first run half embedded instead of carrying the panel's
+  // casing depth into the entire route. Overflow rows remain separated along
+  // the face normal because they represent additional physical port lanes.
+  const offsetNormal = (position.attachment ? 0 : depth / 2) + overflowRow * SOURCE_PORT_LANE_SPACING;
   const edgeOffset = sourcePortEdge(index, dualSided) === "top" ? height / 2 + .012 : -(height / 2 + .012);
   return { position: add(add(add(position.position, scale(v, edgeOffset)), scale(u, offsetU)), scale(normal, offsetNormal)), ...(position.attachment ? { attachment: structuredClone(position.attachment) } : {}) };
 }

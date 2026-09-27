@@ -28,6 +28,7 @@ export function HvacThermostatDimensions({ thermostat, description }: { thermost
     const start: Vec3 = [origin[0] + u[0] * thermostat.sizeMm[0] / 2000 * sign, origin[1] + u[1] * thermostat.sizeMm[0] / 2000 * sign, origin[2] + u[2] * thermostat.sizeMm[0] / 2000 * sign];
     guides.push({ key: 'horizontal', start, end: [start[0] + u[0] * description.horizontal.millimeters / 1000 * sign, start[1] + u[1] * description.horizontal.millimeters / 1000 * sign, start[2] + u[2] * description.horizontal.millimeters / 1000 * sign], label: `${description.horizontal.millimeters} mm` });
   }
+  for (const reference of description.planar ?? []) if (reference.witness) guides.push({ key: reference.key, start: [...origin], end: reference.witness.point, label: `${reference.millimeters} mm`, offset: [0, 0, 0] });
   return <PositionDimensionGuides name="hvac-thermostat-position-dimensions" guides={guides} />;
 }
 function IndoorUnitVisual({ unit, selected, preview = false, onSelect, onStartDuct }: { unit: HvacIndoorUnit; selected: boolean; preview?: boolean; onSelect?: () => void; onStartDuct?: (system: HvacSystem) => void }) {

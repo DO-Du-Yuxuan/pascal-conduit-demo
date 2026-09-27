@@ -196,7 +196,7 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
     if (!parent) continue;
     if (DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "SmartSystem", "FireProtectionSystem"].includes(parent.type)) overlay.devices.push({ ...asInternal(node, "network-device"), deviceType: DEVICE_TYPES[node.type] } as any);
     else if ((node.type === "Conduit" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) || (node.type === "FireWaterPipe" && parent.type === "FireProtectionSystem")) overlay.segments.push({ ...asInternal(node, node.type === "FireWaterPipe" ? "sprinkler-segment" : "conduit-segment"), system: routingSystem(node, parent.type) } as any);
-    else if (CONDUIT_FITTING_TYPES.has(node.type) && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.fittings.push({ ...asInternal(node, "conduit-fitting"), system: routingSystem(node, parent.type), fitting: FITTING_TYPES[node.type] } as any);
+    else if (CONDUIT_FITTING_TYPES.has(node.type) && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.fittings.push({ ...asInternal(node, "conduit-fitting"), system: routingSystem(node, parent.type), fitting: node.type === "ConduitElbow" && record(node.bridge) ? "bridge-bend" : FITTING_TYPES[node.type] } as any);
     else if (FIRE_WATER_FITTING_TYPES.has(node.type) && parent.type === "FireProtectionSystem") overlay.fittings.push({ ...asInternal(node, "sprinkler-fitting"), system: "sprinkler", fitting: FITTING_TYPES[node.type] } as any);
     else if (node.type === "JunctionBox" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.junctionBoxes.push({ ...asInternal(node, "junction-box"), system: routingSystem(node, parent.type) } as any);
     else if (node.type === "FanCoilUnit" && parent.type === "HVACSystem") overlay.hvac.indoorUnits.push(asInternal(node, "indoor-air-handling-unit") as any);
@@ -262,7 +262,7 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
       put(fireWaterPipe, "FireProtectionSystem", "FireWaterPipe");
     } else put(item, systemFor(item.system), "Conduit");
   }
-  for (const item of overlay.fittings) put(item, systemFor(item.system), item.system === "sprinkler" ? item.fitting === "coupling" ? "FireWaterPipeConnector" : item.fitting === "tee" ? "FireWaterPipeTee" : "FireWaterPipeElbow" : item.fitting === "coupling" ? "ConduitConnector" : item.fitting === "tee" ? "ConduitTee" : "ConduitElbow");
+  for (const item of overlay.fittings) put(item, systemFor(item.system), item.system === "sprinkler" ? item.fitting === "coupling" ? "FireWaterPipeConnector" : item.fitting === "tee" ? "FireWaterPipeTee" : "FireWaterPipeElbow" : item.fitting === "coupling" ? "ConduitConnector" : item.fitting === "tee" ? "ConduitTee" : "ConduitElbow", item.fitting === "bridge-bend" ? { fitting: "elbow" } : {});
   for (const item of overlay.junctionBoxes) put(item, systemFor(item.system), "JunctionBox");
   for (const item of overlay.hvac.indoorUnits) put(item, "HVACSystem", "FanCoilUnit");
   const hvacSegmentsById = new Map(overlay.hvac.segments.map((segment) => [segment.id, segment]));

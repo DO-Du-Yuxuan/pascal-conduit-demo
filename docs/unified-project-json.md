@@ -68,6 +68,8 @@
 
 `FireWaterPipe` 可从用户确认的首点自由起画，也可从兼容开放管端继续；不需要入户点，不创建或引用 Circuit。消防转弯、分支和直接连接件分别用 `FireWaterPipeElbow`、`FireWaterPipeTee`、`FireWaterPipeConnector` 表达。FireProtectionSystem 不接受 `circuits` 数据。消防管件不能用通用 `FireWaterFitting` 表示。
 
+地面过桥弯沿用已发布的 `ConduitElbow` 类型和 `fitting: "elbow"` 值；`bridge` 字段保存跨越几何。导入时依据该字段恢复内部过桥弯模型，保存时保留相同几何，不新增 Project 4.0 公开类型。
+
 `FanCoilUnit` 默认外壳尺寸为 `1000 × 600 × 300 mm`，`GalvanizedSheetMetalDuct` 默认截面为 `500 × 200 mm`。`Spotlight` 默认直径 90 mm、深度 100 mm；`RFIDReader` 默认 `86 × 130 × 25 mm`，仅允许墙面或 Beam 侧面宿主。类型名称及父系统是公开合同，编辑器内部 `luminaire`、`sensor`、`indoor-unit`、`air-duct`、`thermostat` 等适配 discriminator 不是 JSON 类型。
 
 明确退休并拒绝导入的公共类型：`Luminaire`、`Sensor`、`IndoorUnit`、`Thermostat`、`AirDuct`、`FireWaterInlet`、`FireWaterFitting`。文件版本不是 4.0 时拒绝导入，不执行旧格式迁移或静默重写。拒绝已知退休类型或错误系统归属，不意味着拒绝未知合法未来类型。
@@ -76,7 +78,7 @@
 
 | 数据 | 目标位置与规则 |
 | --- | --- |
-| 设备及管件物理端口 | 嵌入所有者节点的 `ports`；保留端口 ID、位置、方向、连接引用及系统身份。 |
+| 设备及管件物理端口 | 嵌入所有者节点的 `ports`；保留端口 ID、位置、方向、连接引用及系统身份。新建强/弱电箱的管线中心位置于安装宿主表面，箱体孔位的高低与横向位置不变。 |
 | `circuits` | 仅对应 `ElectricalSystem` 或 `LightingSystem` 容器；成员以实体和端口 ID 引用。消防水管不属于 Circuit。 |
 | `lightingControlGroups` | `LightingSystem` 上的同名数组；它是开关与灯具的逻辑关系，不能从管路推导。 |
 | HVAC `controls` | `HVACSystem` 上的同名数组，按 ID 连接 `FCUThermostat` 与 `FanCoilUnit`。 |

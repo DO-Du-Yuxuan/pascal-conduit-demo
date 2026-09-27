@@ -167,7 +167,7 @@ export function portCanStart(overlay: ConduitOverlayDocument, device: NetworkDev
     return deviceSupportsSystem(device, system) && !sharedHoleOccupied;
   }
   const deviceSegments = device.ports.flatMap((candidate) => candidate.connectedSegmentIds);
-  return overlay.circuits.some((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id)));
+  return overlay.circuits.some((circuit) => (circuit.status === "rooted" || circuit.status === "broken") && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id)));
 }
 
 /** Frees a clicked occupied 86-box hole by moving its existing connection to the other hole on the same side. */
@@ -223,7 +223,7 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
   }
   if (!port) throw new Error("该设备没有可用的输出端口。");
   const deviceSegments = device.ports.flatMap((candidate) => candidate.connectedSegmentIds);
-  const inheritedCircuit = !isSourceDevice(device) ? workingOverlay.circuits.find((circuit) => circuit.status === "rooted" && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id))) : undefined;
+  const inheritedCircuit = !isSourceDevice(device) ? workingOverlay.circuits.find((circuit) => (circuit.status === "rooted" || circuit.status === "broken") && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id))) : undefined;
   if (!isSourceDevice(device) && !inheritedCircuit) throw new Error("设备尚未接入合法来源。");
   const circuit: Circuit = inheritedCircuit ?? { id: nextId("circuit"), system, sourceDeviceId: device.id, rootPortId: port.id, segmentIds: [], status: "rooted", createdAt: new Date().toISOString() };
   return { overlay: inheritedCircuit ? { ...workingOverlay, devices } : { ...workingOverlay, devices, circuits: [...workingOverlay.circuits, circuit] }, circuit, port };
@@ -231,7 +231,7 @@ export function startRouteFromDevice(overlay: ConduitOverlayDocument, deviceId: 
 
 export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: PlannedRoute, circuit: Circuit, startPort: NetworkPort, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   if (!plan.canCommit || !plan.segments.length) return overlay;
-  const activeCircuit = overlay.circuits.find((item) => item.id === circuit.id && item.status === "rooted" && item.system === plan.system);
+  const activeCircuit = overlay.circuits.find((item) => item.id === circuit.id && (item.status === "rooted" || item.status === "broken") && item.system === plan.system);
   const startDevice = overlay.devices.find((device) => device.id === startPort.owner.id), storedStartPort = startDevice?.ports.find((port) => port.id === startPort.id);
   const sourceDevice = activeCircuit?.sourceDeviceId ? overlay.devices.find((device) => device.id === activeCircuit.sourceDeviceId) : undefined;
   if (!activeCircuit || !startDevice || !storedStartPort || !sourceDevice || !isSourceDevice(sourceDevice) || !sourceDevice.systems.includes(plan.system) || !portCanStart(overlay, startDevice, storedStartPort, plan.system)) return overlay;
