@@ -12,7 +12,8 @@ import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, withCollisi
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
-import { buildPhysicalPositioningSurfaces } from "../domain/physical-positioning-surfaces";
+import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
+import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from "../domain/physical-positioning-surfaces";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { circuitRouteElementIds, connectedRouteElementIds } from "../domain/route-selection";
 import { projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
@@ -370,6 +371,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     return dz < 1e-7 ? "Z 向净距" : dx < 1e-7 ? "X 向净距" : "垂直梁净距";
   })() : "梁位置净距";
   const selectedDevices = selectedDeviceIds.map((id) => overlay.devices.find((device) => device.id === id)).filter((device): device is NetworkDevice => Boolean(device));
+  const selectedSizeDevices = selectedDevice ? (selectedDevices.some((device) => device.id === selectedDevice.id) ? selectedDevices : [selectedDevice]) : [];
+  const sizeSelectionHasSameType = Boolean(selectedDevice && selectedSizeDevices.length && selectedSizeDevices.every((device) => device.deviceType === selectedDevice.deviceType));
+  const sizeSelectionHasConnections = selectedSizeDevices.some((device) => device.ports.some((port) => port.connectedSegmentIds.length > 0));
   const hasSelectedObject = Boolean(selectedId || selectedDeviceIds.length || selectedSegmentIds.length);
   const selectedObjectSystem = (() => {
     if (selectedBeam) return "建筑";
@@ -390,7 +394,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   } : undefined, [scene, activeLevelId]);
   const positionDescription = useMemo(() => selectedDevice ? describeDevicePosition(overlay, selectedDevice.id, devicePositioningContext) : {}, [overlay, selectedDevice, devicePositioningContext]);
   const selectedReferencePlaneElevationMm = selectedDevice?.mount?.kind === "reference-plane"
-    ? Math.round((selectedDevice.position.position[1] - (devicePositioningContext.levelFloorY[selectedDevice.mount.levelId] ?? 0)) * 1000)
+    ? Math.round((selectedDevice.position.position[1] - deviceVerticalHalfExtentMeters(selectedDevice) - (firstPhysicalPositioningHit(selectedDevice.position.position, [0, -1, 0], devicePositioningContext.physicalSurfaces ?? [], surface => surface.objectKind === "slab")?.point[1] ?? devicePositioningContext.levelFloorY[selectedDevice.mount.levelId] ?? 0)) * 1000)
     : undefined;
   const thermostatPositionProxyValue = useMemo(() => selectedThermostat ? thermostatPositioningProxy(selectedThermostat) : null, [selectedThermostat]);
   const thermostatPositionDescription = useMemo(() => thermostatPositionProxyValue ? describeDevicePosition({ ...overlay, devices: [...overlay.devices, thermostatPositionProxyValue] }, thermostatPositionProxyValue.id, devicePositioningContext) : {}, [overlay, thermostatPositionProxyValue, devicePositioningContext]);
@@ -566,15 +570,40 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (next === overlay) return;
     commit(next); onSelect(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个选中管线对象及孤立施工特征。` : "已删除对象及孤立施工特征。");
   };
-  const applyDevicePosition = (change?: { horizontalClearanceMm?: number; bottomHeightMm?: number; elevationMm?: number; verticalClearanceMm?: number; planarClearanceMm?: Record<string, number> }) => {
+  const applyDevicePosition = (change?: { horizontalClearanceMm?: number; bottomHeightMm?: number; elevationMm?: number; finishedFloorElevationMm?: number; verticalClearanceMm?: number; planarClearanceMm?: Record<string, number> }) => {
     if (!selectedDevice) return;
-    if (!change || change.horizontalClearanceMm === undefined && change.bottomHeightMm === undefined && change.elevationMm === undefined && change.verticalClearanceMm === undefined && !change.planarClearanceMm) return;
-    const bulkVertical = change?.elevationMm !== undefined || change?.bottomHeightMm !== undefined;
+    if (!change || change.horizontalClearanceMm === undefined && change.bottomHeightMm === undefined && change.elevationMm === undefined && change.finishedFloorElevationMm === undefined && change.verticalClearanceMm === undefined && !change.planarClearanceMm) return;
+    const bulkVertical = change?.finishedFloorElevationMm !== undefined || change?.bottomHeightMm !== undefined;
     const result = editDevicePosition(overlay, { deviceIds: bulkVertical ? selectedDeviceIds : [selectedDevice.id], ...change }, devicePositioningContext, "commit");
     if (result.status !== "committed") { setStatus(result.diagnostics[0] ?? "设备定位值无效。"); return; }
     const leaving = overlay.segments.filter((segment) => result.removedSegmentIds.includes(segment.id));
     setDepartingSegments(leaving); window.setTimeout(() => setDepartingSegments([]), 180);
     commit(result.overlay); setStatus(result.removedSegmentIds.length ? "设备已移动；相邻管段已断开，请从开放管端重新连接。" : "设备定位已更新。");
+  };
+  const applyDeviceSize = (axis: 0 | 1 | 2, value: number) => {
+    if (!selectedDevice || !Number.isFinite(value) || value <= 0) return;
+    if (!sizeSelectionHasSameType) { setStatus("尺寸批量修改仅支持多选相同类型点位。"); return; }
+    const lightingJunctionBox = selectedDevice.deviceType === "luminaire";
+    if (sizeSelectionHasConnections && (!lightingJunctionBox || axis !== 2)) {
+      setStatus(lightingJunctionBox ? "所选灯位接线盒中有端口已接管，直径不能批量修改；深度仍可修改。" : "所选点位中有端口已接管，尺寸不能批量修改。");
+      return;
+    }
+    let next = overlay;
+    for (const device of selectedSizeDevices) {
+      if (lightingJunctionBox) {
+        const diameter = axis === 0 ? value : device.sizeMm[0];
+        const depth = axis === 2 ? value : device.sizeMm[2];
+        next = resizeSpotlight(next, device.id, diameter, depth);
+      } else {
+        const size = [...device.sizeMm] as [number, number, number];
+        size[axis] = value;
+        next = resizeDevicePoint(next, device.id, size);
+      }
+    }
+    if (next !== overlay) {
+      commit(next);
+      setStatus(`已将${lightingJunctionBox ? axis === 0 ? "直径" : "深度" : ["宽度", "高度", "深度"][axis]}应用到 ${selectedSizeDevices.length} 个同类型点位。`);
+    }
   };
   const applyThermostatPosition = (change: { horizontalClearanceMm?: number; bottomHeightMm?: number; planarClearanceMm?: Record<string, number> }) => {
     if (!selectedThermostat || !thermostatPositionProxyValue) return;
@@ -1919,7 +1948,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                                 onBlur={(event) =>
                                   event.target.value !== "" &&
                                   applyDevicePosition({
-                                    elevationMm: Number(event.target.value),
+                                    finishedFloorElevationMm: Number(event.target.value),
                                   })
                                 }
                                 onKeyDown={(event) => {
@@ -2082,9 +2111,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       </div>
                       {selectedDevice.deviceType === "luminaire" ? <section className="conduit-context-section" aria-label="灯位接线盒尺寸">
                         <b>灯位接线盒尺寸</b>
-                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={selectedDevice.ports.some((port) => port.connectedSegmentIds.length > 0)} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, Math.max(1, Number(event.target.value)), selectedDevice.sizeMm[2]))} /> mm</span></label>
-                        <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, selectedDevice.sizeMm[0], Math.max(1, Number(event.target.value))))} /> mm</span></label>
-                        <small>{selectedDevice.ports.some((port) => port.connectedSegmentIds.length > 0) ? "已有线管连接，直径已锁定；深度仍可修改。" : "修改直径时四个端口会随圆盘边缘移动，安装中心保持不变。"}</small>
+                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections} onChange={(event) => applyDeviceSize(0, Number(event.target.value))} /> mm</span></label>
+                        <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} disabled={!sizeSelectionHasSameType} onChange={(event) => applyDeviceSize(2, Number(event.target.value))} /> mm</span></label>
+                        <small>{!sizeSelectionHasSameType ? "尺寸批量修改仅支持多选相同类型点位。" : sizeSelectionHasConnections ? `所选 ${selectedSizeDevices.length} 个灯位接线盒中有端口已接管，直径已锁定；深度仍可批量修改。` : `修改直径时四个端口会随圆盘边缘移动，安装中心保持不变。${selectedSizeDevices.length > 1 ? ` 尺寸修改将应用到 ${selectedSizeDevices.length} 个灯位接线盒。` : ""}`}</small>
                       </section> : <details className="conduit-object-details">
                         <summary>尺寸与宿主</summary>
                         {(["宽", "高", "深"] as const).map((label, axis) => (
@@ -2095,31 +2124,21 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                                 type="number"
                                 min="1"
                                 value={selectedDevice.sizeMm[axis]}
-                                onChange={(event) => {
-                                  const size = [...selectedDevice.sizeMm] as [
-                                    number,
-                                    number,
-                                    number,
-                                  ];
-                                  size[axis] = Math.max(
-                                    1,
-                                    Number(event.target.value),
-                                  );
-                                  commit(
-                                    resizeDevicePoint(
-                                      overlay,
-                                      selectedDevice.id,
-                                      size,
-                                    ),
-                                  );
-                                }}
+                                disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections}
+                                onChange={(event) => applyDeviceSize(axis as 0 | 1 | 2, Number(event.target.value))}
                               />{" "}
                               mm
                             </span>
                           </label>
                         ))}
                         <small>
-                          {selectedDevice.mount?.kind === "reference-plane"
+                          {!sizeSelectionHasSameType
+                            ? "尺寸批量修改仅支持多选相同类型点位。"
+                            : sizeSelectionHasConnections
+                              ? `所选 ${selectedSizeDevices.length} 个点位中有端口已接管，尺寸已锁定，避免移动已连接端口。`
+                              : selectedSizeDevices.length > 1
+                                ? `尺寸修改将应用到 ${selectedSizeDevices.length} 个同类型点位。`
+                                : selectedDevice.mount?.kind === "reference-plane"
                             ? `安装参考平面 · ${selectedDevice.mount.levelId}`
                             : (selectedDevice.position.attachment?.hostId ??
                               "悬空管段挂载")}

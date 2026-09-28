@@ -7,6 +7,7 @@ import { buildPhysicalPositioningSurfaces } from "./physical-positioning-surface
 import { buildPlanAnnotations, devicePlanLabel, isFloorSocket } from "../plan/model";
 import { placeIndoorUnit } from "./hvac";
 import { parseOverlay } from "./overlay";
+import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
 
 const quad = (objectId: string, objectKind: string, a: [number, number, number], b: [number, number, number], c: [number, number, number], d: [number, number, number]) => [
   { objectId, objectKind, vertices: [a, b, c] as [[number, number, number], [number, number, number], [number, number, number]] },
@@ -156,6 +157,70 @@ describe("device point positioning transaction", () => {
     const nearerWall = quad("near-wall", "wall", [-1, 0, .25], [1, 0, .25], [1, 2, .25], [-1, 2, .25]);
     const obstructed = describeDevicePosition(overlay, selected.id, { ...context, physicalSurfaces: nearerWall }).planar?.find(reference => reference.key === "v+");
     expect(obstructed).toMatchObject({ millimeters: 250, witness: { objectId: "near-wall", objectKind: "wall", point: [0, .05, .25] } });
+  });
+
+  it("does not count a same-host box as a downward witness when its physical envelope misses the vertical ray", () => {
+    const hostedLight = (id: string, position: [number, number, number]) => {
+      const device = createNetworkDevice("luminaire", { position, attachment: { hostId: "beam-a", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
+      return { ...device, id, sizeMm: [60, 30, 60] as [number, number, number], position: { ...device.position, position } };
+    };
+    const selected = hostedLight("selected", [0, 2, 0]);
+    // The 80 mm X offset is inside the old 100 mm peer tolerance but outside
+    // this box's 60 mm physical envelope, so a vertical ray cannot hit it.
+    const floatingBox = hostedLight("floating-box", [.08, 1, 0]);
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [selected, floatingBox] };
+
+    const below = describeDevicePosition(overlay, selected.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: [] }).planar?.find(reference => reference.key === "v-");
+
+    expect(below).toBeUndefined();
+  });
+
+  it("ends a vertical point dimension at the first face of a box actually crossed by the ray", () => {
+    const hostedSocket = (id: string, position: [number, number, number]) => {
+      const device = createNetworkDevice("socket", { position, attachment: { hostId: "beam-a", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
+      return { ...device, id, position: { ...device.position, position } };
+    };
+    const selected = hostedSocket("selected", [0, 2, 0]), crossedBox = hostedSocket("crossed-box", [.02, 1, 0]);
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [selected, crossedBox] };
+
+    const below = describeDevicePosition(overlay, selected.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: [] }).planar?.find(reference => reference.key === "v-");
+
+    expect(below).toMatchObject({ millimeters: 975, witness: { objectId: crossedBox.id, point: [0, 1.025, 0] } });
+  });
+
+  it("raycasts reference-plane height to real box surfaces and ignores boxes outside its XZ footprint", () => {
+    const referenceLight = createReferencePlaneDevice("luminaire", [0, 2, 0], "L0", 2000);
+    const hostedBox = (id: string, position: [number, number, number]) => {
+      const device = createNetworkDevice("socket", { position, attachment: { hostId: "beam-a", hostKind: "beam", surface: "bottom", normal: [0, -1, 0], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
+      return { ...device, id, position: { ...device.position, position } };
+    };
+    const farBox = hostedBox("far-box", [.08, 1, 0]);
+    const floor = quad("floor", "slab", [-2, 0, -2], [2, 0, -2], [2, 0, 2], [-2, 0, 2]);
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: floor };
+
+    const farOnly = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [referenceLight, farBox] }, referenceLight.id, context);
+    const crossed = hostedBox("crossed-box", [.02, 1, 0]);
+    const withCrossedBox = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [referenceLight, crossed] }, referenceLight.id, context);
+
+    expect(farOnly.vertical).toMatchObject({ millimeters: 2000, witness: { objectId: "floor" } });
+    expect(withCrossedBox.vertical).toMatchObject({ millimeters: 975, witness: { objectId: crossed.id, objectKind: "device", point: [0, 1.025, 0] } });
+  });
+
+  it("shows and edits reference-plane elevation at a lighting junction box's lower edge while retaining center-based stored coordinates", () => {
+    const light = createReferencePlaneDevice("luminaire", [1, 2, 1], "L0", 2000);
+    const slab = { id: "floor", type: "slab", parentId: "L0", elevation: .05, polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] };
+    const physicalSurfaces = buildPhysicalPositioningSurfaces({ L0: { id: "L0", type: "level", level: 0 }, floor: slab });
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [light] }, context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces };
+    const reopened = parseOverlay(JSON.parse(JSON.stringify(overlay)));
+
+    expect(light.position.position[1] - deviceVerticalHalfExtentMeters(light) - .05).toBeCloseTo(1.935);
+    expect(reopened.devices[0]?.position.position[1]).toBe(2);
+    expect(reopened.devices[0]?.mount).toMatchObject({ kind: "reference-plane", elevationMm: 2000 });
+    const moved = editDevicePosition(reopened, { deviceIds: [light.id], finishedFloorElevationMm: 2100 }, context, "commit");
+
+    expect(moved.overlay.devices[0]?.position.position[1]).toBeCloseTo(2.165);
+    expect(moved.overlay.devices[0]?.mount).toMatchObject({ kind: "reference-plane", elevationMm: 2165 });
+    expect(moved.overlay.devices[0]!.position.position[1] - deviceVerticalHalfExtentMeters(moved.overlay.devices[0]!) - .05).toBeCloseTo(2.1);
   });
 
   it("ignores furniture as a dimension target even when furniture surfaces are present", () => {
@@ -344,7 +409,7 @@ describe("device point positioning transaction", () => {
 
     const result = editDevicePosition(overlay, { deviceIds: [light.id, wall.id], elevationMm: 3000 }, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: [] }, "commit");
 
-    expect(result.overlay.devices[0].position.position[1]).toBe(3);
+    expect(result.overlay.devices[0].position.position[1]).toBe(3.015);
     expect(result.overlay.devices[0].position.attachment).toBeUndefined();
     expect(result.overlay.devices[1]).toEqual(wall);
     expect(result.skippedDeviceIds).toEqual([wall.id]);
@@ -357,11 +422,11 @@ describe("device point positioning transaction", () => {
       { id: "wall-x", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [1, 0, 0] as [number, number, number] },
       { id: "wall-z", levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] },
     ] };
-    expect(describeDevicePosition(overlay, socket.id, context)).toMatchObject({ vertical: { millimeters: 2700, kind: "reference-plane" }, planar: expect.any(Array) });
+    expect(describeDevicePosition(overlay, socket.id, context)).toMatchObject({ vertical: { millimeters: 2675, kind: "reference-plane" }, planar: expect.any(Array) });
     const moved = editDevicePosition(overlay, { deviceIds: [socket.id], elevationMm: 3000, planarClearanceMm: { "wall-x": 1000 } }, context, "commit");
     expect(moved.status).toBe("committed");
-    expect(moved.overlay.devices[0].mount).toEqual({ kind: "reference-plane", levelId: "L0", elevationMm: 3000 });
-    expect(moved.overlay.devices[0].position.position).toEqual([1, 3, 3]);
+    expect(moved.overlay.devices[0].mount).toEqual({ kind: "reference-plane", levelId: "L0", elevationMm: 3025 });
+    expect(moved.overlay.devices[0].position.position).toEqual([1, 3.025, 3]);
     expect(moved.overlay.devices[0].position.attachment).toBeUndefined();
   });
 

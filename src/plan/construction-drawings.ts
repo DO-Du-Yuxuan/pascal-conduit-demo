@@ -35,7 +35,7 @@ export function buildInstallationSchedule(nodes: Record<string, NodeData>, overl
     const key = `${device.deviceType}|${name}|${mounting}|${height}`;
     const current = systemRows.get(key);
     if (current) { current.quantity += 1; current.sourceIds.push(device.id); }
-    else systemRows.set(key, { deviceType: device.deviceType, floorSocket, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' || floorSocket ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '高度来自设备明确保存的楼层安装参考面，与 3D“完成地标高”一致。' : floorSocket ? '插座明确挂载楼板顶面，施工图按地插显示，安装高度记为 0。' : '高度按设备下边缘相对当前 3D 模型楼层基准计算，与 3D“下边缘离地”一致；施工前需按完成面复核。'] });
+    else systemRows.set(key, { deviceType: device.deviceType, floorSocket, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' || floorSocket ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '依据明确保存的外壳中心位置和设备实体尺寸换算下缘，并减去点位处楼板顶面；无楼板时使用楼层基准。' : floorSocket ? '插座明确挂载楼板顶面，施工图按地插显示，安装高度记为 0。' : '高度按设备下边缘相对当前 3D 模型完成地计算；无楼板时使用楼层基准，施工前需按完成面复核。'] });
     rows.set(system, systemRows);
   }
   return CONSTRUCTION_DRAWING_SYSTEMS.flatMap(system => {

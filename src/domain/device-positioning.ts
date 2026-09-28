@@ -1,6 +1,6 @@
 import type { ConduitOverlayDocument, NetworkDevice, RoutePoint, Vec3 } from "./overlay";
 import { isReferencePlaneEligibleDeviceType, rebuildNetworkDevice } from "./devices";
-import { devicePositioningHalfExtent } from "../geometry/positioning-measurements";
+import { devicePositioningHalfExtent, deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
 import { firstPhysicalPositioningHit } from "./physical-positioning-surfaces";
 
 export type DevicePositioningContext = {
@@ -23,6 +23,8 @@ export type DevicePositionEdit = {
   bottomHeightMm?: number;
   horizontalClearanceMm?: number;
   elevationMm?: number;
+  /** User-facing installation elevation from the local finished floor, measured to the device's world-Y lower edge. */
+  finishedFloorElevationMm?: number;
   planarClearanceMm?: Readonly<Record<string, number>>;
   verticalClearanceMm?: number;
 };
@@ -70,6 +72,46 @@ function normalized(vector: Vec3 | undefined): Vec3 | null {
   return magnitude > 1e-8 ? scale(vector, 1 / magnitude) : null;
 }
 
+/** Distance to the first face of a placed device box along a finite ray. */
+function rayDeviceEnvelopeHit(origin: Vec3, direction: Vec3, device: NetworkDevice): number | undefined {
+  const frame = device.frame;
+  if (!frame) return undefined;
+  const axes = [frame.right, frame.up, frame.front], half = device.sizeMm.map(value => value / 2000);
+  if (device.deviceType === "luminaire" || device.deviceType === "sensor") {
+    const relative = subtract(origin, device.position.position), localOrigin = axes.map(axis => dot(relative, axis)), localDirection = axes.map(axis => dot(direction, axis));
+    const radius = device.sizeMm[0] / 2000, halfDepth = device.sizeMm[2] / 2000;
+    const a = localDirection[0]! ** 2 + localDirection[1]! ** 2, b = 2 * (localOrigin[0]! * localDirection[0]! + localOrigin[1]! * localDirection[1]!), c = localOrigin[0]! ** 2 + localOrigin[1]! ** 2 - radius ** 2;
+    let radialNear = Number.NEGATIVE_INFINITY, radialFar = Number.POSITIVE_INFINITY;
+    if (a < 1e-10) { if (c > 1e-8) return undefined; }
+    else {
+      const discriminant = b * b - 4 * a * c;
+      if (discriminant < 0) return undefined;
+      const root = Math.sqrt(discriminant);
+      radialNear = (-b - root) / (2 * a); radialFar = (-b + root) / (2 * a);
+    }
+    const depthDirection = localDirection[2]!, depthOrigin = localOrigin[2]!;
+    if (Math.abs(depthDirection) < 1e-8 && Math.abs(depthOrigin) > halfDepth + 1e-8) return undefined;
+    const depthNear = Math.abs(depthDirection) < 1e-8 ? Number.NEGATIVE_INFINITY : (-halfDepth - depthOrigin) / depthDirection;
+    const depthFar = Math.abs(depthDirection) < 1e-8 ? Number.POSITIVE_INFINITY : (halfDepth - depthOrigin) / depthDirection;
+    const near = Math.max(radialNear, Math.min(depthNear, depthFar), 0), far = Math.min(radialFar, Math.max(depthNear, depthFar));
+    return near <= far + 1e-8 && far > 1e-5 ? (near > 1e-5 ? near : far) : undefined;
+  }
+  let near = Number.NEGATIVE_INFINITY, far = Number.POSITIVE_INFINITY;
+  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
+    const axis = axes[axisIndex]!, centerOffset = dot(subtract(device.position.position, origin), axis), rayAxis = dot(direction, axis), extent = half[axisIndex]!;
+    if (Math.abs(rayAxis) < 1e-8) {
+      if (Math.abs(centerOffset) > extent + 1e-8) return undefined;
+      continue;
+    }
+    const a = (centerOffset - extent) / rayAxis, b = (centerOffset + extent) / rayAxis;
+    near = Math.max(near, Math.min(a, b));
+    far = Math.min(far, Math.max(a, b));
+    if (near > far + 1e-8) return undefined;
+  }
+  const distance = near > 1e-5 ? near : far;
+  return distance > 1e-5 && Number.isFinite(distance) ? distance : undefined;
+}
+
 function positioningAxes(device: NetworkDevice): { key: string; direction: Vec3 }[] {
   const basis = device.position.attachment?.basis;
   const hosted = Boolean(device.position.attachment);
@@ -115,7 +157,7 @@ function wallPlanarReferences(overlay: ConduitOverlayDocument, device: NetworkDe
       const hit = firstPhysicalHit(rayOrigin, direction, context, downward
         ? surface => surface.objectKind === "slab"
         : surface => surface.objectKind === "wall" && surface.objectId === attachment.hostId);
-      const clearanceMm = hit ? Math.round(hit.distance * 1000) - (downward && isWall86Box(device) ? device.sizeMm[1] / 2 : 0) : 0;
+      const clearanceMm = hit ? Math.round(hit.distance * 1000) - (downward && isWall86Box(device) ? deviceVerticalHalfExtentMeters(device) * 1000 : 0) : 0;
       return hit && clearanceMm >= 0 ? [{ key, wallId: key, direction, millimeters: clearanceMm, witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
     }
 
@@ -156,14 +198,13 @@ function planarReferences(overlay: ConduitOverlayDocument, device: NetworkDevice
       const attachment = device.position.attachment, peerAttachment = peer.position.attachment;
       if (peer.id === device.id || !attachment || peerAttachment?.hostKind === "wall" || peerAttachment?.hostKind !== attachment.hostKind || peerAttachment.hostId !== attachment.hostId || peerAttachment.surface !== attachment.surface) return [];
       const offset = subtract(peer.position.position, rayOrigin), along = dot(offset, direction);
-      const perpendicular = subtract(offset, scale(direction, along));
-      // Floor-mounted boxes that represent one row/column may be a little out of square.
-      // The witness and value remain the actual centre-to-centre measurement.
       const centerDistance = Math.hypot(...offset), peerExtent = devicePositioningHalfExtent(peer.deviceType, peer.sizeMm, key), targetDistance = centerDistance - peerExtent;
-      if (along <= 1e-5 || Math.hypot(...perpendicular) > .1 || targetDistance < 1e-5) return [];
+      const verticalAxis = Math.abs(direction[1]) > .9, perpendicular = subtract(offset, scale(direction, along));
+      const rayHitDistance = verticalAxis ? rayDeviceEnvelopeHit(rayOrigin, direction, peer) : undefined;
+      if (along <= 1e-5 || verticalAxis && rayHitDistance === undefined || !verticalAxis && Math.hypot(...perpendicular) > .1 || targetDistance < 1e-5) return [];
       const centerRayHit = firstPhysicalHit(rayOrigin, scale(offset, 1 / centerDistance), context);
       if (centerRayHit && centerRayHit.distance < targetDistance - 1e-5) return [centerRayHit];
-      return [{ distance: targetDistance, objectId: peer.id, objectKind: isLargePositioningBox(peer) ? "device-envelope" : "device", point: isLargePositioningBox(peer) ? add(rayOrigin, scale(direction, targetDistance)) : peer.position.position }];
+      return [{ distance: verticalAxis ? rayHitDistance! : targetDistance, objectId: peer.id, objectKind: isLargePositioningBox(peer) ? "device-envelope" : "device", point: verticalAxis ? add(rayOrigin, scale(direction, rayHitDistance!)) : isLargePositioningBox(peer) ? add(rayOrigin, scale(direction, targetDistance)) : peer.position.position }];
     });
     const hit = [physicalHit, ...sameHostDeviceHits].filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate)).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId))[0];
     return hit ? [{ key, wallId: key, direction, millimeters: Math.round(hit.distance * 1000), witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
@@ -205,16 +246,22 @@ export function describeDevicePosition(overlay: ConduitOverlayDocument, deviceId
     const finishedFloorY = attachment.levelId
       ? floorWitness?.objectKind === "slab" ? floorWitness.point[1] : context.levelFloorY[attachment.levelId]
       : undefined;
-    const bottomHeightMm = finishedFloorY === undefined ? undefined : Math.round((device.position.position[1] - device.sizeMm[1] / 2000 - finishedFloorY) * 1000);
+    const bottomHeightMm = finishedFloorY === undefined ? undefined : Math.round((device.position.position[1] - deviceVerticalHalfExtentMeters(device) - finishedFloorY) * 1000);
     return {
       ...(isFloorSocket(device) ? { vertical: { millimeters: 0, kind: "floor-socket" as const, direction: [0, -1, 0] as Vec3, witness: { objectId: attachment.hostId, objectKind: "slab", point: device.position.position } } } : attachment.hostKind === "wall" && bottomHeightMm !== undefined ? { vertical: { millimeters: bottomHeightMm, kind: "finished-floor" as const, direction: [0, -1, 0] as Vec3, ...(floorWitness ? { witness: floorWitness } : {}) } } : {}),
       planar,
     };
   }
   if (device.mount?.kind === "reference-plane" && context.physicalSurfaces) {
-    const hit = firstPhysicalHit(device.position.position, [0, -1, 0], context);
+    const direction: Vec3 = [0, -1, 0], physicalHit = firstPhysicalHit(device.position.position, direction, context);
+    const deviceHit = overlay.devices.flatMap(peer => {
+      if (peer.id === device.id) return [];
+      const distance = rayDeviceEnvelopeHit(device.position.position, direction, peer);
+      return distance === undefined ? [] : [{ distance, objectId: peer.id, objectKind: "device", point: add(device.position.position, scale(direction, distance)) }];
+    }).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId))[0];
+    const hit = physicalHit && (!deviceHit || physicalHit.distance <= deviceHit.distance) ? physicalHit : deviceHit;
     return {
-      vertical: hit ? { millimeters: Math.round(hit.distance * 1000), kind: "reference-plane", direction: [0, -1, 0], witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } } : undefined,
+      vertical: hit ? { millimeters: Math.round(hit.distance * 1000), kind: "reference-plane", direction, witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } } : undefined,
       planar: planarReferences(overlay, device, context),
     };
   }
@@ -228,7 +275,7 @@ export function describeDevicePosition(overlay: ConduitOverlayDocument, deviceId
   }
   if (canEditAsReferencePlane(device)) {
     const levelId = referencePlaneLevelId(device)!, floor = context.levelFloorY[levelId];
-    return { vertical: floor === undefined ? undefined : { millimeters: Math.round((device.position.position[1] - floor) * 1000), kind: "reference-plane" }, planar: planarReferences(overlay, device, context) };
+    return { vertical: floor === undefined ? undefined : { millimeters: Math.round((device.position.position[1] - deviceVerticalHalfExtentMeters(device) - floor) * 1000), kind: "reference-plane" }, planar: planarReferences(overlay, device, context) };
   }
   return {};
 }
@@ -301,7 +348,7 @@ function removeAdjacentSegments(overlay: ConduitOverlayDocument, movedIds: Reado
 }
 
 export function editDevicePosition(overlay: ConduitOverlayDocument, edit: DevicePositionEdit, context: DevicePositioningContext, mode: "preview" | "commit"): DevicePositionEditResult {
-  if (!edit.deviceIds.length || !finiteNonNegative(edit.bottomHeightMm) || !finiteNonNegative(edit.horizontalClearanceMm) || !finiteNonNegative(edit.elevationMm) || !finiteNonNegative(edit.verticalClearanceMm) || Object.values(edit.planarClearanceMm ?? {}).some((value) => !finiteNonNegative(value))) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: edit.deviceIds, diagnostics: ["定位尺寸必须是非负有限数值。"] };
+  if (!edit.deviceIds.length || !finiteNonNegative(edit.bottomHeightMm) || !finiteNonNegative(edit.horizontalClearanceMm) || !finiteNonNegative(edit.elevationMm) || !finiteNonNegative(edit.finishedFloorElevationMm) || !finiteNonNegative(edit.verticalClearanceMm) || Object.values(edit.planarClearanceMm ?? {}).some((value) => !finiteNonNegative(value))) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: edit.deviceIds, diagnostics: ["定位尺寸必须是非负有限数值。"] };
   const selected = new Set(edit.deviceIds), skipped: string[] = [], moved = new Map<string, NetworkDevice>(), outsideSlabIds: string[] = [];
   for (const device of overlay.devices) {
     if (!selected.has(device.id)) continue;
@@ -342,7 +389,7 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
         if (withinHost === false) { skipped.push(device.id); outsideSlabIds.push(device.id); continue; }
       }
       const referencePlaneMount = device.mount?.kind === "reference-plane" && floor !== undefined
-        ? { levelId: device.mount.levelId, elevationMm: Math.round((device.position.position[1] + delta[1] - floor) * 1000) }
+          ? { levelId: device.mount.levelId, elevationMm: Math.round((device.position.position[1] + delta[1] - floor) * 1000) }
         : promotesHostedPoint && levelId && floor !== undefined
           ? { levelId, elevationMm: Math.round((device.position.position[1] + delta[1] - floor) * 1000) }
           : undefined;
@@ -356,8 +403,22 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
       if (!levelId || !canEditAsReferencePlane(device)) { skipped.push(device.id); continue; }
       const floor = context.levelFloorY[levelId];
       if (floor === undefined) { skipped.push(device.id); continue; }
-      delta = [0, floor + edit.elevationMm / 1000 - device.position.position[1], 0];
-      if (!edit.planarClearanceMm) { if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm }, mode === "commit")); continue; }
+      delta = [0, floor + edit.elevationMm / 1000 + deviceVerticalHalfExtentMeters(device) - device.position.position[1], 0];
+      if (!edit.planarClearanceMm) { if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm + Math.round(deviceVerticalHalfExtentMeters(device) * 1000) }, mode === "commit")); continue; }
+    }
+    if (edit.finishedFloorElevationMm !== undefined) {
+      const levelId = referencePlaneLevelId(device);
+      if (!levelId || !canEditAsReferencePlane(device)) { skipped.push(device.id); continue; }
+      const floorHit = firstPhysicalHit(device.position.position, [0, -1, 0], context, surface => surface.objectKind === "slab");
+      const floorY = floorHit?.point[1] ?? context.levelFloorY[levelId];
+      const levelBaseY = context.levelFloorY[levelId];
+      if (floorY === undefined || levelBaseY === undefined) { skipped.push(device.id); continue; }
+      const centerY = floorY + edit.finishedFloorElevationMm / 1000 + deviceVerticalHalfExtentMeters(device);
+      delta = [0, centerY - device.position.position[1], 0];
+      if (!edit.planarClearanceMm) {
+        if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, undefined, { levelId, elevationMm: Math.round((centerY - levelBaseY) * 1000) }, mode === "commit"));
+        continue;
+      }
     }
     if (edit.planarClearanceMm && canEditAsReferencePlane(device)) {
       const levelId = referencePlaneLevelId(device)!, floor = context.levelFloorY[levelId];
@@ -370,7 +431,7 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
         delta = add(delta, scale(reference.direction, (proposed - reference.millimeters) / 1000));
       }
       if (!hasMovement(delta)) continue;
-      const movedDevice = moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm ?? Math.round((device.position.position[1] + delta[1] - floor) * 1000) }, mode === "commit");
+      const movedDevice = moveDevice(device, delta, undefined, { levelId, elevationMm: edit.elevationMm === undefined ? Math.round((device.position.position[1] + delta[1] - floor) * 1000) : edit.elevationMm + Math.round(deviceVerticalHalfExtentMeters(device) * 1000) }, mode === "commit");
       movedDevice.positioning = { ...movedDevice.positioning, planarWallIds: references.map((reference) => reference.wallId) };
       moved.set(device.id, movedDevice);
       continue;

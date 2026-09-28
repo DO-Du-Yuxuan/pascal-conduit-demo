@@ -3,7 +3,7 @@ import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegmen
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
 import { DEVICE_DEFAULTS, sprinklerDirectionOf } from '../domain/devices';
-import { devicePositioningHalfExtent, finishedFloorElevationAt } from '../geometry/positioning-measurements';
+import { devicePositioningHalfExtent, deviceVerticalHalfExtentMeters, finishedFloorElevationAt } from '../geometry/positioning-measurements';
 import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from '../domain/physical-positioning-surfaces';
 import { DEFAULT_WALL_THICKNESS } from '../geometry/walls/thickness';
 
@@ -33,9 +33,8 @@ export const deviceHostAttachment = (device: NetworkDevice): HostAttachment | un
 export const isFloorSocket = (device: NetworkDevice): boolean =>
   device.deviceType === 'socket' && deviceHostAttachment(device)?.hostKind === 'slab';
 export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
-  if (device.mount?.kind === 'reference-plane') return device.mount.elevationMm / 1000;
   if (isFloorSocket(device)) return 0;
-  return device.position.position[1] - device.sizeMm[1] / 2000 - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
+  return device.position.position[1] - deviceVerticalHalfExtentMeters(device) - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
 export const SENSOR_PLAN_COLOR = '#7c3aed';

@@ -37,8 +37,8 @@ describe('construction drawing visibility and installation schedule', () => {
     expect(sections).toHaveLength(1);
     expect(sections[0]).toMatchObject({ system: 'lighting', label: '灯位接线盒施工图' });
     expect(sections[0].rows).toEqual([
-      expect.objectContaining({ variant: 'A', deviceType: 'luminaire', name: '灯位接线盒', mounting: '安装参考面', height: '1500 mm', quantity: 2, sourceIds: ['light-a', 'light-b'], measurementBasis: 'explicit', confidence: 'high' }),
-      expect.objectContaining({ variant: 'B', deviceType: 'luminaire', height: '1200 mm', quantity: 1, sourceIds: ['light-c'] }),
+      expect.objectContaining({ variant: 'A', deviceType: 'luminaire', name: '灯位接线盒', mounting: '安装参考面', height: '1425 mm', quantity: 2, sourceIds: ['light-a', 'light-b'], measurementBasis: 'explicit', confidence: 'high' }),
+      expect.objectContaining({ variant: 'B', deviceType: 'luminaire', height: '1125 mm', quantity: 1, sourceIds: ['light-c'] }),
     ]);
     expect(installationVariantByDeviceId(sections)).toEqual({ 'light-a': 'A', 'light-b': 'A', 'light-c': 'B' });
   });

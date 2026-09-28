@@ -118,6 +118,16 @@ describe("conduit workspace UI contract", () => {
     expect(planSource).toContain("preview.deviceNode");
   });
 
+  it("applies size edits to same-type multi-selected devices without partial connected resizing", () => {
+    expect(threeDSource).toContain("selectedSizeDevices.every((device) => device.deviceType === selectedDevice.deviceType)");
+    expect(threeDSource).toContain("const applyDeviceSize = (axis: 0 | 1 | 2, value: number)");
+    expect(threeDSource).toContain("for (const device of selectedSizeDevices)");
+    expect(threeDSource).toContain("resizeDevicePoint(next, device.id, size)");
+    expect(threeDSource).toContain("resizeSpotlight(next, device.id, diameter, depth)");
+    expect(threeDSource).toContain("disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections}");
+    expect(threeDSource).toContain("有端口已接管，直径已锁定；深度仍可批量修改。");
+  });
+
   it("replaces the route layup selector with an editable radius for new sweep bends", () => {
     expect(threeDSource).toContain('min="50"');
     expect(threeDSource).toContain('max="1000"');

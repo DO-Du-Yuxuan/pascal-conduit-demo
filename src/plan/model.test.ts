@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeData } from '../types';
 import { createEmptyOverlay, type HostAttachment, type NetworkDevice, type RouteSegment } from '../domain/overlay';
+import { createReferencePlaneDevice } from '../domain/devices';
 import { describeDevicePosition } from '../domain/device-positioning';
 import { buildPhysicalPositioningSurfaces } from '../domain/physical-positioning-surfaces';
-import { buildPlanAnnotations, buildPointPositionDimensionReport, buildPointPositionDimensions, createPlanContext, devicePlanLabel } from './model';
+import { buildPlanAnnotations, buildPointPositionDimensionReport, buildPointPositionDimensions, createPlanContext, deviceInstallationHeightMeters, devicePlanLabel } from './model';
 
 const nodes = { l0: { id: 'l0', type: 'level', level: 0 }, l1: { id: 'l1', type: 'level', level: 1 }, w: { id: 'w', type: 'wall', parentId: 'l0', start: [0, 0], end: [4, 0] }, w1: { id: 'w1', type: 'wall', parentId: 'l1', start: [0, 0], end: [4, 0] } } as unknown as Record<string, NodeData>;
 const host = (id = 'w', levelId = 'l0'): HostAttachment => ({ hostId: id, hostKind: 'wall', levelId, surface: 'front', normal: [0, 0, 1] });
@@ -11,6 +12,11 @@ const device = (id = 'd', x = 1): NetworkDevice => ({ id, type: 'network-device'
 const segment = (id: string, start: [number, number, number], end: [number, number, number]): RouteSegment => ({ id, type: 'conduit-segment', system: 'receptacle', diameterMm: 20, start: { position: start, attachment: host() }, end: { position: end, attachment: host() }, createdAt: '' });
 
 describe('2D point annotations', () => {
+  it('derives reference-plane point height from the physical lower edge, including a lighting junction box disk', () => {
+    const light = createReferencePlaneDevice('luminaire', [1, 2, 1], 'l0', 2000);
+    expect(deviceInstallationHeightMeters(light, nodes, 'l0')).toBeCloseTo(1.985);
+  });
+
   it('shows device type and height without a generated point number', () => {
     const overlay = createEmptyOverlay('a', 'sha'); overlay.devices = [device()];
     const report = buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters');
