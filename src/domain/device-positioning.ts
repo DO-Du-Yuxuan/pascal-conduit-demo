@@ -416,15 +416,14 @@ export function resizeDevicePoint(overlay: ConduitOverlayDocument, deviceId: str
   return { ...overlay, devices: overlay.devices.map((candidate) => candidate.id === deviceId ? rebuildNetworkDevice(candidate, sizeMm) : candidate) };
 }
 
-/**
- * A lighting junction box's installation centre and conduit ports are physical references.
- * Its cylinder can change diameter/depth without rebuilding that topology.
- */
+/** Resize a lighting junction box while keeping connected port geometry fixed. */
 export function resizeSpotlight(overlay: ConduitOverlayDocument, deviceId: string, diameterMm: number, depthMm: number): ConduitOverlayDocument {
   if (!Number.isFinite(diameterMm) || diameterMm <= 0 || !Number.isFinite(depthMm) || depthMm <= 0) return overlay;
   const device = overlay.devices.find((candidate) => candidate.id === deviceId);
   if (!device || device.deviceType !== "luminaire") return overlay;
-  const sizeMm: [number, number, number] = [diameterMm, diameterMm, depthMm];
+  const connected = device.ports.some((port) => port.connectedSegmentIds.length > 0);
+  const sizeMm: [number, number, number] = [connected ? device.sizeMm[0] : diameterMm, connected ? device.sizeMm[1] : diameterMm, depthMm];
   if (device.sizeMm.every((value, index) => value === sizeMm[index])) return overlay;
+  if (sizeMm[0] !== device.sizeMm[0]) return { ...overlay, devices: overlay.devices.map((candidate) => candidate.id === deviceId ? rebuildNetworkDevice(candidate, sizeMm) : candidate) };
   return { ...overlay, devices: overlay.devices.map((candidate) => candidate.id === deviceId ? { ...candidate, sizeMm } : candidate) };
 }

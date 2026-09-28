@@ -458,14 +458,37 @@ describe("device point positioning transaction", () => {
     expect(resizeDevicePoint(overlay, overlay.devices[1].id, [172, 86, 50])).toBe(overlay);
   });
 
-  it("resizes a connected spotlight cylinder without moving its centre or physical ports", () => {
+  it("moves all free lighting junction box ports with a resized disk and preserves identities and fields", () => {
+    const spotlight = createNetworkDevice("luminaire", { position: [2, 2.7, 3], attachment: { hostId: "ceiling-a", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "L0" } });
+    const enriched = {
+      ...spotlight,
+      pluginDeviceField: { kept: true },
+      ports: spotlight.ports.map((port, index) => ({ ...port, pluginPortField: `port-${index}`, direction: [0, 0, 1] as [number, number, number] })),
+    };
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [enriched] };
+
+    const resized = resizeSpotlight(overlay, spotlight.id, 120, 180);
+    const result = resized.devices[0]!;
+
+    expect(result).toMatchObject({ id: spotlight.id, sizeMm: [120, 120, 180], position: spotlight.position, mount: spotlight.mount, pluginDeviceField: { kept: true } });
+    expect(result.ports.map((port) => port.position.position)).toEqual([
+      [2.06, 2.7, 3], [1.94, 2.7, 3], [2, 2.7, 2.94], [2, 2.7, 3.06],
+    ]);
+    expect(result.ports.map((port) => port.id)).toEqual(spotlight.ports.map((port) => port.id));
+    expect(result.ports.map((port) => port.direction)).toEqual(enriched.ports.map((port) => port.direction));
+    expect(result.ports.map((port) => (port as any).pluginPortField)).toEqual(["port-0", "port-1", "port-2", "port-3"]);
+    expect(result.ports.every((port) => port.connectedSegmentIds.length === 0)).toBe(true);
+    expect(resizeSpotlight(overlay, spotlight.id, 0, 180)).toBe(overlay);
+  });
+
+  it("locks the diameter of a connected lighting junction box while allowing depth changes", () => {
     const spotlight = createNetworkDevice("luminaire", { position: [2, 2.7, 3], attachment: { hostId: "ceiling-a", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "L0" } });
     const connected = { ...spotlight, ports: spotlight.ports.map((port, index) => index === 0 ? { ...port, connectedSegmentIds: ["lighting-run"] } : port) };
     const overlay = { ...createEmptyOverlay("a", "sha"), devices: [connected] };
 
     const resized = resizeSpotlight(overlay, spotlight.id, 120, 180);
 
-    expect(resized.devices[0]).toMatchObject({ sizeMm: [120, 120, 180], position: connected.position, mount: connected.mount, ports: connected.ports });
+    expect(resized.devices[0]).toMatchObject({ sizeMm: [60, 60, 180], position: connected.position, mount: connected.mount, ports: connected.ports });
     expect(resized.devices[0].ports).toEqual(connected.ports);
     expect(resizeSpotlight(overlay, spotlight.id, 0, 180)).toBe(overlay);
   });

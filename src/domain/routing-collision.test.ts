@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyOverlay } from "./overlay";
+import type { RouteFitting, RouteSegment } from "./overlay";
 import { commitPlannedRoute, planRoute } from "./routing";
-import { validateBranchCandidate, validatePlannedRoute, withCollisionDiagnostics } from "./routing-collision";
+import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, validatePlannedRoute, withCollisionDiagnostics } from "./routing-collision";
 import { placeNetworkDevice } from "./devices";
+import { pointOnWorldAxis } from "./drawing";
+import { projectRoutePointToWorldAxis } from "./snapping";
 
 const point = (x: number, y: number, z: number, hostId = "slab") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
 
@@ -92,6 +95,108 @@ describe("routing collision validation", () => {
     expect(bridge?.bridge?.riseMm).toBe(30);
     expect(bridge?.bridge?.entry[2]).toBeCloseTo(-.05);
     expect(bridge?.bridge?.exit[2]).toBeCloseTo(.05);
+  });
+
+  it("derives a temporary slab host only for a fully covered imported obstacle segment", () => {
+    const levelId = "level_3syt3grnb9zg523c", slabId = "slab_r3920kf4ohvb5je5";
+    const importedTarget: RouteSegment = {
+      id: "conduit-1e50b4cb-92d0-43e2-857a-d29f9b353825", type: "conduit-segment", system: "receptacle", diameterMm: 20,
+      start: { position: [2.9589368904521614, 0.05000000074505784, 0.12816424066267318] },
+      end: { position: [1.9840517295464135, 0.05000000074505784, 0.12816424066267318] }, createdAt: "",
+    };
+    const overlay = { ...createEmptyOverlay("a.json", "sha"), segments: [importedTarget] };
+    const slabPoint = (x: number, z: number) => ({ position: [x, .05, z] as [number, number, number], attachment: { hostId: slabId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId } });
+    const whiteRoute = planRoute("network", 20, "surface", [slabPoint(2.45, -.55), slabPoint(2.45, .75)]);
+    const slabContext = {
+      levelId,
+      slabs: [{
+        id: slabId, parentId: levelId, type: "slab", elevation: .05,
+        polygon: [[5.84484856854921, -3.6011988670505257], [3.5777821517392283, -.5977600998749288], [3.577782406510387, .9118220666263639], [1.8340517288013558, .9092442406626731], [1.8340517288013558, -3.6111155138997084]],
+        holes: [],
+      }],
+    };
+
+    expect(withCollisionDiagnostics(overlay, whiteRoute).fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(false);
+    const bridged = withCollisionDiagnostics(overlay, whiteRoute, undefined, undefined, undefined, slabContext);
+    expect(bridged.canCommit).toBe(true);
+    expect(bridged.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge).toMatchObject({ obstacleSegmentId: importedTarget.id, riseMm: 30, clearanceMm: 10 });
+    expect(importedTarget.start.attachment).toBeUndefined();
+    expect(importedTarget.end.attachment).toBeUndefined();
+    expect(overlay.segments[0]).toEqual(importedTarget);
+  });
+
+  it("retains a verified slab host on horizontal world-axis cursor points only", () => {
+    const levelId = "level-1", slabId = "slab-1", context = {
+      levelId,
+      slabs: [{ id: slabId, parentId: levelId, type: "slab", elevation: .05, polygon: [[-1, -1], [1, -1], [1, 1], [-1, 1]], holes: [] }],
+    };
+    const start = { position: [0, .05, 0] as [number, number, number], attachment: { hostId: slabId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId, localPosition: [0, .05, 0] as [number, number, number], basis: { u: [1, 0, 0] as [number, number, number], v: [0, 0, 1] as [number, number, number] } } };
+    const projected = pointOnWorldAxis(start, "x", [0.5, 1, 0], [0, -1, 0]);
+    const onSlab = preserveSlabHostForWorldAxisPoint(start, projected.position, "x", 20, context);
+    expect(onSlab.position).toEqual([.5, .05, 0]);
+    expect(onSlab.attachment?.hostId).toBe(slabId);
+    expect(onSlab.attachment?.localPosition).toEqual([.5, .05, 0]);
+    const surfaceProjected = projectRoutePointToWorldAxis(start, { position: [.5, .05, .2] }, "x");
+    expect(preserveSlabHostForWorldAxisPoint(start, surfaceProjected.position, "x", 20, context).attachment?.hostId).toBe(slabId);
+    expect(preserveSlabHostForWorldAxisPoint(start, [2, .05, 0], "x", 20, context).attachment).toBeUndefined();
+    expect(preserveSlabHostForWorldAxisPoint(start, [0, .05, 0], "y", 20, context).attachment).toBeUndefined();
+    expect(preserveSlabHostForWorldAxisPoint(start, [0, .15, 0], "y", 20, context).attachment).toBeUndefined();
+    const freeStart = { position: [0, .05, 0] as [number, number, number] };
+    const freeLanding = preserveSlabHostForWorldAxisPoint(freeStart, [.25, .05, 0], "x", 20, context);
+    expect(freeLanding.attachment).toMatchObject({ hostId: slabId, hostKind: "slab", surface: "top", levelId, localPosition: [.25, .05, 0] });
+    const wallStart = { ...freeStart, attachment: { hostId: "wall-1", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId } };
+    const wallLanding = preserveSlabHostForWorldAxisPoint(wallStart, [.25, .05, 0], "x", 20, context);
+    expect(wallLanding.attachment).toMatchObject({ hostId: slabId, hostKind: "slab", surface: "top", levelId, localPosition: [.25, .05, 0] });
+  });
+
+  it("preserves established explicit slab attachments when scene slab geometry is unavailable", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
+    const plan = planRoute("network", 20, "surface", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]);
+    const checked = withCollisionDiagnostics(base, plan, undefined, undefined, undefined, { levelId: "L0", slabs: [] });
+    expect(checked.canCommit).toBe(true);
+    expect(checked.fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(true);
+  });
+
+  it("bridges a floor crossing over a supported large elbow arc without ignoring its collision volume", () => {
+    const levelId = "level-1", slabId = "slab-1", attachment = { hostId: slabId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId };
+    const elbow: RouteFitting = {
+      id: "large-sweep", type: "conduit-fitting", fitting: "elbow", bendStyle: "sweep", radiusMm: 300,
+      system: "receptacle", diameterMm: 20, position: { position: [.3, .05, 0], attachment },
+      segmentIds: ["elbow-before", "elbow-after"], ports: [],
+      arc: { start: [.3, .05, 0], end: [0, .05, .3], center: [0, .05, 0], normal: [0, -1, 0], sweepRadians: Math.PI / 2 },
+    };
+    const obstacleSegments: RouteSegment[] = [
+      { id: "elbow-before", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [.5, .05, 0], attachment }, end: { position: [.3, .05, 0], attachment }, createdAt: "" },
+      { id: "elbow-after", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [0, .05, .3], attachment }, end: { position: [0, .05, .5], attachment }, createdAt: "" },
+    ];
+    const overlay = { ...createEmptyOverlay("a.json", "sha"), segments: obstacleSegments, fittings: [elbow] };
+    const routePoint = (z: number) => ({ position: [.2, .05, z] as [number, number, number], attachment });
+    const proposed = planRoute("network", 20, "surface", [routePoint(-.5), routePoint(.5)]);
+    const slabContext = { levelId, slabs: [{ id: slabId, parentId: levelId, type: "slab", elevation: .05, polygon: [[-1, -1], [1, -1], [1, 1], [-1, 1]], holes: [] }] };
+    const checked = withCollisionDiagnostics(overlay, proposed, undefined, undefined, undefined, slabContext);
+
+    expect(checked.canCommit).toBe(true);
+    expect(checked.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge).toMatchObject({ obstacleSegmentId: "elbow-before", obstacleSegmentIds: [], obstacleFittingIds: [elbow.id], riseMm: 30, clearanceMm: 10 });
+  });
+
+  it("does not infer a slab host for routes outside, through holes, on another level, or with ambiguous slabs", () => {
+    const levelId = "level-1", slabId = "slab-1";
+    const obstacle: RouteSegment = { id: "red", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [-.8, .05, 0] }, end: { position: [.8, .05, 0] }, createdAt: "" };
+    const overlay = { ...createEmptyOverlay("a.json", "sha"), segments: [obstacle] };
+    const route = planRoute("network", 20, "surface", [point(0, .05, -1), point(0, .05, 1)]);
+    const slab = { id: slabId, parentId: levelId, type: "slab", elevation: .05, polygon: [[-1, -1], [1, -1], [1, 1], [-1, 1]], holes: [] as unknown[] };
+    const context = (slabs: typeof slab[], activeLevel = levelId) => ({ levelId: activeLevel, slabs });
+
+    for (const invalidContext of [
+      context([{ ...slab, polygon: [[-.5, -.5], [.5, -.5], [.5, .5], [-.5, .5]] }]),
+      context([{ ...slab, holes: [[[-.1, -.1], [.1, -.1], [.1, .1], [-.1, .1]]] }]),
+      context([{ ...slab, parentId: "other-level" }]),
+      context([slab, { ...slab, id: "slab-2" }]),
+    ]) {
+      const checked = withCollisionDiagnostics(overlay, route, undefined, undefined, undefined, invalidContext);
+      expect(checked.fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(false);
+      expect(checked.canCommit).toBe(false);
+    }
   });
 
   it("uses one wider bridge over overlapping crossings and raises it for the widest conduit", () => {

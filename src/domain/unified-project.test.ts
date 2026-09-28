@@ -196,10 +196,21 @@ it("uses the public device type as the authoritative internal deviceType", () =>
   expect(() => decodeUnifiedProject(conflicting, "conflicting-device.json", "sha")).toThrow(/Spotlight spotlight 的 deviceType 必须为 luminaire/);
 
   const omitted = project();
-  omitted.nodes.spotlight = { ...omitted.nodes.socket, id: "spotlight", type: "Spotlight", parentId: "LightingSystem", systems: ["lighting"] };
+  omitted.nodes.spotlight = {
+    ...omitted.nodes.socket,
+    id: "spotlight",
+    type: "Spotlight",
+    parentId: "LightingSystem",
+    position: { position: [1, 2.5, 3] },
+    sizeMm: [73, 73, 42],
+    ports: [{ id: "spotlight:port:0", owner: { kind: "device", id: "spotlight" }, position: { position: [1.0365, 2.5, 3] }, direction: [1, 0, 0], role: "bidirectional", system: "lighting", connectedSegmentIds: [], face: "right", slot: 0, flow: "unknown" }],
+    systems: ["lighting"],
+  };
   delete omitted.nodes.spotlight.deviceType;
   omitted.nodes.LightingSystem.children.push("spotlight");
-  expect(decodeUnifiedProject(omitted, "fixed-device.json", "sha").overlay.devices.find((device) => device.id === "spotlight")?.deviceType).toBe("luminaire");
+  const loaded = decodeUnifiedProject(omitted, "fixed-device.json", "sha");
+  expect(loaded.overlay.devices.find((device) => device.id === "spotlight")).toMatchObject({ deviceType: "luminaire", position: { position: [1, 2.5, 3] }, sizeMm: [73, 73, 42], ports: [{ id: "spotlight:port:0", position: { position: [1.0365, 2.5, 3] } }] });
+  expect(encodeUnifiedProject(loaded.projectRaw, loaded.overlay)).toMatchObject({ nodes: { spotlight: { type: "LightingJunctionBox", position: { position: [1, 2.5, 3] }, sizeMm: [73, 73, 42], ports: [{ id: "spotlight:port:0", position: { position: [1.0365, 2.5, 3] } }] } } });
 });
 
 it("accepts RFID readers only on walls and Beam side faces", () => {
@@ -282,7 +293,7 @@ it("exports a bridge bend through the public ConduitElbow fitting discriminator"
     position: { position: [1, 0.2, 0] as [number, number, number] },
     segmentIds: ["bridge-before", "bridge-after"],
     ports: [],
-    bridge: { obstacleSegmentId: "crossing", obstacleSegmentIds: ["crossing", "crossing-2"], entry: [0.9, 0, 0] as [number, number, number], crestStart: [0.95, 0.1, 0] as [number, number, number], crestEnd: [1.05, 0.1, 0] as [number, number, number], exit: [1.1, 0, 0] as [number, number, number], riseMm: 100, clearanceMm: 10 },
+    bridge: { obstacleSegmentId: "crossing", obstacleSegmentIds: ["crossing", "crossing-2"], obstacleFittingIds: ["large-sweep"], entry: [0.9, 0, 0] as [number, number, number], crestStart: [0.95, 0.1, 0] as [number, number, number], crestEnd: [1.05, 0.1, 0] as [number, number, number], exit: [1.1, 0, 0] as [number, number, number], riseMm: 100, clearanceMm: 10 },
   };
   const overlay = { ...loaded.overlay, fittings: [bridge] };
   const saved = encodeUnifiedProject(loaded.projectRaw, overlay);

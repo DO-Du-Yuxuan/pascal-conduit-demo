@@ -32,6 +32,15 @@ describe("network devices and rooted circuits", () => {
     expect(new Set(allPortIds)).toHaveLength(allPortIds.length);
   });
 
+  it("uses a 60 mm diameter and 30 mm depth for newly placed lighting junction boxes", () => {
+    const device = createNetworkDevice("luminaire", point(0, 2.7, 0, "ceiling"));
+
+    expect(device.sizeMm).toEqual([60, 60, 30]);
+    expect(device.ports.map((port) => port.position.position)).toEqual([
+      [0.03, 2.7, 0], [-0.03, 2.7, 0], [0, 2.7, -0.03], [0, 2.7, 0.03],
+    ]);
+  });
+
   it("offers compatible open physical ports and selects the one nearest the pointer", () => {
     const socket = createNetworkDevice("socket", point(0, 1, 0));
     const occupiedId = socket.ports[0].id;

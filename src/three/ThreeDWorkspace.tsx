@@ -8,7 +8,7 @@ import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
 import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
-import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
+import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
@@ -383,6 +383,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   })();
   const selectedObjectPanelTitle = selectedObjectSystem === "建筑" ? "建筑面板" : `${selectedObjectSystem}系统面板`;
   const devicePositioningContext = useMemo(() => positioningContext(scene), [scene]);
+  const bridgeSlabContext = useMemo(() => scene ? {
+    levelId: activeLevelId,
+    slabs: Object.values(scene.nodes).filter(node => node.type === "slab"),
+    levelBaseY: Object.fromEntries(Object.values(scene.nodes).filter(node => node.type === "level").map(node => [node.id, (Number.isFinite(node.level) ? Number(node.level) : 0) * 3.2])),
+  } : undefined, [scene, activeLevelId]);
   const positionDescription = useMemo(() => selectedDevice ? describeDevicePosition(overlay, selectedDevice.id, devicePositioningContext) : {}, [overlay, selectedDevice, devicePositioningContext]);
   const selectedReferencePlaneElevationMm = selectedDevice?.mount?.kind === "reference-plane"
     ? Math.round((selectedDevice.position.position[1] - (devicePositioningContext.levelFloorY[selectedDevice.mount.levelId] ?? 0)) * 1000)
@@ -621,7 +626,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       : planRoute(system, diameterMm, surfaceMode, points, constructionParameters, explicitPenetrations, { bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
     if (!plan) throw new Error("目标分支管段不存在。");
     const ignoredDeviceIds = new Set([deviceRouteStart?.port.owner.id, junctionRouteStart?.box.id, ignoredDeviceId].filter((id): id is string => Boolean(id)));
-    const collisionChecked = withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined);
+    const collisionChecked = withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined, bridgeSlabContext);
     const diagnostics = [...collisionChecked.diagnostics, ...beamRouteDiagnostics(scene?.nodes ?? {}, collisionChecked, penetrationSession?.host.hostId)];
     return { ...collisionChecked, diagnostics, canCommit: diagnostics.length === 0 };
   };
@@ -637,7 +642,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const targetPort = hoveredDevice && (deviceTargetPorts(hoveredDevice, system).find((port) => port.id === activeTargetPortId) ?? nearestDeviceTargetPort(hoveredDevice, system, raw.position));
     if (targetPort) candidates.push({ kind: "device-port", point: targetPort.position, targetId: targetPort.id, label: `${hoveredDevice?.name || DEVICE_DEFAULTS[hoveredDevice!.deviceType].label}端口`, distancePixels: 0, compatible: true });
     const snapped = resolveSnapCandidate(draft[draft.length - 1], candidates, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current });
-    if (snapped.point) return snapped.point;
+    if (snapped.point) return worldAxis && snapped.kind === "alignment"
+      ? preserveSlabHostForWorldAxisPoint(draft[draft.length - 1], snapped.point.position, worldAxis, diameterMm, bridgeSlabContext)
+      : snapped.point;
     if (orthogonal && raw.attachment?.hostKind === "beam") {
       const direction = orthogonalDirection.current ?? resolveOrthogonalDirection(draft[draft.length - 1], raw);
       const resolution = resolveOrthogonalBeamHit(draft[draft.length - 1], raw, direction);
@@ -791,7 +798,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool === "hvac-control") {
       const anchor = hvacControlRouteAnchor(), candidate = routePoint(hit);
       if (!hvacControlThermostatId || !anchor) { scheduleCursor(candidate); return; }
-      if (worldAxis) { scheduleCursor(projectRoutePointToWorldAxis(anchor, candidate, worldAxis)); return; }
+      if (worldAxis) {
+        const projected = projectRoutePointToWorldAxis(anchor, candidate, worldAxis);
+        scheduleCursor(preserveSlabHostForWorldAxisPoint(anchor, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
+      }
       if (orthogonal) {
         const direction = resolveOrthogonalDirection(anchor, candidate, orthogonalDirection.current);
         orthogonalDirection.current = direction;
@@ -1051,14 +1061,20 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     if (tool === "hvac-control" && hvacControlThermostatId && worldAxis) {
       const start = hvacControlRouteAnchor();
-      if (start) { scheduleCursor(pointOnWorldAxis(start, worldAxis, origin, direction)); return; }
+      if (start) {
+        const projected = pointOnWorldAxis(start, worldAxis, origin, direction);
+        scheduleCursor(preserveSlabHostForWorldAxisPoint(start, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
+      }
     }
     if ((tool === 'hvac-supply' || tool === 'hvac-return') && worldAxis) {
       const duct = activeHvacDuctId ? overlay.hvac.ducts.find(item => item.id === activeHvacDuctId) : undefined, endId = duct?.segmentIds[duct.segmentIds.length - 1], segment = endId ? overlay.hvac.segments.find(item => item.id === endId) : undefined, unit = hvacRouteStart ? overlay.hvac.indoorUnits.find(item => item.id === hvacRouteStart.unitId) : undefined;
       const start = segment?.end ?? (unit && hvacRouteStart ? indoorUnitPort(unit, hvacRouteStart.system) : undefined);
       if (start) { scheduleCursor(pointOnWorldAxis(start, worldAxis, origin, direction)); return; }
     }
-    if (worldAxis && draft.length) { scheduleCursor(pointOnWorldAxis(draft[draft.length - 1], worldAxis, origin, direction)); return; }
+    if (worldAxis && draft.length) {
+      const start = draft[draft.length - 1]!, projected = pointOnWorldAxis(start, worldAxis, origin, direction);
+      scheduleCursor(preserveSlabHostForWorldAxisPoint(start, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
+    }
     if (canDrawWithoutSource && !surfaceHit) {
       const point = pointOnViewPlane(draft[draft.length - 1]?.position ?? scene?.bounds.center ?? [0, 0, 0], origin, direction);
       if (orthogonal && draft.length) orthogonalDirection.current = resolveOrthogonalDirection(draft[draft.length - 1], point, orthogonalDirection.current);
@@ -2066,9 +2082,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       </div>
                       {selectedDevice.deviceType === "luminaire" ? <section className="conduit-context-section" aria-label="灯位接线盒尺寸">
                         <b>灯位接线盒尺寸</b>
-                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, Math.max(1, Number(event.target.value)), selectedDevice.sizeMm[2]))} /> mm</span></label>
+                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={selectedDevice.ports.some((port) => port.connectedSegmentIds.length > 0)} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, Math.max(1, Number(event.target.value)), selectedDevice.sizeMm[2]))} /> mm</span></label>
                         <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} onChange={(event) => commit(resizeSpotlight(overlay, selectedDevice.id, selectedDevice.sizeMm[0], Math.max(1, Number(event.target.value))))} /> mm</span></label>
-                        <small>修改外形尺寸不会移动安装中心，也不会改变既有线路端口或连接。</small>
+                        <small>{selectedDevice.ports.some((port) => port.connectedSegmentIds.length > 0) ? "已有线管连接，直径已锁定；深度仍可修改。" : "修改直径时四个端口会随圆盘边缘移动，安装中心保持不变。"}</small>
                       </section> : <details className="conduit-object-details">
                         <summary>尺寸与宿主</summary>
                         {(["宽", "高", "深"] as const).map((label, axis) => (

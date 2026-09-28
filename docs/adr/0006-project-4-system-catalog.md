@@ -10,7 +10,7 @@ The ten system containers remain present under `Site`, including empty container
 
 Fire-water routing starts at the user's first confirmed point or continues from a compatible open pipe end. It has no inlet device requirement and creates no Circuit. This keeps physical route authorship explicit without inventing a supply connection or electrical-style circuit relationship.
 
-The catalog has three visible card sections—placing devices, drawing, and editing actions—and a directory lock that constrains each card to its declared system and allowed actions. Lighting junction boxes default to 90 mm diameter and 100 mm depth; FCU casing defaults to 1000 × 600 × 300 mm; galvanized sheet-metal duct section defaults to 500 × 200 mm; RFID reader defaults to 86 × 130 × 25 mm.
+The catalog has three visible card sections—placing devices, drawing, and editing actions—and a directory lock that constrains each card to its declared system and allowed actions. At the time of this decision, lighting junction boxes defaulted to 90 mm diameter and 100 mm depth; that default was later changed to 60 mm diameter and 30 mm depth, as recorded in [ADR 0007](0007-lighting-junction-boxes-and-physical-control-routing.md). FCU casing defaults to 1000 × 600 × 300 mm; galvanized sheet-metal duct section defaults to 500 × 200 mm; RFID reader defaults to 86 × 130 × 25 mm.
 
 ## Relationship to ADR 0005
 

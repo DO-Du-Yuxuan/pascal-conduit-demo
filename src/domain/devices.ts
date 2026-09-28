@@ -31,7 +31,7 @@ export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
   "weak-panel": { label: "弱电箱", systems: ["network"], hostKinds: ["wall", "beam"], sizeMm: [350, 400, 100], portRole: "source", source: true, canInsertMidSegment: false },
   socket: { label: "插座", systems: ["receptacle"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  luminaire: { label: "灯位接线盒", systems: ["lighting"], hostKinds: ["ceiling", "beam"], sizeMm: [90, 90, 100], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  luminaire: { label: "灯位接线盒", systems: ["lighting"], hostKinds: ["ceiling", "beam"], sizeMm: [60, 60, 30], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   "network-outlet": { label: "网络插座", systems: ["network"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
   "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall", "beam"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
   sensor: { label: "温湿度传感器", systems: [], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [80, 80, 30], portRole: "sink", source: false, canInsertMidSegment: false },
@@ -99,10 +99,10 @@ function luminairePorts(id: string, position: RoutePoint, frame: DeviceFrame, si
   return directions.map((direction, index) => devicePort(id, index, { position: add(position.position, scale(direction, radius)), attachment: position.attachment ? structuredClone(position.attachment) : undefined }, direction, system, "bidirectional", index < 2 ? (index === 0 ? "right" : "left") : (index === 2 ? "top" : "bottom"), index % 2 as 0 | 1));
 }
 
-function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number]; frameFront?: Vec3 } = {}): NetworkDevice {
+function buildNetworkDevice(deviceType: NetworkDeviceType, position: RoutePoint, name: string | undefined, enforceDefaultHost: boolean, options: { id?: string; tangent?: Vec3; mount?: DeviceMount; sizeMm?: [number, number, number]; frameFront?: Vec3 } = {}): NetworkDevice {
   const definition = DEVICE_DEFAULTS[deviceType], hostKind = position.attachment?.hostKind, sizeMm = options.sizeMm ?? definition.sizeMm;
   if (enforceDefaultHost && (!hostKind || !definition.hostKinds.includes(hostKind) || hostKind === "beam" && (position.attachment?.surface === "top" || deviceType === "rfid-reader" && (!position.attachment?.surface || position.attachment.surface === "bottom")))) throw new Error(`${definition.label}不能放置在${hostKind ?? "悬空位置"}。`);
-  const id = nextId(deviceType), frame = deviceFrame(position, options.tangent, options.frameFront), orientation = frame.front;
+  const id = options.id ?? nextId(deviceType), frame = deviceFrame(position, options.tangent, options.frameFront), orientation = frame.front;
   const ports = definition.systems.flatMap((system, systemIndex) => {
     if (definition.source) {
       const dualSided = deviceType === "strong-panel" || deviceType === "weak-panel", sourcePortCount = dualSided ? SOURCE_PORTS_PER_EDGE * 2 : SOURCE_PORTS_PER_EDGE;
@@ -129,7 +129,7 @@ export function createReferencePlaneDevice(deviceType: NetworkDeviceType, positi
 }
 
 export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.sizeMm): NetworkDevice {
-  const rebuilt = buildNetworkDevice(device.deviceType, device.position, device.name, false, { mount: device.mount, tangent: device.mount?.kind === "segment" ? device.mount.tangent : undefined, sizeMm });
+  const rebuilt = buildNetworkDevice(device.deviceType, device.position, device.name, false, { id: device.id, mount: device.mount, tangent: device.mount?.kind === "segment" ? device.mount.tangent : undefined, sizeMm, frameFront: device.frame?.front ?? device.orientation });
   const used = new Set<string>();
   const ports = rebuilt.ports.map((port, index) => {
     const previous = device.ports.find((candidate) => !used.has(candidate.id) && candidate.system === port.system && candidate.face === port.face && candidate.slot === port.slot)
@@ -137,9 +137,9 @@ export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.size
       ?? device.ports[index];
     if (!previous) return { ...port, id: `${device.id}:port:${index}`, owner: { kind: "device" as const, id: device.id } };
     used.add(previous.id);
-    return { ...port, id: previous.id, owner: { kind: "device" as const, id: device.id }, connectedSegmentIds: [...previous.connectedSegmentIds] };
+    return { ...port, ...previous, id: previous.id, owner: { ...previous.owner, kind: "device" as const, id: device.id }, position: port.position, connectedSegmentIds: [...previous.connectedSegmentIds] };
   });
-  return { ...rebuilt, id: device.id, createdAt: device.createdAt, positioning: device.positioning, ...(device.deviceType === "sprinkler-head" ? { sprinklerDirection: sprinklerDirectionOf(device) } : {}), ports };
+  return { ...device, ...rebuilt, id: device.id, createdAt: device.createdAt, positioning: device.positioning, ...(device.deviceType === "sprinkler-head" ? { sprinklerDirection: sprinklerDirectionOf(device) } : {}), ports };
 }
 
 export function placeNetworkDevice(overlay: ConduitOverlayDocument, deviceType: NetworkDeviceType, position: RoutePoint, name?: string): ConduitOverlayDocument {
