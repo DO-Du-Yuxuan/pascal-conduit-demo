@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 import bellevueRequirementText from "../sample-data/requirements/Bellevue requirements demo.json?raw";
 import "./styles.css";
@@ -243,6 +244,7 @@ function App() {
     [builderSubmenu, setBuilderSubmenu] = useState<"systems" | "build" | null>(null),
     [builderAuthorCommand, setBuilderAuthorCommand] = useState<ThreeDAuthorCommand | null>(null),
     [builderPanelHost, setBuilderPanelHost] = useState<HTMLElement | null>(null),
+    [constructionLegendHost, setConstructionLegendHost] = useState<HTMLDivElement | null>(null),
     [threeDActivated, setThreeDActivated] = useState(false),
     [splitRatio, setSplitRatio] = useState(45),
     [threeDOverlayVersion, setThreeDOverlayVersion] = useState(0);
@@ -887,6 +889,7 @@ function App() {
                 measurementMode={measurementMode}
                 measurementUnit={measurementUnit}
                 pointAnnotationScale={pointAnnotationScale}
+                constructionLegendHost={workspaceViewMode === "3d" ? null : constructionLegendHost}
                 manualMeasurements={manualMeasurements.filter((item) => item.levelId === (canvas.levelId || levels[0]?.id || ""))}
                 selectedManualId={selectedManualId}
                 selectedCalloutId={selectedCalloutId}
@@ -942,10 +945,11 @@ function App() {
             }}
           />}
           {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
-            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} selectedBuilderSystem={selectedBuilderSystem} onAuthoringSystemChange={system => { setSelectedBuilderSystem(system); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }} />
+            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} keyboardActive={workspaceViewMode !== "2d"} selectedBuilderSystem={selectedBuilderSystem} onAuthoringSystemChange={system => { setSelectedBuilderSystem(system); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }} />
           </div>}
           </div>
           <div className="builder-toolbar-stack">
+            {workspaceViewMode !== "3d" && <div className="builder-construction-legend-host" ref={setConstructionLegendHost} />}
             {builderSubmenu === "systems" && <div className="builder-subtoolbar" role="group" aria-label="系统分类">{BUILDER_SYSTEMS.map((item) => <button key={item.id} className={selectedBuilderSystem === item.id ? "active" : ""} aria-pressed={selectedBuilderSystem === item.id} onClick={() => { setSelectedBuilderSystem(item.id); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><span aria-hidden="true">{item.icon}</span><b>{item.label}</b></button>)}</div>}
             {builderSubmenu === "build" && <div className="builder-subtoolbar builder-build-subtoolbar" role="group" aria-label="建造工具"><button onClick={() => openBuilderTool({ tool: "beam" })} disabled={!data} aria-label="梁"><span aria-hidden="true">▰</span><b>梁</b></button><span className="builder-unavailable-caption">其他建筑工具将在 Builder 合并后接入</span></div>}
             <nav className="builder-main-toolbar" aria-label="Builder 主操作栏">
@@ -1007,6 +1011,7 @@ function CanvasPanel({
   measurementMode,
   measurementUnit,
   pointAnnotationScale,
+  constructionLegendHost,
   manualMeasurements,
   selectedManualId,
   selectedCalloutId,
@@ -1057,6 +1062,7 @@ function CanvasPanel({
   measurementMode: MeasurementMode;
   measurementUnit: MeasurementUnit;
   pointAnnotationScale: number;
+  constructionLegendHost: HTMLDivElement | null;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
   selectedCalloutId: string | null;
@@ -1113,6 +1119,7 @@ function CanvasPanel({
         measurementMode={measurementMode}
         measurementUnit={measurementUnit}
         pointAnnotationScale={pointAnnotationScale}
+        constructionLegendHost={constructionLegendHost}
         manualMeasurements={manualMeasurements}
         selectedManualId={selectedManualId}
         selectedCalloutId={selectedCalloutId}
@@ -1219,6 +1226,7 @@ function Plan({
   measurementMode,
   measurementUnit,
   pointAnnotationScale,
+  constructionLegendHost,
   manualMeasurements,
   selectedManualId,
   selectedCalloutId,
@@ -1270,6 +1278,7 @@ function Plan({
   measurementMode: MeasurementMode;
   measurementUnit: MeasurementUnit;
   pointAnnotationScale: number;
+  constructionLegendHost: HTMLDivElement | null;
   manualMeasurements: ManualMeasurement[];
   selectedManualId: string | null;
   selectedCalloutId: string | null;
@@ -1551,7 +1560,7 @@ function Plan({
           {showConnectivity && connectivityGraph && <ConnectivityOverlay graph={connectivityGraph} nodes={nodes} levelId={levelId} />}
         </g>
       </svg>
-      <ConstructionLegend sections={constructionPlan.installationSchedule} annotationScale={pointAnnotationScale} />
+      {constructionLegendHost && createPortal(<ConstructionLegend sections={constructionPlan.installationSchedule} annotationScale={pointAnnotationScale} />, constructionLegendHost)}
       {measurementMode !== "off" && <div className="measure-hint">{measurementStart ? `${orthogonalLock ? activeMeasurementMode === "horizontal" ? "水平正交已开启" : "垂直正交已开启" : "自由对齐"} · 点击第二点 · Shift 切换正交 · Esc 退出` : `${orthogonalLock ? "正交已开启" : "正交已关闭"} · 点击第一点 · Shift 切换正交 · Esc 退出`}</div>}
       {calloutTargetId&&<div className="measure-hint">移动鼠标确定引线位置 · 单击放置 · Esc 取消</div>}
       {visibility.constructionAnnotations && <ConstructionNotices plan={constructionPlan} onFocus={(id, anchor) => { onSelect(id); if (anchor) setViewBox({ minX: anchor[0] - 3, minZ: anchor[1] - 3, width: 6, height: 6 }); }} />}

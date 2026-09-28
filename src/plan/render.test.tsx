@@ -248,7 +248,9 @@ describe('construction plan rendering integration',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const sections=[{system:'lighting' as const,label:'灯具施工图',rows:[{deviceType:'luminaire' as const,name:'筒灯',mounting:'安装参考面',height:'1500 mm',heightMeters:1.5,quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
   act(()=>root.render(<ConstructionLegend sections={sections} annotationScale={1}/>));
-  expect(div.querySelector('[aria-label="点位图例及安装高度表"]')).not.toBeNull();
+  const schedule=div.querySelector<HTMLDetailsElement>('[aria-label="点位图例及安装高度表"]');
+  expect(schedule?.open).toBe(false);
+  expect(schedule?.querySelector('summary')?.textContent).toBe('点位图例及安装高度表');
   expect(div.querySelector('[aria-label="筒灯图块"]')).not.toBeNull();
   expect(div.querySelector('[data-schedule-row]')?.getAttribute('title')).toContain('依据：explicit');
   expect(div.textContent).toContain('筒灯');expect(div.textContent).toContain('H=1500 mm');expect(div.textContent).toContain('×2');
@@ -258,6 +260,8 @@ describe('construction plan rendering integration',()=>{
   const openNodes={l:nodes.l,west:{id:'west',type:'wall',parentId:'l',start:[0,0],end:[0,6],thickness:.2}} as Record<string,NodeData>,overlay=createEmptyOverlay('a','sha');
   overlay.devices=[{...device,id:'open-light',deviceType:'luminaire',name:'灯具',systems:['lighting'],position:{position:[2,2.7,3]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2700}}];
   act(()=>root.render(<Harness overlay={overlay} modelNodes={openNodes}/>));
+  expect(div.querySelector('.construction-notices summary')?.textContent).toBe('图纸提示 1');
+  expect(div.textContent).not.toContain('未显示点位');
   expect(div.textContent).toContain('该方向定位尺寸链未闭合');
  });
  it('renders a persisted point-position label placement along its dimension line',()=>{

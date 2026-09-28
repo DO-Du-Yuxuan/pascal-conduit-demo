@@ -155,7 +155,7 @@ describe("device point interaction wiring", () => {
   });
 
   it("refreshes the keyboard Delete handler when the selection changes", () => {
-    expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
+    expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown, true\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
   });
 
   it("does not expose logical switch-to-lighting-junction-box controls", () => {

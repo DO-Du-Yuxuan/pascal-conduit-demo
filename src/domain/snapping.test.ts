@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectRouteDirectionToHost, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
+import { projectRouteDirectionToHost, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
 import type { RoutePoint } from "./overlay";
 
 const point = (x: number, y: number, z: number): RoutePoint => ({ position: [x, y, z], attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", localPosition: [x, y, z], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
@@ -111,6 +111,22 @@ describe("route object snap resolution", () => {
       kind: "connect",
       point: port.point,
     });
+  });
+
+  it("uses the exact selected 86-box port, not the device mesh hit, for terminal alignment", () => {
+    const start = point(0, 0, 0);
+    const target = candidate("device-port", 0, 1, 1, 0);
+    const deviceSurfaceHit = { position: [0, 0, 1] as [number, number, number] };
+
+    const direction = resolveDeviceTargetDirection(start, deviceSurfaceHit, target.point, true);
+
+    expect(direction).toEqual([0, 1, 0]);
+    expect(resolveTargetClick(start, target, { tolerancePixels: 16, hostOrthogonal: true, orthogonalDirection: direction }).kind).toBe("confirm-alignment");
+    const aligned = point(0, 0, 1);
+    const meshHitDirection = resolveOrthogonalDirection(aligned, deviceSurfaceHit);
+    expect(meshHitDirection).toEqual([1, 0, 0]);
+    expect(resolveTargetClick(aligned, target, { tolerancePixels: 16, hostOrthogonal: true, orthogonalDirection: meshHitDirection }).kind).toBe("confirm-alignment");
+    expect(resolveTargetClick(aligned, target, { tolerancePixels: 16, hostOrthogonal: true, orthogonalDirection: direction }).kind).toBe("connect");
   });
 
   it("treats same-wall host-plane alignment as arrival despite a small normal-depth offset", () => {

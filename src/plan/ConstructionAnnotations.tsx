@@ -121,6 +121,6 @@ export function ConstructionNotices({plan,onFocus}: {plan:ConstructionPlan;onFoc
   for(const a of hidden) {const old=objects.get(a.sourceId);objects.set(a.sourceId,{text:old?`${old.text}；${a.text}`:a.text,anchor:a.anchor});}
   for(const n of plan.report.notices) {const old=objects.get(n.sourceId);objects.set(n.sourceId,{text:old?`${old.text}；${n.text}`:n.text,anchor:n.anchor??old?.anchor});}
   return <div className="construction-notices" onPointerDown={e=>e.stopPropagation()} onWheel={e=>e.stopPropagation()}>
-    {objects.size>0&&<details><summary>未显示点位 {objects.size}</summary><ul>{[...objects].map(([id,n])=><li key={id}><button onClick={()=>onFocus(id,n.anchor)}>{n.text}{!n.anchor?'（无法定位楼层）':''}</button></li>)}</ul></details>}
+    {objects.size>0&&<details><summary>图纸提示 {objects.size}</summary><ul>{[...objects].map(([id,n])=><li key={id}><button onClick={()=>onFocus(id,n.anchor)}>{n.text}{!n.anchor?'（无法定位楼层）':''}</button></li>)}</ul></details>}
   </div>;
 }

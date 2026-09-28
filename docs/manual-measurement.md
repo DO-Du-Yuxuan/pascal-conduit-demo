@@ -8,6 +8,8 @@ Authored ManualLeader callouts are separate from temporary measurements: they li
 
 The 2D Measure button, layer controls, callouts, object hiding, and selected-object inspector live in the resizable left **图纸** tab. The canvas has a single working drawing, selected through the shared level control at its upper left; split 2D/3D follows that same level. Existing Drawing nodes are preserved when switching levels or views.
 
+The **点位图例及安装高度表** is a collapsed control immediately above the main bottom toolbar. Clicking it opens a scrollable panel upward; the table no longer sits behind the toolbar. The lower-right **图纸提示** lists drawing diagnostics. An incomplete point-position chain means one or more derived dimension lines lack a reliable reference; the device itself remains visible and is not inferred to be a duplicate.
+
 ## Mode and orthogonal lock
 
 - The single **Measure** button toggles the tool. Its default is aligned Euclidean world-space distance.

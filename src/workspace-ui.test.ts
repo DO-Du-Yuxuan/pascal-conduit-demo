@@ -470,7 +470,7 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("routes Escape through active-route undo before editable-focus suppression", () => {
-    const keydown = threeDSource.slice(threeDSource.indexOf("const onKeyDown = (event: KeyboardEvent) => {"), threeDSource.indexOf("window.addEventListener(\"keydown\", onKeyDown)"));
+    const keydown = threeDSource.slice(threeDSource.indexOf("const onKeyDown = (event: KeyboardEvent) => {"), threeDSource.indexOf("window.addEventListener(\"keydown\", onKeyDown, true)"));
     expect(keydown).toContain("routeEscapeAction(");
     expect(keydown).toContain("shouldIgnoreEditableKeydown(event.key, editable, escapeAction !== \"none\")");
     expect(keydown.indexOf("shouldIgnoreEditableKeydown")).toBeLessThan(keydown.indexOf("if ((event.metaKey || event.ctrlKey)"));
@@ -479,6 +479,17 @@ describe("conduit workspace UI contract", () => {
     expect(keydown).toContain('escapeAction === "pop-hvac-duct-segment"');
     expect(keydown).toContain("sameRoutePoint(request.entry, removedPoint)");
     expect(keydown).toContain("sameRoutePoint(request.exit, removedPoint)");
+    expect(keydown).toContain("event.stopPropagation();");
+    expect(threeDSource).toContain('window.addEventListener("keydown", onKeyDown, true)');
+    expect(threeDSource).toContain('window.removeEventListener("keydown", onKeyDown, true)');
+    expect(threeDSource).toContain("selectedDeviceIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart");
+  });
+
+  it("uses the selected physical port coordinate for its orthogonal arrival direction", () => {
+    expect(conduitSceneSource).toContain("onDeviceTarget(device, [event.point.x, event.point.y, event.point.z], port.id)");
+    expect(threeDSource).toContain("resolveDeviceTargetDirection(draft[draft.length - 1], { position: point }, targetPort?.position ?? { position: point }, Boolean(portId && targetPort)");
+    expect(threeDSource).toContain("if (portId && port && draft.length && orthogonal && !worldAxis)");
+    expect(threeDSource).toContain("resolveDeviceTargetDirection(draft[draft.length - 1], { position: reference ?? port.position.position }, port.position, true)");
   });
 
   it("uses the shared Layout reference plane for eligible horizontal device points", () => {

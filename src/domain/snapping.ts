@@ -66,6 +66,11 @@ export function resolveOrthogonalDirection(start: RoutePoint, intent: RoutePoint
   return scores[strongest] > scores[previousIndex] * switchRatio ? directions[strongest] : directions[previousIndex];
 }
 
+/** A picked device port is a precise route target; use its physical coordinate rather than the pointer's hit on the device body or port marker. */
+export function resolveDeviceTargetDirection(start: RoutePoint, pointerIntent: RoutePoint, targetPort: RoutePoint, preciseTarget: boolean, previous: Vec3 | null = null): Vec3 {
+  return resolveOrthogonalDirection(start, preciseTarget ? targetPort : pointerIntent, previous);
+}
+
 function reachesSameHostPlane(start: RoutePoint, projected: Vec3, target: RoutePoint): boolean {
   const startHost = start.attachment, targetHost = target.attachment;
   if (!startHost || !targetHost || startHost.hostId !== targetHost.hostId || startHost.hostKind !== targetHost.hostKind || startHost.surface !== targetHost.surface || startHost.levelId !== targetHost.levelId) return false;

@@ -15,7 +15,7 @@ import { describeDevicePosition, editDevicePosition, ensureInstallationReference
 import { buildPhysicalPositioningSurfaces } from "../domain/physical-positioning-surfaces";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { connectedRouteElementIds } from "../domain/route-selection";
-import { projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
+import { projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
@@ -273,7 +273,7 @@ const branchAttachment = (segment: RouteSegment, t: number): HostAttachment | un
 };
 
 export type ThreeDAuthorCommand = { id: number; tool: BuilderAuthorTool | null; system?: RoutingSystem; deviceType?: NetworkDeviceType; viewPreset?: "top"; catalogLock?: BuilderCatalogLock };
-export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId, authorCommand, panelHost, activeLevelId, selectedBuilderSystem = null, onAuthoringSystemChange }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null; authorCommand?: ThreeDAuthorCommand | null; panelHost?: HTMLElement | null; activeLevelId: string; selectedBuilderSystem?: BuilderSystemId | null; onAuthoringSystemChange?: (system: BuilderSystemId) => void }) {
+export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId, authorCommand, panelHost, activeLevelId, keyboardActive = true, selectedBuilderSystem = null, onAuthoringSystemChange }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null; authorCommand?: ThreeDAuthorCommand | null; panelHost?: HTMLElement | null; activeLevelId: string; keyboardActive?: boolean; selectedBuilderSystem?: BuilderSystemId | null; onAuthoringSystemChange?: (system: BuilderSystemId) => void }) {
   const publishOverlay = useOverlayStore((state) => state.publish);
   const loadSharedWorkspace = useOverlayStore((state) => state.loadWorkspace);
   const commitSharedOverlay = useOverlayStore((state) => state.commit);
@@ -460,6 +460,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   }, [overlay.devices, selectedId]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!keyboardActive) return;
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
       const activeDuct = activeHvacDuctId ? overlay.hvac.ducts.find((duct) => duct.id === activeHvacDuctId) : undefined;
       const escapeAction = routeEscapeAction(tool === "hvac-control"
@@ -488,6 +489,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; }
         if (escapeAction === "none") return;
         event.preventDefault();
+        event.stopPropagation();
         if (escapeAction === "cancel-penetration") { setPenetrationSession(null); setCursor(null); setStatus("已取消待确认的穿透出口。"); return; }
         if (escapeAction === "pop-draft-point") {
           const removedPoint = draft[draft.length - 1];
@@ -521,8 +523,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         if (session) { setPenetrationSession(session); setCursor(null); setStatus("已锁定入射方向；移至宿主另一侧并点击确认出口。"); }
       }
     };
-    window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, authorCommand, onSelect]);
+    // A focused canvas control may stop keydown bubbling. Route undo must still
+    // receive Escape after the pointer confirms a point on that control.
+    window.addEventListener("keydown", onKeyDown, true); return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
 
   const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const deleteSelectedObjects = () => {
@@ -808,12 +812,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
     if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) scheduleCursor(routePoint(hit));
   };
-  const onDeviceTarget = (device: NetworkDevice, point: [number, number, number] | null) => {
+  const onDeviceTarget = (device: NetworkDevice, point: [number, number, number] | null, portId?: string) => {
     if (!point) { setHoverId(null); setActiveTargetPortId(null); return; }
     setHoverId(device.id);
     if (!draft.length) { setActiveTargetPortId(null); return; }
-    if (orthogonal && !worldAxis) orthogonalDirection.current = resolveOrthogonalDirection(draft[draft.length - 1], { position: point }, orthogonalDirection.current);
-    setActiveTargetPortId(nearestDeviceTargetPort(device, system, point)?.id ?? null);
+    const targetPort = portId
+      ? deviceTargetPorts(device, system).find((port) => port.id === portId)
+      : nearestDeviceTargetPort(device, system, point);
+    if (orthogonal && !worldAxis) orthogonalDirection.current = resolveDeviceTargetDirection(draft[draft.length - 1], { position: point }, targetPort?.position ?? { position: point }, Boolean(portId && targetPort), orthogonalDirection.current);
+    setActiveTargetPortId(targetPort?.id ?? null);
     scheduleCursor({ position: point });
   };
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
@@ -882,7 +889,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!canUseCatalogSystem(catalogLock, routeSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[routeSystem].label}。`); return; }
     const targetPort = () => {
       const reference = targetPoint ?? draft[draft.length - 1]?.position;
-      return portId ? deviceTargetPorts(device, routeSystem).find((port) => port.id === portId) : reference ? nearestDeviceTargetPort(device, routeSystem, reference) : undefined;
+      const port = portId ? deviceTargetPorts(device, routeSystem).find((candidate) => candidate.id === portId) : reference ? nearestDeviceTargetPort(device, routeSystem, reference) : undefined;
+      if (portId && port && draft.length && orthogonal && !worldAxis) {
+        orthogonalDirection.current = resolveDeviceTargetDirection(draft[draft.length - 1], { position: reference ?? port.position.position }, port.position, true);
+      }
+      return port;
     };
     if (endpointRouteStart && draft.length) {
       const endPort = targetPort();
