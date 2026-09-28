@@ -44,7 +44,7 @@
 - `nodes` 的每个键等于该节点的 `id`；ID 在整份文件内稳定且唯一。`parentId` 指向实际父节点；拥有 `children` 的节点须与子节点的 `parentId` 相互一致。`Site.parentId` 为 `null`。
 - 建筑的父子关系按新规范：`Site → Building → Level →` 楼层对象，`Elevator` 在 `Building` 下；`Wall` 包含 `Door`、`Window`、`Item`；`Roof` 包含 `RoofSegment`；`Stair` 包含 `StairSegment`；`Item` 可以递归包含 `Item`。
 - 已有建筑及 Demo 实体的业务字段（几何、尺寸、宿主、端口、时间等）原则上保留；目标格式改变其 `type`、父子归属和必要的 ID 引用。现有原始建筑字段、未知属性、插件数据及尚未实现类型必须无损读写。导入建筑节点仍只读，文档化的 Demo `Beam` 作者工具是例外。
-- 可独立引用的实体是 `nodes` 节点。同一实体只存一份。跨系统的设备端口连接、宿主、绘图来源等以稳定 ID 引用，不能复制实体以凑系统树。物理端口嵌入其所属设备或管件并保留端口 ID；`Circuit` 和施工记录作为所属系统容器上的带 ID 数据，不成为 `Site` 的新子节点。旧逻辑灯控组只接受为可丢弃输入，不属于当前公开数据合同。
+- 可独立引用的实体是 `nodes` 节点。同一实体只存一份。跨系统的设备端口连接、宿主、绘图来源等以稳定 ID 引用，不能复制实体以凑系统树。物理端口嵌入其所属设备或管件并保留端口 ID；`Circuit` 和施工记录作为所属系统容器上的带 ID 数据，不成为 `Site` 的新子节点。旧逻辑灯控组只接受为可丢弃输入，不属于当前公开数据合同。LightingSystem 当前没有灯具实体；照明点位统一为灯位接线盒。
 - 现有几何长度继续使用米；现有以 `Mm` 结尾的施工参数继续使用毫米。转换不能只改字段名而改变数值单位。
 
 ## Project 4.0 公开类型目录
@@ -70,7 +70,7 @@
 
 地面过桥弯沿用已发布的 `ConduitElbow` 类型和 `fitting: "elbow"` 值；`bridge` 字段保存跨越几何。单根障碍保持双 45° 短桥；当多个同楼板非平行障碍各自所需桥段的占用区间重叠、管线无法在其间落回楼板时，计划器将它们合成一个桥段，入口/出口跨过整组，桥顶覆盖全部障碍，并按最粗障碍确定桥高。保持 10 mm 净空；有足够楼板距离的障碍会形成独立桥段。`bridge.obstacleSegmentId` 保留首个障碍的兼容引用，新增的 `bridge.obstacleSegmentIds` 记录该桥覆盖的完整障碍组；旧数据只有单数 ID 时仍可导入。`entry`、`crestStart`、`crestEnd`、`exit`、`riseMm` 和 `clearanceMm` 保存实际桥形。导入时依据该字段恢复内部过桥弯模型，保存时保留相同几何，不新增 Project 4.0 公开类型。
 
-`FanCoilUnit` 默认外壳尺寸为 `1000 × 600 × 300 mm`，并嵌入稳定的红色电源端口和白色 HVAC 控制端口；`FCUThermostat` 嵌入白色控制源端口。`HVACControlConduit` 是 HVACSystem 下独立于 Electrical `Conduit` 的控制线路实体，含稳定路线 ID、嵌套稳定管段 ID 和两端端口引用，默认直径 20 mm。温控器只能连接一台 FCU，FCU 控制端口和电源端口各最多连接一根管。FCU 电源端由 ElectricalSystem 中强电箱起始的红色插座管线连接；温控器可直接作为白色控制管起点，不需要弱电箱。白色 HVAC 控制管不能与 ElectricalSystem 白色网络管互接。`GalvanizedSheetMetalDuct` 默认截面为 `500 × 200 mm`。`LightingJunctionBox` 默认直径 90 mm、深度 100 mm，包含四个相互独立的水平照明管端口；`RFIDReader` 默认 `86 × 130 × 25 mm`，仅允许墙面或 Beam 侧面宿主。旧 4.0 `Spotlight` 是唯一明确支持的设备类型别名：导入时保留稳定节点 ID、位置、尺寸、端口 ID 和管线连接，内部按灯位接线盒处理；导出统一使用 `LightingJunctionBox`，并保留该节点其他字段。类型名称及父系统是公开合同，编辑器内部 `luminaire`、`sensor`、`indoor-unit`、`air-duct`、`thermostat` 等适配 discriminator 不是 JSON 类型。
+`FanCoilUnit` 默认外壳尺寸为 `1000 × 600 × 300 mm`，并嵌入稳定的红色电源端口和白色 HVAC 控制端口；`FCUThermostat` 嵌入白色控制源端口。`HVACControlConduit` 是 HVACSystem 下独立于 Electrical `Conduit` 的控制线路实体，含稳定路线 ID、嵌套稳定管段 ID 和两端端口引用，默认直径 20 mm。温控器只能连接一台 FCU，FCU 控制端口和电源端口各最多连接一根管。FCU 电源端由 ElectricalSystem 中强电箱起始的红色插座管线连接；温控器可直接作为白色控制管起点，不需要弱电箱。白色 HVAC 控制管不能与 ElectricalSystem 白色网络管互接。`GalvanizedSheetMetalDuct` 默认截面为 `500 × 200 mm`。`LightingJunctionBox` 默认名称为“灯位接线盒”、直径 90 mm、深度 100 mm，包含四个相互独立的水平照明管端口；`RFIDReader` 默认 `86 × 130 × 25 mm`，仅允许墙面或 Beam 侧面宿主。旧 4.0 `Spotlight` 是唯一明确支持的设备类型别名：导入时保留稳定节点 ID、位置、尺寸、端口 ID 和管线连接，内部按灯位接线盒处理；导出统一使用 `LightingJunctionBox`，并保留该节点其他字段。`Luminaire` 不属于当前公开类型目录；编辑器内部 `luminaire` 仅为 `LightingJunctionBox` 的兼容适配 discriminator。类型名称及父系统是公开合同，`sensor`、`indoor-unit`、`air-duct`、`thermostat` 等其他适配 discriminator 也不是 JSON 类型。
 
 明确退休并拒绝导入的公共类型：`Luminaire`、`Sensor`、`IndoorUnit`、`Thermostat`、`AirDuct`、`FireWaterInlet`、`FireWaterFitting`。文件版本不是 4.0 时拒绝导入，不执行旧格式迁移或静默重写。拒绝已知退休类型或错误系统归属，不意味着拒绝未知合法未来类型。
 

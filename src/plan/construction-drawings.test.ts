@@ -13,7 +13,7 @@ const nodes = {
 const wallAttachment: HostAttachment = { hostId: 'wall', hostKind: 'wall', levelId: 'level', surface: 'front', normal: [0, 0, 1] };
 const floorAttachment: HostAttachment = { hostId: 'floor', hostKind: 'slab', levelId: 'level', surface: 'top', normal: [0, 1, 0] };
 const ceilingAttachment: HostAttachment = { hostId: 'ceiling', hostKind: 'ceiling', levelId: 'level', surface: 'bottom', normal: [0, -1, 0] };
-const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: NetworkDevice['systems'], y: number, attachment?: HostAttachment): NetworkDevice => ({ id, type: 'network-device', deviceType, name: deviceType === 'luminaire' ? '筒灯' : '插座', position: { position: [1, y, 1], attachment }, sizeMm: [86, 86, 50], orientation: [0, 0, 0], systems, ports: [], createdAt: '' });
+const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: NetworkDevice['systems'], y: number, attachment?: HostAttachment): NetworkDevice => ({ id, type: 'network-device', deviceType, name: deviceType === 'luminaire' ? '灯位接线盒' : '插座', position: { position: [1, y, 1], attachment }, sizeMm: [86, 86, 50], orientation: [0, 0, 0], systems, ports: [], createdAt: '' });
 
 describe('construction drawing visibility and installation schedule', () => {
   it('turns all five construction drawings on and off as one global selection', () => {
@@ -35,9 +35,9 @@ describe('construction drawing visibility and installation schedule', () => {
     const visible = { receptacle: false, lighting: true, network: false, sprinkler: false };
     const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay, new Set(), visible));
     expect(sections).toHaveLength(1);
-    expect(sections[0]).toMatchObject({ system: 'lighting', label: '灯具施工图' });
+    expect(sections[0]).toMatchObject({ system: 'lighting', label: '灯位接线盒施工图' });
     expect(sections[0].rows).toEqual([
-      expect.objectContaining({ variant: 'A', deviceType: 'luminaire', name: '筒灯', mounting: '安装参考面', height: '1500 mm', quantity: 2, sourceIds: ['light-a', 'light-b'], measurementBasis: 'explicit', confidence: 'high' }),
+      expect.objectContaining({ variant: 'A', deviceType: 'luminaire', name: '灯位接线盒', mounting: '安装参考面', height: '1500 mm', quantity: 2, sourceIds: ['light-a', 'light-b'], measurementBasis: 'explicit', confidence: 'high' }),
       expect.objectContaining({ variant: 'B', deviceType: 'luminaire', height: '1200 mm', quantity: 1, sourceIds: ['light-c'] }),
     ]);
     expect(installationVariantByDeviceId(sections)).toEqual({ 'light-a': 'A', 'light-b': 'A', 'light-c': 'B' });

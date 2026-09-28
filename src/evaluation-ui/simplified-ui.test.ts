@@ -63,7 +63,7 @@ describe("simplified evaluation and layer controls", () => {
     expect(appSource).toContain('layerGroup("建筑图层"');
     expect(appSource).toContain('layerGroup("施工图层"');
     expect(appSource).toContain('conduitReceptacle: "插座施工图"');
-    expect(appSource).toContain('conduitLighting: "灯具施工图"');
+    expect(appSource).toContain('conduitLighting: "灯位接线盒施工图"');
     expect(appSource).toContain('conduitNetwork: "弱电施工图"');
     expect(appSource).toContain('conduitSprinkler: "消防施工图"');
     expect(appSource).toContain('aria-label="全部施工图"');

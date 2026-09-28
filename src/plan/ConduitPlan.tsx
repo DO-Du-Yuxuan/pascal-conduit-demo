@@ -1,5 +1,6 @@
 import React from 'react';
 import type { BendArc, ConduitOverlayDocument, NetworkDevice, Vec3 } from '../domain/overlay';
+import { levelElevation } from '../domain/building';
 import { DEVICE_DEFAULTS } from '../domain/devices';
 import { useOverlayStore } from '../domain/store';
 import { planFittingDisplay } from '../domain/network-plan';
@@ -18,6 +19,19 @@ function conduitStrokeLayers(system:keyof typeof PLAN_COLORS,scale:number,overri
   if(system!=='network'||override)return [{role:'color',stroke:override??PLAN_COLORS[system],strokeWidth:widthPx/scale}] as const;
   return [{role:'outline',stroke:NETWORK_CONDUIT_OUTLINE,strokeWidth:(widthPx+2.2)/scale},{role:'core',stroke:NETWORK_CONDUIT_CORE,strokeWidth:widthPx/scale}] as const;
 }
+/** Dashed lines identify overhead free-space runs, not low open ends at floor level. */
+function suspendedConduit(start: { position: Vec3; attachment?: { hostKind: string; surface: string } }, end: { position: Vec3; attachment?: { hostKind: string; surface: string } }, context: PlanContext, levelId: string) {
+  const attachments = [start.attachment, end.attachment].filter((attachment): attachment is NonNullable<typeof attachment> => Boolean(attachment));
+  if (attachments.some(attachment => attachment.hostKind === 'ceiling' && /back/i.test(attachment.surface))) return true;
+  const midpointY = (start.position[1] + end.position[1]) / 2;
+  const aboveFloor = midpointY - levelElevation(context.scene, levelId) >= 1.8;
+  return aboveFloor && attachments.length < 2;
+}
+function suspendedFitting(attachment: { hostKind: string; surface: string } | undefined, points: readonly Vec3[], context: PlanContext, levelId: string) {
+  if (attachment?.hostKind === 'ceiling' && /back/i.test(attachment.surface)) return true;
+  const meanY = points.reduce((sum, point) => sum + point[1], 0) / Math.max(1, points.length);
+  return !attachment && meanY - levelElevation(context.scene, levelId) >= 1.8;
+}
 export function devicePlanRotation(device:NetworkDevice,canvasRotation:number){
   if(!WALL_ORIENTED_TYPES.has(device.deviceType))return -canvasRotation;
   const direction=device.position.attachment?.normal??device.frame?.front??device.orientation,[x,,z]=direction;
@@ -28,12 +42,12 @@ const ConduitPlanPermanent = React.memo(function ConduitPlanPermanent({ overlay,
   const color = (id: string, system: keyof typeof PLAN_COLORS) => id === selectedId ? '#f36b00' : PLAN_COLORS[system];
   const select = (id: string) => (event: React.MouseEvent) => { event.stopPropagation(); onSelect(id); };
   return <g className="conduit-plan-permanent" fill="none" strokeWidth={1.8 / scale} strokeLinecap="round" strokeLinejoin="round">
-    {hvacVisible && <HvacPlan overlay={overlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} scale={scale} rotation={rotation} />}
-    {conduitsVisible && overlay.segments.filter(s => context.segmentVisible(s) && context.segmentLevels.get(s.id)?.includes(levelId)).map(s => <g key={s.id} data-conduit-segment={s.id} onClick={select(s.id)}><line x1={s.start.position[0]} y1={s.start.position[2]} x2={s.end.position[0]} y2={s.end.position[2]} stroke="transparent" strokeWidth={10 / scale}/>{conduitStrokeLayers(s.system,scale,s.id===selectedId?'#f36b00':undefined).map(layer=><line key={layer.role} data-conduit-stroke={layer.role} x1={s.start.position[0]} y1={s.start.position[2]} x2={s.end.position[0]} y2={s.end.position[2]} stroke={layer.stroke} strokeWidth={layer.strokeWidth}/>)}</g>)}
+    {hvacVisible && <HvacPlan overlay={overlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} scale={scale} rotation={rotation} floorElevation={levelElevation(context.scene,levelId)} />}
+    {conduitsVisible && overlay.segments.filter(s => context.segmentVisible(s) && context.segmentLevels.get(s.id)?.includes(levelId)).map(s => { const suspended=suspendedConduit(s.start,s.end,context,levelId); return <g key={s.id} data-conduit-segment={s.id} data-suspended={suspended || undefined} onClick={select(s.id)}><line x1={s.start.position[0]} y1={s.start.position[2]} x2={s.end.position[0]} y2={s.end.position[2]} stroke="transparent" strokeWidth={10 / scale}/>{conduitStrokeLayers(s.system,scale,s.id===selectedId?'#f36b00':undefined).map(layer=><line key={layer.role} data-conduit-stroke={layer.role} x1={s.start.position[0]} y1={s.start.position[2]} x2={s.end.position[0]} y2={s.end.position[2]} stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeDasharray={suspended?'.12 .08':undefined}/>)}</g>; })}
     {conduitsVisible && overlay.fittings.filter(f => context.systemVisibility[f.system] && !context.hidden.has(f.id) && !context.hostHidden(f.position.attachment) && context.linkedLevel(f.segmentIds,f.position.attachment) === levelId).map(f => {
       const d = planFittingDisplay(f), layers=conduitStrokeLayers(f.system,scale,f.id===selectedId?'#f36b00':undefined);
-      if(d.kind === 'arc' || d.kind === 'bridge') return <g key={f.id} data-conduit-fitting={f.id} onClick={select(f.id)}>{layers.map(layer=><polyline key={layer.role} data-conduit-stroke={layer.role} points={(d.kind === 'arc' ? planArcPoints(f.arc!) : d.points).map(p=>`${p[0]},${p[2]}`).join(' ')} stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeDasharray={d.kind === 'bridge' ? `${4/scale} ${3/scale}` : undefined}/>)}</g>;
-      if(d.kind === 'connectors') return <g key={f.id} data-conduit-fitting={f.id} onClick={select(f.id)}>{layers.map(layer=><g key={layer.role} data-conduit-stroke={layer.role} stroke={layer.stroke} strokeWidth={layer.strokeWidth}>{d.lines.map((l,i)=><line key={i} x1={l.start[0]} y1={l.start[2]} x2={l.end[0]} y2={l.end[2]}/>)}</g>)}</g>;
+      if(d.kind === 'arc' || d.kind === 'bridge') { const pathPoints=d.kind === 'arc' ? planArcPoints(f.arc!) : d.points, suspended=suspendedFitting(f.position.attachment,pathPoints,context,levelId); return <g key={f.id} data-conduit-fitting={f.id} data-suspended={suspended || undefined} onClick={select(f.id)}>{layers.map(layer=><polyline key={layer.role} data-conduit-stroke={layer.role} points={pathPoints.map(p=>`${p[0]},${p[2]}`).join(' ')} stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeDasharray={d.kind === 'bridge' ? `${4/scale} ${3/scale}` : suspended ? '.12 .08' : undefined}/>)}</g>; }
+      if(d.kind === 'connectors') { const points=d.lines.flatMap(line=>[line.start,line.end]), suspended=suspendedFitting(f.position.attachment,points,context,levelId); return <g key={f.id} data-conduit-fitting={f.id} data-suspended={suspended || undefined} onClick={select(f.id)}>{layers.map(layer=><g key={layer.role} data-conduit-stroke={layer.role} stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeDasharray={suspended?'.12 .08':undefined}>{d.lines.map((l,i)=><line key={i} x1={l.start[0]} y1={l.start[2]} x2={l.end[0]} y2={l.end[2]}/>)}</g>)}</g>; }
       return null;
     })}
     {devicesVisible && overlay.devices.filter(d => context.deviceVisible(d) && context.deviceLevel(d) === levelId).map(d => {

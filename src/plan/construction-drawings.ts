@@ -6,7 +6,7 @@ import { deviceInstallationHeightMeters, devicePlanLabel, isFloorSocket, type Pl
 export type ConstructionDrawingSystem = RoutingSystem | 'sensor';
 export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean> & { sensor?: boolean };
 export const CONSTRUCTION_DRAWING_LABELS: Record<ConstructionDrawingSystem, string> = {
-  receptacle: '插座施工图', lighting: '灯具施工图', network: '弱电施工图', sprinkler: '消防施工图',
+  receptacle: '插座施工图', lighting: '灯位接线盒施工图', network: '弱电施工图', sprinkler: '消防施工图',
   sensor: '传感器施工图',
 };
 export const CONSTRUCTION_DRAWING_SYSTEMS: ConstructionDrawingSystem[] = ['receptacle', 'lighting', 'network', 'sprinkler', 'sensor'];

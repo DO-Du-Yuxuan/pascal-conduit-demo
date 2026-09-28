@@ -292,10 +292,10 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
     if (!group.luminaireDeviceIds.length) throw new Error(`照明控制组 ${group.id} 不能为空。`);
     const members = new Set<string>();
     for (const id of group.luminaireDeviceIds) {
-      if (members.has(id)) throw new Error(`照明控制组 ${group.id} 重复引用灯具 ${id}。`);
+      if (members.has(id)) throw new Error(`照明控制组 ${group.id} 重复引用灯位接线盒 ${id}。`);
       members.add(id);
-      if (devicesById.get(id)?.deviceType !== "luminaire") throw new Error(`照明控制组 ${group.id} 引用了无效灯具 ${id}。`);
-      if (boundLuminaireIds.has(id)) throw new Error(`灯具 ${id} 同时属于多个照明控制组。`);
+      if (devicesById.get(id)?.deviceType !== "luminaire") throw new Error(`照明控制组 ${group.id} 引用了无效灯位接线盒 ${id}。`);
+      if (boundLuminaireIds.has(id)) throw new Error(`灯位接线盒 ${id} 同时属于多个照明控制组。`);
       boundLuminaireIds.add(id);
     }
   }

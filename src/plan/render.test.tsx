@@ -80,6 +80,23 @@ describe('construction plan rendering integration',()=>{
   expect(lighting.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke')).toBe('#2563c7');
   expect(lighting.querySelector('[data-conduit-stroke="core"]')).toBeNull();
  });
+ it('uses dashed strokes for elevated free-space and ceiling-back conduit while keeping floor and wall runs solid',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),wallAttachment=device.position.attachment!;
+  overlay.segments=[
+   {id:'floor-open',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,.05,0]},end:{position:[1,.05,0],attachment:wallAttachment},createdAt:''},
+   {id:'high-free',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,2.74,1]},end:{position:[1,2.74,1],attachment:wallAttachment},createdAt:''},
+   {id:'ceiling-back',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,2.74,2],attachment:{...wallAttachment,hostKind:'ceiling',surface:'ceiling-back'}},end:{position:[1,2.74,2],attachment:{...wallAttachment,hostKind:'ceiling',surface:'ceiling-back'}},createdAt:''},
+   {id:'wall-mounted',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,2.74,0],attachment:wallAttachment},end:{position:[1,2.74,0],attachment:wallAttachment},createdAt:''},
+  ];
+  const context=createPlanContext(nodes,overlay);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  const stroke=(id:string)=>div.querySelector(`[data-conduit-segment="${id}"] [data-conduit-stroke="color"]`);
+  expect(stroke('floor-open')?.getAttribute('stroke-dasharray')).toBeNull();
+  expect(stroke('high-free')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(stroke('ceiling-back')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(stroke('wall-mounted')?.getAttribute('stroke-dasharray')).toBeNull();
+ });
  it('does not draw legacy switch control relations when the conduit layer is hidden',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]},light={...device,id:'light',deviceType:'luminaire' as const,name:'灯具',systems:['lighting' as const],position:{position:[3,2.7,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};
@@ -246,19 +263,19 @@ describe('construction plan rendering integration',()=>{
  });
  it('renders ceiling-device installation information in the drawing schedule',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
-  const sections=[{system:'lighting' as const,label:'灯具施工图',rows:[{deviceType:'luminaire' as const,name:'筒灯',mounting:'安装参考面',height:'1500 mm',heightMeters:1.5,quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
+  const sections=[{system:'lighting' as const,label:'灯位接线盒施工图',rows:[{deviceType:'luminaire' as const,name:'灯位接线盒',mounting:'安装参考面',height:'1500 mm',heightMeters:1.5,quantity:2,sourceIds:['a','b'],measurementBasis:'explicit' as const,confidence:'high' as const,assumptions:['高度来自安装参考面']}]}];
   act(()=>root.render(<ConstructionLegend sections={sections} annotationScale={1}/>));
   const schedule=div.querySelector<HTMLDetailsElement>('[aria-label="点位图例及安装高度表"]');
   expect(schedule?.open).toBe(false);
   expect(schedule?.querySelector('summary')?.textContent).toBe('点位图例及安装高度表');
-  expect(div.querySelector('[aria-label="筒灯图块"]')).not.toBeNull();
+  expect(div.querySelector('[aria-label="灯位接线盒图块"]')).not.toBeNull();
   expect(div.querySelector('[data-schedule-row]')?.getAttribute('title')).toContain('依据：explicit');
-  expect(div.textContent).toContain('筒灯');expect(div.textContent).toContain('H=1500 mm');expect(div.textContent).toContain('×2');
+  expect(div.textContent).toContain('灯位接线盒');expect(div.textContent).toContain('H=1500 mm');expect(div.textContent).toContain('×2');
  });
  it('shows an incomplete-chain notice when a ceiling point has no wall on one side',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const openNodes={l:nodes.l,west:{id:'west',type:'wall',parentId:'l',start:[0,0],end:[0,6],thickness:.2}} as Record<string,NodeData>,overlay=createEmptyOverlay('a','sha');
-  overlay.devices=[{...device,id:'open-light',deviceType:'luminaire',name:'灯具',systems:['lighting'],position:{position:[2,2.7,3]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2700}}];
+  overlay.devices=[{...device,id:'open-light',deviceType:'luminaire',name:'灯位接线盒',systems:['lighting'],position:{position:[2,2.7,3]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2700}}];
   act(()=>root.render(<Harness overlay={overlay} modelNodes={openNodes}/>));
   expect(div.querySelector('.construction-notices summary')?.textContent).toBe('图纸提示 1');
   expect(div.textContent).not.toContain('未显示点位');

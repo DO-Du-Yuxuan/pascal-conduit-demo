@@ -22,11 +22,21 @@ export function connectedRouteElementIds(overlay: Pick<ConduitOverlayDocument, "
   return [...visited];
 }
 
-function physicallyConnectedRouteElementIds(overlay: Pick<ConduitOverlayDocument, "segments" | "fittings" | "junctionBoxes">, startId: string) {
-  const segmentIds = new Set(overlay.segments.map((segment) => segment.id));
+function physicallyConnectedRouteElementIds(
+  overlay: Pick<ConduitOverlayDocument, "segments" | "fittings" | "junctionBoxes"> & Partial<Pick<ConduitOverlayDocument, "devices">>,
+  startId: string,
+  allowedSegmentIds?: ReadonlySet<string>,
+) {
+  const segmentIds = new Set(overlay.segments.filter((segment) => !allowedSegmentIds || allowedSegmentIds.has(segment.id)).map((segment) => segment.id));
   const segmentElements = new Map<string, string[]>();
   const elementSegments = new Map<string, string[]>();
-  for (const element of [...overlay.fittings, ...overlay.junctionBoxes]) {
+  const traversableElements = [
+    ...overlay.fittings.map((element) => ({ id: element.id, segmentIds: [...element.segmentIds, ...element.ports.flatMap((port) => port.connectedSegmentIds)], selectable: true })),
+    ...overlay.junctionBoxes.map((element) => ({ id: element.id, segmentIds: [...element.segmentIds, ...element.ports.flatMap((port) => port.connectedSegmentIds)], selectable: true })),
+    ...(overlay.devices ?? []).map((element) => ({ id: element.id, segmentIds: element.ports.flatMap((port) => port.connectedSegmentIds), selectable: false })),
+  ];
+  const selectableIds = new Set(traversableElements.filter((element) => element.selectable).map((element) => element.id));
+  for (const element of traversableElements) {
     const connected = element.segmentIds.filter((id) => segmentIds.has(id));
     elementSegments.set(element.id, connected);
     for (const segmentId of connected) (segmentElements.get(segmentId) ?? segmentElements.set(segmentId, []).get(segmentId)!).push(element.id);
@@ -40,23 +50,32 @@ function physicallyConnectedRouteElementIds(overlay: Pick<ConduitOverlayDocument
     const neighbours = segmentIds.has(id) ? segmentElements.get(id) ?? [] : elementSegments.get(id) ?? [];
     for (const neighbour of neighbours) if (!visited.has(neighbour)) pending.push(neighbour);
   }
-  return [...visited];
+  return [...visited].filter((id) => segmentIds.has(id) || selectableIds.has(id));
 }
 
-/** Returns all route elements in the selected circuit, including branch boxes.
- * Legacy and circuit-less routes fall back to their physical fitting component.
+/** Returns the physically reachable route component within the selected Circuit.
+ * Circuit membership bounds the search; fittings, box ports and device ports
+ * define connectivity, so a broken Circuit cannot bridge a deleted gap.
+ * Legacy and circuit-less routes fall back to their physical component.
  */
-export function circuitRouteElementIds(overlay: Pick<ConduitOverlayDocument, "segments" | "fittings" | "junctionBoxes" | "circuits">, startId: string) {
+export function circuitRouteElementIds(overlay: Pick<ConduitOverlayDocument, "segments" | "fittings" | "junctionBoxes" | "circuits"> & Partial<Pick<ConduitOverlayDocument, "devices">>, startId: string) {
   const startSegment = overlay.segments.find((segment) => segment.id === startId);
-  const seedSegmentIds = startSegment ? [startId] : [...(overlay.fittings.find((fitting) => fitting.id === startId)?.segmentIds ?? []), ...(overlay.junctionBoxes.find((box) => box.id === startId)?.segmentIds ?? [])];
+  const seedSegmentIds = startSegment ? [startId] : [
+    ...(overlay.fittings.find((fitting) => fitting.id === startId)?.segmentIds ?? []),
+    ...(overlay.fittings.find((fitting) => fitting.id === startId)?.ports.flatMap((port) => port.connectedSegmentIds) ?? []),
+    ...(overlay.junctionBoxes.find((box) => box.id === startId)?.segmentIds ?? []),
+    ...(overlay.junctionBoxes.find((box) => box.id === startId)?.ports.flatMap((port) => port.connectedSegmentIds) ?? []),
+  ];
   const seedSegmentId = seedSegmentIds[0];
   const circuitId = startSegment?.circuitId ?? overlay.segments.find((segment) => seedSegmentIds.includes(segment.id) && segment.circuitId)?.circuitId ?? overlay.circuits.find((circuit) => circuit.segmentIds.includes(startId) || seedSegmentIds.some((id) => circuit.segmentIds.includes(id)))?.id;
   const circuit = circuitId ? overlay.circuits.find((item) => item.id === circuitId) : undefined;
   if (!circuit) return physicallyConnectedRouteElementIds(overlay, seedSegmentId ?? startId);
 
-  const segmentIds = new Set([...circuit.segmentIds, ...overlay.segments.filter((segment) => segment.circuitId === circuit.id).map((segment) => segment.id)]);
-  const result = new Set<string>([...segmentIds].filter((id) => overlay.segments.some((segment) => segment.id === id)));
-  for (const fitting of overlay.fittings) if (fitting.segmentIds.some((id) => segmentIds.has(id))) result.add(fitting.id);
-  for (const box of overlay.junctionBoxes) if (box.segmentIds.some((id) => segmentIds.has(id))) result.add(box.id);
-  return [...result];
+  // Circuit membership identifies the allowed branch of the network; physical
+  // connectivity determines which part remains reachable after edits/deletes.
+  const circuitSegmentIds = new Set([...circuit.segmentIds, ...overlay.segments.filter((segment) => segment.circuitId === circuit.id).map((segment) => segment.id)]);
+  const allowedSegmentIds = new Set(overlay.segments
+    .filter((segment) => circuitSegmentIds.has(segment.id) && (!segment.circuitId || segment.circuitId === circuit.id))
+    .map((segment) => segment.id));
+  return physicallyConnectedRouteElementIds(overlay, startId, allowedSegmentIds);
 }

@@ -9,7 +9,7 @@ One of the ten always-visible authoring categories that corresponds one-to-one w
 _Avoid_: Tool group, hidden system, Building subsystem
 
 **Placeable entity**:
-A persisted domain object that the author can create inside the selected System category, such as a distribution box, outlet, luminaire, or sprinkler head. It is distinct from the command used to draw, connect, branch, or bind objects.
+A persisted domain object that the author can create inside the selected System category, such as a distribution box, outlet, lighting junction box, or sprinkler head. It is distinct from the command used to draw, connect, branch, or bind objects.
 _Avoid_: Authoring action, toolbar command, generic item
 
 **System authoring action**:
@@ -53,7 +53,7 @@ The stable identity shared by successive saved versions of the same building pro
 _Avoid_: File name, content fingerprint, Overlay version
 
 **Device point**:
-A placed device with physical and construction meaning, such as a socket, switch, luminaire, sprinkler head, or distribution panel. It is distinct from the device's connection ports and from conduit route control points.
+A placed device with physical and construction meaning, such as a socket, switch, lighting junction box, sprinkler head, or distribution panel. It is distinct from the device's connection ports and from conduit route control points.
 _Avoid_: Connection port, route point, conduit bend point
 
 **Physical port**:
