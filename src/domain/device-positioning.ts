@@ -1,5 +1,7 @@
 import type { ConduitOverlayDocument, NetworkDevice, RoutePoint, Vec3 } from "./overlay";
 import { isReferencePlaneEligibleDeviceType, rebuildNetworkDevice } from "./devices";
+import { devicePositioningHalfExtent } from "../geometry/positioning-measurements";
+import { firstPhysicalPositioningHit } from "./physical-positioning-surfaces";
 
 export type DevicePositioningContext = {
   levelFloorY: Readonly<Record<string, number>>;
@@ -43,31 +45,10 @@ const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const isWall86Box = (device: NetworkDevice) => device.position.attachment?.hostKind === "wall" && ["socket", "switch", "network-outlet"].includes(device.deviceType);
 const isFloorSocket = (device: NetworkDevice) => device.deviceType === "socket" && device.position.attachment?.hostKind === "slab";
-
-function rayTriangle(origin: Vec3, direction: Vec3, vertices: readonly [Vec3, Vec3, Vec3]): number | null {
-  const [a, b, c] = vertices, edge1 = subtract(b, a), edge2 = subtract(c, a);
-  const p: Vec3 = [direction[1] * edge2[2] - direction[2] * edge2[1], direction[2] * edge2[0] - direction[0] * edge2[2], direction[0] * edge2[1] - direction[1] * edge2[0]];
-  const determinant = dot(edge1, p);
-  if (Math.abs(determinant) < 1e-9) return null;
-  const inverse = 1 / determinant, offset = subtract(origin, a), u = dot(offset, p) * inverse;
-  if (u < -1e-8 || u > 1 + 1e-8) return null;
-  const q: Vec3 = [offset[1] * edge1[2] - offset[2] * edge1[1], offset[2] * edge1[0] - offset[0] * edge1[2], offset[0] * edge1[1] - offset[1] * edge1[0]];
-  const v = dot(direction, q) * inverse;
-  if (v < -1e-8 || u + v > 1 + 1e-8) return null;
-  const distance = dot(edge2, q) * inverse;
-  return distance > 1e-7 ? distance : null;
-}
+const isLargePositioningBox = (device: NetworkDevice) => device.deviceType === "strong-panel" || device.deviceType === "weak-panel";
 
 function firstPhysicalHit(origin: Vec3, direction: Vec3, context: DevicePositioningContext, accepts?: (surface: NonNullable<DevicePositioningContext["physicalSurfaces"]>[number]) => boolean) {
-  const hits = (context.physicalSurfaces ?? []).flatMap((surface) => {
-    // Furniture is display geometry, never a positioning witness. Keep this
-    // independent of layer visibility so hiding furniture cannot change a value.
-    if (surface.objectKind === "item" || surface.objectKind === "shelf" || surface.objectKind === "cabinet" || surface.objectKind === "cabinet-module") return [];
-    if (accepts && !accepts(surface)) return [];
-    const distance = rayTriangle(origin, direction, surface.vertices);
-    return distance === null ? [] : [{ distance, objectId: surface.objectId, objectKind: surface.objectKind, point: add(origin, scale(direction, distance)) }];
-  }).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId));
-  return hits[0];
+  return firstPhysicalPositioningHit(origin, direction, context.physicalSurfaces ?? [], accepts);
 }
 
 function liesWithinSlabFootprint(point: Vec3, slabId: string, context: DevicePositioningContext): boolean | undefined {
@@ -128,9 +109,10 @@ function wallPlanarReferences(overlay: ConduitOverlayDocument, device: NetworkDe
     { key: "u+", direction: horizontal }, { key: "u-", direction: scale(horizontal, -1) },
     { key: "v+", direction: vertical }, { key: "v-", direction: [0, -1, 0] as Vec3 },
   ].flatMap(({ key, direction }) => {
+    const rayOrigin = add(origin, scale(direction, devicePositioningHalfExtent(device.deviceType, device.sizeMm, key)));
     if (Math.abs(direction[1]) > .9) {
       const downward = direction[1] < 0;
-      const hit = firstPhysicalHit(origin, direction, context, downward
+      const hit = firstPhysicalHit(rayOrigin, direction, context, downward
         ? surface => surface.objectKind === "slab"
         : surface => surface.objectKind === "wall" && surface.objectId === attachment.hostId);
       const clearanceMm = hit ? Math.round(hit.distance * 1000) - (downward && isWall86Box(device) ? device.sizeMm[1] / 2 : 0) : 0;
@@ -140,19 +122,23 @@ function wallPlanarReferences(overlay: ConduitOverlayDocument, device: NetworkDe
     const peerHits = overlay.devices.flatMap(peer => {
       const peerAttachment = peer.position.attachment;
       if (peer.id === device.id || peerAttachment?.hostKind !== "wall" || peerAttachment.hostId !== attachment.hostId) return [];
-      const offset = subtract(peer.position.position, origin), along = dot(offset, direction);
+      const offset = subtract(peer.position.position, rayOrigin), along = dot(offset, direction);
       const perpendicular = subtract(offset, scale(direction, along));
       if (along <= 1e-5 || Math.hypot(...perpendicular) > .005) return [];
-      return [{ distance: along, objectId: peer.id, objectKind: "device", point: add(origin, scale(direction, along)) }];
+      const peerDistance = along - devicePositioningHalfExtent(peer.deviceType, peer.sizeMm, key);
+      return peerDistance > 1e-5 ? [{ distance: peerDistance, objectId: peer.id, objectKind: isLargePositioningBox(peer) ? "device-envelope" : "device", point: add(rayOrigin, scale(direction, peerDistance)) }] : [];
     });
-    // Move the ray one millimetre into the host wall so that a ray along the
-    // wall face can hit real end and opening reveals instead of being coplanar.
-    const wallRayOrigin = subtract(origin, scale(attachment.normal, .001));
-    const wallHit = firstPhysicalHit(wallRayOrigin, direction, context, surface => surface.objectId === attachment.hostId);
+    // Move the ray one millimetre into the host wall so a ray along its face
+    // can hit real wall ends, opening reveals, and the first adjoining wall face.
+    const wallRayOrigin = subtract(rayOrigin, scale(attachment.normal, .001));
+    const sameLevelWallIds = context.wallFaces?.filter(face => face.levelId === attachment.levelId).map(face => face.id);
+    const wallHit = firstPhysicalHit(wallRayOrigin, direction, context, surface => surface.objectKind === "wall" && (
+      surface.objectId === attachment.hostId || Boolean(sameLevelWallIds?.includes(surface.objectId))
+    ));
     const wallAlong = wallHit ? dot(subtract(wallHit.point, wallRayOrigin), direction) : undefined;
     const candidates = [
       ...peerHits,
-      ...(wallHit && wallAlong !== undefined && wallAlong > 1e-5 ? [{ distance: wallAlong, objectId: wallHit.objectId, objectKind: wallHit.objectKind, point: add(origin, scale(direction, wallAlong)) }] : []),
+      ...(wallHit && wallAlong !== undefined && wallAlong > 1e-5 ? [{ distance: wallAlong, objectId: wallHit.objectId, objectKind: wallHit.objectKind, point: add(rayOrigin, scale(direction, wallAlong)) }] : []),
     ].sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId));
     const hit = candidates[0];
     return hit ? [{ key, wallId: key, direction, millimeters: Math.round(hit.distance * 1000), witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
@@ -164,19 +150,20 @@ function planarReferences(overlay: ConduitOverlayDocument, device: NetworkDevice
   if (device.position.attachment?.hostKind === "wall") return wallPlanarReferences(overlay, device, context);
   const origin = device.position.position;
   return positioningAxes(device).flatMap(({ key, direction }) => {
-    const physicalHit = firstPhysicalHit(origin, direction, context);
+    const rayOrigin = add(origin, scale(direction, devicePositioningHalfExtent(device.deviceType, device.sizeMm, key)));
+    const physicalHit = firstPhysicalHit(rayOrigin, direction, context);
     const sameHostDeviceHits = overlay.devices.flatMap(peer => {
       const attachment = device.position.attachment, peerAttachment = peer.position.attachment;
       if (peer.id === device.id || !attachment || peerAttachment?.hostKind === "wall" || peerAttachment?.hostKind !== attachment.hostKind || peerAttachment.hostId !== attachment.hostId || peerAttachment.surface !== attachment.surface) return [];
-      const offset = subtract(peer.position.position, origin), along = dot(offset, direction);
+      const offset = subtract(peer.position.position, rayOrigin), along = dot(offset, direction);
       const perpendicular = subtract(offset, scale(direction, along));
       // Floor-mounted boxes that represent one row/column may be a little out of square.
       // The witness and value remain the actual centre-to-centre measurement.
-      const centerDistance = Math.hypot(...offset);
-      if (along <= 1e-5 || Math.hypot(...perpendicular) > .1 || centerDistance < 1e-5) return [];
-      const centerRayHit = firstPhysicalHit(origin, scale(offset, 1 / centerDistance), context);
-      if (centerRayHit && centerRayHit.distance < centerDistance - 1e-5) return [centerRayHit];
-      return [{ distance: centerDistance, objectId: peer.id, objectKind: "device", point: peer.position.position }];
+      const centerDistance = Math.hypot(...offset), peerExtent = devicePositioningHalfExtent(peer.deviceType, peer.sizeMm, key), targetDistance = centerDistance - peerExtent;
+      if (along <= 1e-5 || Math.hypot(...perpendicular) > .1 || targetDistance < 1e-5) return [];
+      const centerRayHit = firstPhysicalHit(rayOrigin, scale(offset, 1 / centerDistance), context);
+      if (centerRayHit && centerRayHit.distance < targetDistance - 1e-5) return [centerRayHit];
+      return [{ distance: targetDistance, objectId: peer.id, objectKind: isLargePositioningBox(peer) ? "device-envelope" : "device", point: isLargePositioningBox(peer) ? add(rayOrigin, scale(direction, targetDistance)) : peer.position.position }];
     });
     const hit = [physicalHit, ...sameHostDeviceHits].filter((candidate): candidate is NonNullable<typeof candidate> => Boolean(candidate)).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId))[0];
     return hit ? [{ key, wallId: key, direction, millimeters: Math.round(hit.distance * 1000), witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
@@ -212,10 +199,18 @@ export function describeDevicePosition(overlay: ConduitOverlayDocument, deviceId
   const device = overlay.devices.find((candidate) => candidate.id === deviceId);
   if (!device) return {};
   const attachment = device.position.attachment;
-  if (attachment && context.physicalSurfaces) return {
-    ...(isFloorSocket(device) ? { vertical: { millimeters: 0, kind: "floor-socket" as const, direction: [0, -1, 0] as Vec3, witness: { objectId: attachment.hostId, objectKind: "slab", point: device.position.position } } } : {}),
-    planar: planarReferences(overlay, device, context),
-  };
+  if (attachment && context.physicalSurfaces) {
+    const planar = planarReferences(overlay, device, context);
+    const floorWitness = planar.find(reference => reference.key === "v-")?.witness;
+    const finishedFloorY = attachment.levelId
+      ? floorWitness?.objectKind === "slab" ? floorWitness.point[1] : context.levelFloorY[attachment.levelId]
+      : undefined;
+    const bottomHeightMm = finishedFloorY === undefined ? undefined : Math.round((device.position.position[1] - device.sizeMm[1] / 2000 - finishedFloorY) * 1000);
+    return {
+      ...(isFloorSocket(device) ? { vertical: { millimeters: 0, kind: "floor-socket" as const, direction: [0, -1, 0] as Vec3, witness: { objectId: attachment.hostId, objectKind: "slab", point: device.position.position } } } : attachment.hostKind === "wall" && bottomHeightMm !== undefined ? { vertical: { millimeters: bottomHeightMm, kind: "finished-floor" as const, direction: [0, -1, 0] as Vec3, ...(floorWitness ? { witness: floorWitness } : {}) } } : {}),
+      planar,
+    };
+  }
   if (device.mount?.kind === "reference-plane" && context.physicalSurfaces) {
     const hit = firstPhysicalHit(device.position.position, [0, -1, 0], context);
     return {
@@ -321,7 +316,8 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
           const lateralMm = Math.hypot(...lateral) * 1000;
           if (requested < lateralMm) { skipped.push(device.id); break; }
           const desiredAlongMm = Math.sqrt(Math.max(0, requested * requested - lateralMm * lateralMm)) + (planar.key === "v-" && isWall86Box(device) ? device.sizeMm[1] / 2 : 0);
-          const currentAlongMm = planar.witness ? dot(subtract(planar.witness.point, device.position.position), planar.direction) * 1000 : planar.millimeters;
+          const rayOrigin = add(device.position.position, scale(planar.direction, devicePositioningHalfExtent(device.deviceType, device.sizeMm, planar.key)));
+          const currentAlongMm = planar.witness ? dot(subtract(planar.witness.point, rayOrigin), planar.direction) * 1000 : planar.millimeters;
           delta = add(delta, scale(planar.direction, (currentAlongMm - desiredAlongMm) / 1000));
         }
       }

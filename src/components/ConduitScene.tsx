@@ -47,7 +47,9 @@ function DeviceDimensionGuides({ device, description }: { device: NetworkDevice;
   if (description.horizontal) { const u = device.position.attachment?.basis?.u ?? [1, 0, 0], sign = description.horizontal.direction, start: Vec3 = [origin[0] + u[0] * device.sizeMm[0] / 2000 * sign, origin[1] + u[1] * device.sizeMm[0] / 2000 * sign, origin[2] + u[2] * device.sizeMm[0] / 2000 * sign]; guides.push({ key: "horizontal", start, end: [start[0] + u[0] * description.horizontal.millimeters / 1000 * sign, start[1] + u[1] * description.horizontal.millimeters / 1000 * sign, start[2] + u[2] * description.horizontal.millimeters / 1000 * sign], label: `${description.horizontal.millimeters} mm` }); }
   for (const reference of description.planar ?? []) if (reference.witness) {
     const fromBoxBottom = reference.key === "v-" && attachment?.hostKind === "wall" && ["socket", "switch", "network-outlet"].includes(device.deviceType);
-    const start: Vec3 = fromBoxBottom ? [origin[0], origin[1] - device.sizeMm[1] / 2000, origin[2]] : [...origin];
+    const fromLargeBoxEdge = ["strong-panel", "weak-panel"].includes(device.deviceType);
+    const edgeSizeMm = reference.key.startsWith("u") ? device.sizeMm[0] : device.sizeMm[1];
+    const start: Vec3 = fromBoxBottom ? [origin[0], origin[1] - device.sizeMm[1] / 2000, origin[2]] : fromLargeBoxEdge ? [origin[0] + reference.direction[0] * edgeSizeMm / 2000, origin[1] + reference.direction[1] * edgeSizeMm / 2000, origin[2] + reference.direction[2] * edgeSizeMm / 2000] : [...origin];
     guides.push({ key: reference.key, start, end: reference.witness.point, label: `${reference.millimeters} mm`, offset: surfaceOffset });
   }
   return <PositionDimensionGuides name="device-position-dimensions" guides={guides} stackedLabels={true} />;

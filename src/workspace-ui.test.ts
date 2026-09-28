@@ -14,6 +14,10 @@ const hvacSceneSource = readFileSync(resolve(process.cwd(), "src/components/Hvac
 const styles = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
 describe("conduit workspace UI contract", () => {
+  it("starts point annotation scale at 50 percent", () => {
+    expect(source).toContain("[pointAnnotationScale, setPointAnnotationScale] = useState(.5)");
+  });
+
   it("keeps separate 2D, split and 3D view controls", () => {
     expect(source).toContain("视图与楼层");
     expect(source).toContain("builder-view-toggle");
@@ -463,6 +467,18 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("confirmBeamEndpoint();");
     expect(threeDSource).toContain("confirmBeamEndpoint({ point: hit.point");
     expect(threeDSource).toContain("confirmBeamEndpoint({ point, shiftKey: false, ctrlKey })");
+  });
+
+  it("routes Escape through active-route undo before editable-focus suppression", () => {
+    const keydown = threeDSource.slice(threeDSource.indexOf("const onKeyDown = (event: KeyboardEvent) => {"), threeDSource.indexOf("window.addEventListener(\"keydown\", onKeyDown)"));
+    expect(keydown).toContain("routeEscapeAction(");
+    expect(keydown).toContain("shouldIgnoreEditableKeydown(event.key, editable, escapeAction !== \"none\")");
+    expect(keydown.indexOf("shouldIgnoreEditableKeydown")).toBeLessThan(keydown.indexOf("if ((event.metaKey || event.ctrlKey)"));
+    expect(keydown).toContain('escapeAction === "pop-draft-point"');
+    expect(keydown).toContain('escapeAction === "pop-hvac-control-waypoint"');
+    expect(keydown).toContain('escapeAction === "pop-hvac-duct-segment"');
+    expect(keydown).toContain("sameRoutePoint(request.entry, removedPoint)");
+    expect(keydown).toContain("sameRoutePoint(request.exit, removedPoint)");
   });
 
   it("uses the shared Layout reference plane for eligible horizontal device points", () => {

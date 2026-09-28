@@ -30,6 +30,8 @@ import { syncExternalDeviceSelection } from "./device-selection";
 import { canToggleRouteOrthogonal, hvacEmptyCanvasRouteAction, routeModeAfterAxisButton, routeModeAfterShift, shouldHandleWorldAxisArrow } from "./routing-shortcuts";
 import { strongPanelRouteSystem } from "./route-start-chooser";
 import { overlayForLevel } from "./level-overlay";
+import { routeEscapeAction, shouldIgnoreEditableKeydown } from "./route-escape";
+import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 import { canUseCatalogSystem, canUseCatalogTool, type BuilderAuthorTool, type BuilderCatalogLock, type BuilderSystemId } from "../builder-workbench";
 
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
@@ -216,7 +218,7 @@ const positioningContext = (scene: ThreeDSceneInput | null): DevicePositioningCo
     if (node.type === "wall" && Array.isArray(node.start) && Array.isArray(node.end)) {
       const dx = Number(node.end[0]) - Number(node.start[0]), dz = Number(node.end[1]) - Number(node.start[1]), length = Math.hypot(dx, dz), levelId = levelIdFor(node);
       wallSpans[node.id] = [0, length];
-      if (levelId && length > 1e-8) wallFaces.push({ id: node.id, levelId, point: [Number(node.start[0]), levelFloorY[levelId] ?? 0, Number(node.start[1])], normal: [-dz / length, 0, dx / length], start: [Number(node.start[0]), levelFloorY[levelId] ?? 0, Number(node.start[1])], end: [Number(node.end[0]), levelFloorY[levelId] ?? 0, Number(node.end[1])], halfThickness: Number.isFinite(node.thickness) ? Number(node.thickness) / 2 : 0 });
+      if (levelId && length > 1e-8) wallFaces.push({ id: node.id, levelId, point: [Number(node.start[0]), levelFloorY[levelId] ?? 0, Number(node.start[1])], normal: [-dz / length, 0, dx / length], start: [Number(node.start[0]), levelFloorY[levelId] ?? 0, Number(node.start[1])], end: [Number(node.end[0]), levelFloorY[levelId] ?? 0, Number(node.end[1])], halfThickness: Math.max(.05, Number.isFinite(node.thickness) ? Number(node.thickness) : DEFAULT_WALL_THICKNESS) / 2 });
     }
     if ((node.type === "door" || node.type === "window") && (node.wallId || node.parentId) && Array.isArray(node.position) && Number.isFinite(node.position[0]) && Number.isFinite(node.width)) {
       const wallId = node.wallId ?? node.parentId!, center = Number(node.position[0]), half = Number(node.width) / 2;
@@ -241,9 +243,9 @@ const devicePositionDirectionLabel = (device: NetworkDevice, key: string, direct
 const devicePositionTargetLabel = (reference: NonNullable<DevicePositionDescription["planar"]>[number], overlay: ConduitOverlayDocument, device: NetworkDevice, context: DevicePositioningContext) => {
   const witness = reference.witness;
   if (!witness) return "实体";
-  if (witness.objectKind === "device") {
+  if (witness.objectKind === "device" || witness.objectKind === "device-envelope") {
     const device = overlay.devices.find((candidate) => candidate.id === witness.objectId);
-    return `${device?.name || (device ? DEVICE_DEFAULTS[device.deviceType].label : "点位")}中心`;
+    return `${device?.name || (device ? DEVICE_DEFAULTS[device.deviceType].label : "点位")}${witness.objectKind === "device-envelope" ? "外壳边" : "中心"}`;
   }
   const wallMounted = device.position.attachment?.hostKind === "wall";
   if (wallMounted && reference.key === "v+" && witness.objectKind === "wall") return "墙顶";
@@ -260,7 +262,7 @@ const devicePositionTargetLabel = (reference: NonNullable<DevicePositionDescript
         if (opening) return "洞口边";
       }
     }
-    return "墙边";
+    return witness.objectId === device.position.attachment?.hostId ? "墙边" : "墙面";
   }
   return ({ wall: "墙面", slab: "楼板", ceiling: "天花", beam: "梁面", door: "门", window: "窗", item: "家具", shelf: "家具", stair: "楼梯" } as Record<string, string>)[witness.objectKind] ?? "实体";
 };
@@ -459,7 +461,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
-      if (editable) return;
+      const activeDuct = activeHvacDuctId ? overlay.hvac.ducts.find((duct) => duct.id === activeHvacDuctId) : undefined;
+      const escapeAction = routeEscapeAction(tool === "hvac-control"
+        ? { tool, waypointCount: hvacControlWaypoints.length, hasStart: Boolean(hvacControlThermostatId) }
+        : tool === "hvac-supply" || tool === "hvac-return"
+          ? { tool: "hvac-duct", segmentCount: activeDuct?.segmentIds.length ?? 0, hasStart: Boolean(hvacRouteStart || activeHvacDuctId) }
+          : tool === "draw" || tool === "branch"
+            ? { tool, draftPointCount: draft.length, hasFixedStart: tool === "branch" ? Boolean(branchStart) : Boolean(deviceRouteStart || junctionRouteStart || endpointRouteStart), penetrationActive: Boolean(penetrationSession) }
+            : { tool: "other" });
+      if (shouldIgnoreEditableKeydown(event.key, editable, escapeAction !== "none")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) redoSharedWorkspace(); else undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } return; }
       if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") {
@@ -473,7 +483,36 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const routeIsActive = draft.length > 0 || Boolean(hvacRouteStart || activeHvacDuctId || hvacControlThermostatId);
       if (canToggleRouteOrthogonal(tool) && event.key === "Shift" && !event.repeat) { event.preventDefault(); const axisWasLocked = Boolean(worldAxis); toggleRouteOrthogonalMode(); setStatus(axisWasLocked ? "已取消世界轴锁定并开启正交。" : `正交${!orthogonal ? '已开启' : '已关闭'}。`); return; }
       if (shouldHandleWorldAxisArrow(event.key, routeIsActive, tool)) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); setStatus(next.worldAxis ? `已锁定世界 ${next.worldAxis.toUpperCase()} 轴；按 ↓ 取消世界轴。` : "已取消世界轴锁定。"); return; }
-      if (event.key === "Escape") { if (tool === "select") { selectWhileBrowsing(null); return; } if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; } if (tool === "hvac-control") { setHvacControlThermostatId(null); setHvacControlWaypoints([]); setCursor(null); setTool("select"); setStatus("HVAC 控制管草稿已取消。"); return; } if (penetrationSession) { setPenetrationSession(null); setCursor(null); return; } setBranchStart(null); setBranchEnd(null); setCursor(null); setExplicitPenetrations([]); setWorldAxis(null); setDraft((points) => points.length > 1 ? points.slice(0, -1) : []); }
+      if (event.key === "Escape") {
+        if (tool === "select") { selectWhileBrowsing(null); return; }
+        if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; }
+        if (escapeAction === "none") return;
+        event.preventDefault();
+        if (escapeAction === "cancel-penetration") { setPenetrationSession(null); setCursor(null); setStatus("已取消待确认的穿透出口。"); return; }
+        if (escapeAction === "pop-draft-point") {
+          const removedPoint = draft[draft.length - 1];
+          setDraft((points) => points.slice(0, -1));
+          if (removedPoint) setExplicitPenetrations((items) => items.filter((request) => !sameRoutePoint(request.entry, removedPoint) && !sameRoutePoint(request.exit, removedPoint)));
+          setBranchEnd(null); setCursor(null); setWorldAxis(null); orthogonalDirection.current = null;
+          setStatus("已撤回最后一个已确认路线点。"); return;
+        }
+        if (escapeAction === "cancel-fixed-start") {
+          setDraft([]); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setCursor(null); setWorldAxis(null); orthogonalDirection.current = null;
+          setStatus("已取消当前管线起点。"); return;
+        }
+        if (escapeAction === "pop-hvac-control-waypoint") { setHvacControlWaypoints((points) => points.slice(0, -1)); setCursor(null); orthogonalDirection.current = null; setStatus("已撤回最后一个 HVAC 控制管途经点。"); return; }
+        if (escapeAction === "cancel-hvac-control") { setHvacControlThermostatId(null); setHvacControlWaypoints([]); setCursor(null); setWorldAxis(null); setTool("select"); setStatus("HVAC 控制管草稿已取消。"); return; }
+        if (escapeAction === "pop-hvac-duct-segment" && activeDuct) {
+          const terminalSegmentId = activeDuct.segmentIds[activeDuct.segmentIds.length - 1];
+          if (!terminalSegmentId) return;
+          const result = deleteHvacObject(overlay, terminalSegmentId);
+          if ("reason" in result) { setStatus(result.reason); return; }
+          commit(result.overlay);
+          if (!result.overlay.hvac.ducts.some((duct) => duct.id === activeDuct.id)) setActiveHvacDuctId(null);
+          setCursor(null); setStatus("已撤回最后一段 HVAC 风管。"); return;
+        }
+        if (escapeAction === "cancel-hvac-duct-start") { setHvacRouteStart(null); setActiveHvacDuctId(null); setCursor(null); setWorldAxis(null); setTool("select"); setStatus("HVAC 风管起点已取消。"); return; }
+      }
       if (tool === "beam" && event.key === "Enter") { event.preventDefault(); confirmBeamEndpoint(); return; }
       if (event.key === "Enter") { event.preventDefault(); if (tool === 'hvac-supply' || tool === 'hvac-return') { finishHvacDuct(); return; } if (tool === 'hvac-control' && hvacControlThermostatId) { setStatus("点击 FCU 的绿色控制端口完成控制管。"); return; } finishCurrentRoute("confirmed-only"); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && latestCursor.current?.attachment && draft.length) {

@@ -23,6 +23,18 @@ function Harness({overlay,modelNodes=nodes,onAnnotationLabelPositionChange,selec
  return <div ref={ref}><svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={plan.context} scale={plan.scale} rotation={90}/><ConstructionAnnotations plan={plan} rotation={90} onSelect={()=>{}} onLabelPositionChange={onAnnotationLabelPositionChange} toPlanPoint={(x,y)=>[x,y]} selectionClearVersion={selectionClearVersion}/></svg><ConstructionNotices plan={plan} onFocus={()=>{}}/></div>;
 }
 describe('construction plan rendering integration',()=>{
+ it('draws electrical panels at physical casing dimensions independent of annotation scale',()=>{
+  const overlay=createEmptyOverlay('a','sha');overlay.devices=[{...device,id:'panel',deviceType:'strong-panel',name:'强电箱',sizeMm:[500,600,120],systems:['receptacle','lighting']}];
+  const context=createPlanContext(nodes,overlay),div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const render=(annotationScale:number)=>act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} annotationScale={annotationScale}/></svg>));
+  render(.5);
+  const symbol=div.querySelector('[data-device-symbol="strong-panel"]')!,casing=symbol.querySelector('[data-panel-real-size]')!;
+  expect(casing.getAttribute('x')).toBe('-0.25');expect(casing.getAttribute('width')).toBe('0.5');expect(casing.getAttribute('height')).toBe('0.12');expect(symbol.getAttribute('transform')).toContain('translate(1 0.1) rotate(180)');expect(symbol.getAttribute('transform')).not.toContain('scale(');expect(symbol.getAttribute('stroke-width')).toBe('0.03');expect(symbol.querySelector('[data-panel-real-size]')?.getAttribute('stroke')).toBeNull();
+  const smallGeometry=casing.outerHTML,smallTransform=symbol.getAttribute('transform');
+  render(2);
+  const enlarged=div.querySelector('[data-device-symbol="strong-panel"]')!,enlargedCasing=enlarged.querySelector('[data-panel-real-size]')!;
+  expect(enlargedCasing.outerHTML).toBe(smallGeometry);expect(enlarged.getAttribute('transform')).toBe(smallTransform);
+ });
  it('keeps 2D HVAC geometry and dimensions independent of the persisted 3D HVAC visibility',()=>{
   const placed=placeIndoorUnit(createEmptyOverlay('a','sha'),{position:[0,2.7,0]});
   const mounted={...placed.overlay,hvac:{...placed.overlay.hvac,indoorUnits:placed.overlay.hvac.indoorUnits.map(unit=>({...unit,mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}}))}};
@@ -254,6 +266,13 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={1} onSelect={()=>{}} labelPositions={{position:.8}} /></svg>));
  const label=div.querySelector('[data-point-position-dimension-label="position"]');
   expect(Number(label?.getAttribute('x'))).toBeCloseTo(8);
+ });
+ it('extends the box dimension from its measured casing edge witness',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const dimension={id:'panel-position',sourceId:'panel',levelId:'l',reference:[.1,.1] as [number,number],center:[.75,.1] as [number,number],referenceWitness:[.1,.1] as [number,number],centerWitness:[.75,.1] as [number,number],direction:[1,0] as [number,number],normal:[0,1] as [number,number],lane:0,valueMeters:.65,referenceKind:'wall-end' as const,centerKind:'device-edge' as const,relatedIds:['panel','w'],measurementBasis:'derived' as const,confidence:'high' as const,assumptions:[]};
+  act(()=>root.render(<svg><PointPositionDimensions dimensions={[dimension]} unit="millimeters" viewRotation={0} annotationScale={.5} onSelect={()=>{}}/></svg>));
+  const centerWitness=div.querySelector('[data-point-position-witness="center"]');
+  expect(centerWitness?.getAttribute('x1')).toBe('0.75');expect(centerWitness?.getAttribute('x2')).toBe('0.75');
  });
  it('clears a point-position dimension selection with Escape or a canvas clear signal',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div),onSelect=vi.fn();roots.push(root);

@@ -198,7 +198,7 @@ function App() {
     [manualMeasurements, setManualMeasurements] = useState<ManualMeasurement[]>([]),
     [measurementMode, setMeasurementMode] = useState<MeasurementMode>("off"),
     [measurementUnit, setMeasurementUnit] = useState<MeasurementUnit>("millimeters"),
-    [pointAnnotationScale, setPointAnnotationScale] = useState(1),
+    [pointAnnotationScale, setPointAnnotationScale] = useState(.5),
     [imageCropRevision, setImageCropRevision] = useState(0),
     [evaluationReport, setEvaluationReport] = useState<EvaluationReport | null>(null),
     [s1Report, setS1Report] = useState<S1FunctionalRelationshipReport | null>(null),

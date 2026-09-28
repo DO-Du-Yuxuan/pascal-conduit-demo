@@ -59,6 +59,14 @@ describe('HVAC Overlay', () => {
       ['+X', 'wall', 'east-wall', 1600], ['−X', 'indoor-unit', first.unit.id, 1400], ['+Z', 'wall', 'north-wall', 4400], ['−Z', 'wall', 'south-wall', 3400],
     ]);
   });
+  it('uses the shared default wall half-thickness for FCU envelope clearances', () => {
+    const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
+    const references = hvacAxisPlanarReferences(placed.unit, [
+      { id: 'east-wall', start: [2, 0, -2], end: [2, 0, 2], normal: [-1, 0, 0], halfThickness: .05 },
+    ], [placed.unit]);
+
+    expect(references.find(reference => reference.label === '+X')).toMatchObject({ millimeters: 1650, targetId: 'east-wall', targetKind: 'wall' });
+  });
   it('uses the selected supply or return port normal as the first duct direction', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(1, 2.7, 3));
     expect(indoorUnitPortDirection(placed.unit, 'supply')).toEqual([0, 0, 1]);
@@ -80,6 +88,25 @@ describe('HVAC Overlay', () => {
     if (!('outlet' in outlet)) throw new Error('fixture');
     expect(editHvacOutlet(outlet.overlay, outlet.outlet.id, { sizeMm: [3000, 150] })).toHaveProperty('reason');
     expect(resizeHvacTerminalSegment(outlet.overlay, routed.duct.id, 1700)).toHaveProperty('reason');
+  });
+  it('removes only the terminal duct segment and its attached construction when undoing a confirmed point', () => {
+    const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
+    const routed = createHvacDuct(placed.overlay, placed.unit.id, 'supply', point(0, 2.7, 0), point(2, 2.85, .5));
+    if (!('duct' in routed)) throw new Error('fixture');
+    const extended = appendHvacDuctSegment(routed.overlay, routed.duct.id, point(2, 2.85, 2.5));
+    if (!('overlay' in extended) || 'reason' in extended) throw new Error('fixture');
+    const terminalId = extended.overlay.hvac.ducts[0]!.segmentIds[1]!;
+    const outlet = addHvacOutlet(extended.overlay, routed.duct.id, terminalId, 'top', 500, [300, 150]);
+    if (!('outlet' in outlet)) throw new Error('fixture');
+    const penetration = addHvacWallPenetration(outlet.overlay, 'wall-1', terminalId, point(2, 2.85, 1), point(2, 2.85, 1.1));
+    if (!('penetration' in penetration)) throw new Error('fixture');
+
+    const undone = deleteHvacObject(penetration.overlay, terminalId);
+    if ('reason' in undone) throw new Error(undone.reason);
+    expect(undone.overlay.hvac.ducts[0]?.segmentIds).toEqual([routed.duct.segmentIds[0]]);
+    expect(undone.overlay.hvac.segments.map(segment => segment.id)).toEqual([routed.duct.segmentIds[0]]);
+    expect(undone.overlay.hvac.outlets).toEqual([]);
+    expect(undone.overlay.hvac.wallPenetrations).toEqual([]);
   });
   it('allows a selected outlet to be repositioned while keeping its placed face fixed', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));

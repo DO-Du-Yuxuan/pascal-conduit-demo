@@ -3,6 +3,9 @@ import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegmen
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
 import { DEVICE_DEFAULTS, sprinklerDirectionOf } from '../domain/devices';
+import { devicePositioningHalfExtent, finishedFloorElevationAt } from '../geometry/positioning-measurements';
+import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from '../domain/physical-positioning-surfaces';
+import { DEFAULT_WALL_THICKNESS } from '../geometry/walls/thickness';
 
 export type Point = [number, number];
 export type PlanAnnotation = {
@@ -13,13 +16,17 @@ export type PlanAnnotation = {
 };
 export type PlanAnnotationRow = { sourceIds: string[]; editableSourceId: string; label: string; count: number; position?: string; height: string };
 export type PlanNotice = { sourceId: string; text: string; levelId: string | null; anchor?: Point };
-export type PointPositionDimension = { id:string; sourceId:string; levelId:string; wallId?:string; reference:Point; center:Point; referenceWitness:Point; centerWitness:Point; direction:Point; normal:Point; lane:number; valueMeters:number; referenceKind:'opening-edge'|'wall-end'|'wall-face'|'device-center'; relatedIds:string[]; measurementBasis:'derived'; confidence:'high'|'limited'; assumptions:string[] };
-export const MODEL_DATUM_NOTE = '墙面点位标高按设备下边缘相对当前 3D 模型楼层基准计算，与 3D“下边缘离地”一致；施工前仍需按完成面复核。';
+export type PointPositionDimension = { id:string; sourceId:string; levelId:string; wallId?:string; reference:Point; center:Point; referenceWitness:Point; centerWitness:Point; direction:Point; normal:Point; lane:number; valueMeters:number; referenceKind:'opening-edge'|'wall-end'|'wall-face'|'device-center'|'device-edge'; centerKind?:'device-center'|'device-edge'; relatedIds:string[]; measurementBasis:'derived'; confidence:'high'|'limited'; assumptions:string[] };
+export const MODEL_DATUM_NOTE = '点位标高按设备下边缘相对点位投影处的楼板顶面计算；无楼板时使用模型楼层基准，与 3D 首个楼板实体见证一致；施工前仍需按完成面复核。';
 /** Matches PascalScenePreview's numeric(level.level) * 3.2, including basements
  * and non-consecutive levels. Never substitute the sorted array index. */
 export function modelLevelBase(nodes: Record<string, NodeData>, levelId: string): number {
   const value = nodes[levelId]?.level;
   return (typeof value === 'number' && Number.isFinite(value) ? value : 0) * 3.2;
+}
+/** Finished-floor witness shared by 2D H labels and physical 3D floor rays. */
+export function modelFinishedFloorAt(nodes: Record<string, NodeData>, levelId: string, x: number, z: number, measurementStartY = Number.POSITIVE_INFINITY): number {
+  return finishedFloorElevationAt(nodes, levelId, modelLevelBase(nodes, levelId), x, z, measurementStartY);
 }
 export const deviceHostAttachment = (device: NetworkDevice): HostAttachment | undefined =>
   device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
@@ -28,13 +35,13 @@ export const isFloorSocket = (device: NetworkDevice): boolean =>
 export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
   if (device.mount?.kind === 'reference-plane') return device.mount.elevationMm / 1000;
   if (isFloorSocket(device)) return 0;
-  return device.position.position[1] - device.sizeMm[1] / 2000 - modelLevelBase(nodes, levelId);
+  return device.position.position[1] - device.sizeMm[1] / 2000 - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
 export const SENSOR_PLAN_COLOR = '#7c3aed';
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
 const pointDistance = (left: Point, right: Point) => Math.hypot(right[0] - left[0], right[1] - left[1]);
-const DEFAULT_WALL_THICKNESS_METERS = .1;
+const DEFAULT_WALL_THICKNESS_METERS = DEFAULT_WALL_THICKNESS;
 export function devicePlanAnchor(nodes: Record<string, NodeData>, device: NetworkDevice): Point {
   const attachment = deviceHostAttachment(device);
   if (!attachment || attachment.hostKind !== 'wall') return point2(device.position.position);
@@ -151,22 +158,22 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     if (!context.systemVisibility[box.system] || context.hidden.has(box.id) || context.hostHidden(box.position.attachment)) continue;
     const level = context.linkedLevel(box.segmentIds, box.position.attachment);
     if (!level) notices.push({ sourceId: box.id, levelId: null, text: '楼层归属不明，未绘制检修盒' });
-    else if (level === levelId && box.position.attachment?.hostKind === 'wall') { const height=length(box.position.position[1]-box.sizeMm[1]/2000-modelLevelBase(nodes,level)); annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${height}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]}); }
+    else if (level === levelId && box.position.attachment?.hostKind === 'wall') { const height=length(box.position.position[1]-box.sizeMm[1]/2000-modelFinishedFloorAt(nodes,level,box.position.position[0],box.position.position[2],box.position.position[1])); annotations.push({id:`${box.id}:height`,sourceId:box.id,relatedIds:[box.id],levelId,anchor:point2(box.position.position),kind:'height',text:`检修盒\nH=${height}`,arrangement:'single',rows:[{sourceIds:[box.id],editableSourceId:box.id,label:'检修盒',count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]}); }
   }
   if (includeHvac) for (const thermostat of overlay.hvac.thermostats) {
     const attachment=thermostat.position.attachment??(thermostat.mount?.kind==='host'?thermostat.mount.attachment:undefined), thermostatLevel=context.hostLevel(attachment);
     if (thermostatLevel!==levelId||attachment?.hostKind!=='wall') continue;
-    const height=length(thermostat.position.position[1]-thermostat.sizeMm[1]/2000-modelLevelBase(nodes,levelId)), label=thermostat.name.trim()||'空调温控器';
+    const height=length(thermostat.position.position[1]-thermostat.sizeMm[1]/2000-modelFinishedFloorAt(nodes,levelId,thermostat.position.position[0],thermostat.position.position[2],thermostat.position.position[1])), label=thermostat.name.trim()||'空调温控器';
     annotations.push({id:`hvac:thermostat:${thermostat.id}`,sourceId:thermostat.id,relatedIds:[thermostat.id],levelId,anchor:devicePlanAnchor(nodes,thermostat as unknown as NetworkDevice),kind:'height',text:`${label}\nH=${height}`,arrangement:'single',rows:[{sourceIds:[thermostat.id],editableSourceId:thermostat.id,label,count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
   }
   return { annotations, notices };
 }
 
-/** Derived, read-only centre positioning dimensions for reliable straight wall hosts. */
+/** Derived, read-only positioning dimensions for reliable straight wall hosts. */
 export function buildPointPositionDimensionReport(nodes:Record<string,NodeData>,overlay:ConduitOverlayDocument,levelId:string,context=createPlanContext(nodes,overlay)):{dimensions:PointPositionDimension[];notices:PlanNotice[]}{
-  const dimensions:PointPositionDimension[]=[],notices:PlanNotice[]=[];
+  const dimensions:PointPositionDimension[]=[],notices:PlanNotice[]=[],physicalSurfaces=buildPhysicalPositioningSurfaces(nodes);
   const straightWalls=Object.values(nodes).filter((node):node is NodeData=>node.type==='wall'&&node.curveOffset===undefined&&Array.isArray(node.start)&&Array.isArray(node.end)&&context.hostLevel({hostId:node.id,hostKind:'wall',surface:'interior',normal:[0,0,1],levelId})===levelId);
-  const wallEntries:Array<{device:NetworkDevice;wall:NodeData;start:Point;direction:Point;length:number;scalar:number;center:Point;normal:Point}>=[];
+  const wallEntries:Array<{device:NetworkDevice;wall:NodeData;start:Point;direction:Point;length:number;scalar:number;center:Point;edgeHalf:number;normal:Point}>=[];
   for(const device of overlay.devices){
     if(!context.deviceVisible(device)||context.deviceLevel(device)!==levelId)continue;
     const attachment=device.position.attachment??(device.mount?.kind==='host'?device.mount.attachment:undefined),wall=attachment&&nodes[attachment.hostId];
@@ -176,7 +183,8 @@ export function buildPointPositionDimensionReport(nodes:Record<string,NodeData>,
     if(!Number.isFinite(length)||length<1e-6){notices.push({sourceId:device.id,levelId,text:'该方向定位尺寸链未闭合',anchor:point2(device.position.position)});continue;}
     const direction:Point=[dx/length,dz/length],center=devicePlanAnchor(nodes,device),scalar=Math.max(0,Math.min(length,(center[0]-start[0])*direction[0]+(center[1]-start[1])*direction[1]));
     const normal:Point=attachment.normal?[attachment.normal[0],attachment.normal[2]]:[-direction[1],direction[0]],normalLength=Math.hypot(...normal),unitNormal:Point=normalLength>1e-6?[normal[0]/normalLength,normal[1]/normalLength]:[-direction[1],direction[0]];
-    wallEntries.push({device,wall,start,direction,length,scalar,center,normal:unitNormal});
+    const edgeHalf=devicePositioningHalfExtent(device.deviceType,device.sizeMm,'u+');
+    wallEntries.push({device,wall,start,direction,length,scalar,center,edgeHalf,normal:unitNormal});
   }
   const wallGroups=new Map<string,typeof wallEntries>();
   wallEntries.forEach(entry=>{const system=entry.device.systems.find(candidate=>context.systemVisibility[candidate])??entry.device.systems[0]??'unknown',side=Math.sign(entry.normal[0]*-entry.direction[1]+entry.normal[1]*entry.direction[0]),key=`${entry.wall.id}:${system}:${entry.device.deviceType}:${side}`;wallGroups.set(key,[...(wallGroups.get(key)??[]),entry]);});
@@ -186,22 +194,18 @@ export function buildPointPositionDimensionReport(nodes:Record<string,NodeData>,
     for(const run of runs){const runFirst=run[0]!,runLast=run[run.length-1]!,left=candidates.filter(candidate=>candidate.scalar<=runFirst.scalar+1e-6).slice(-1)[0],right=candidates.find(candidate=>candidate.scalar>=runLast.scalar-1e-6);if(!left||!right)continue;
       const hostHalf=Math.max(0,Number(runFirst.wall.thickness)||DEFAULT_WALL_THICKNESS_METERS)/2;
       const facePoint=(scalar:number):Point=>[runFirst.start[0]+runFirst.direction[0]*scalar+runFirst.normal[0]*hostHalf,runFirst.start[1]+runFirst.direction[1]*scalar+runFirst.normal[1]*hostHalf];
-      const pointToSegmentDistance=(point:Point,start:Point,end:Point)=>{const dx=end[0]-start[0],dy=end[1]-start[1],lengthSquared=dx*dx+dy*dy,t=lengthSquared<1e-9?0:Math.max(0,Math.min(1,((point[0]-start[0])*dx+(point[1]-start[1])*dy)/lengthSquared));return Math.hypot(point[0]-(start[0]+dx*t),point[1]-(start[1]+dy*t));};
-      const raySegmentParameter=(origin:Point,direction:Point,start:Point,end:Point)=>{const sx=end[0]-start[0],sy=end[1]-start[1],denominator=direction[0]*sy-direction[1]*sx;if(Math.abs(denominator)<1e-9)return null;const ox=start[0]-origin[0],oy=start[1]-origin[1],t=(ox*sy-oy*sx)/denominator,u=(ox*direction[1]-oy*direction[0])/denominator;return t>1e-6&&u>=-1e-6&&u<=1+1e-6?t:null;};
-      const physicalWallEnd=(scalar:number,towardRun:Point):Point=>{
-        const center:[number,number]=[runFirst.start[0]+runFirst.direction[0]*scalar,runFirst.start[1]+runFirst.direction[1]*scalar],face=facePoint(scalar),hits=straightWalls.filter(wall=>wall.id!==runFirst.wall.id).flatMap(wall=>{
-          const start:[number,number]=[Number(wall.start![0]),Number(wall.start![1])],end:[number,number]=[Number(wall.end![0]),Number(wall.end![1])],length=Math.hypot(end[0]-start[0],end[1]-start[1]),half=Math.max(0,Number(wall.thickness)||DEFAULT_WALL_THICKNESS_METERS)/2;
-          if(length<1e-6||pointToSegmentDistance(center,start,end)>hostHalf+half+.001)return [];
-          const normal:[number,number]=[-(end[1]-start[1])/length,(end[0]-start[0])/length],corners:[number,number][]=[[start[0]+normal[0]*half,start[1]+normal[1]*half],[end[0]+normal[0]*half,end[1]+normal[1]*half],[end[0]-normal[0]*half,end[1]-normal[1]*half],[start[0]-normal[0]*half,start[1]-normal[1]*half]];
-          return corners.map((corner,index)=>raySegmentParameter(face,towardRun,corner,corners[(index+1)%corners.length]!)).filter((t):t is number=>t!==null);
-        });
-        const hit=hits.length?Math.min(...hits):null;
-        return hit===null?[face[0]+towardRun[0]*hostHalf,face[1]+towardRun[1]*hostHalf]:[face[0]+towardRun[0]*hit,face[1]+towardRun[1]*hit];
+      const physicalWallEnd=(entry:typeof runFirst,scalar:number,towardRun:Point):{point:Point;witness:Point;objectId?:string}=>{
+        const rayDirection:Point=[-towardRun[0],-towardRun[1]],extent=entry.edgeHalf, position=entry.device.position.position, origin:[number,number,number]=[position[0]+rayDirection[0]*extent-entry.normal[0]*.001,position[1],position[2]+rayDirection[1]*extent-entry.normal[1]*.001],direction:[number,number,number]=[rayDirection[0],0,rayDirection[1]],sameLevelWallIds=new Set(straightWalls.map(wall=>wall.id));
+        const hit=firstPhysicalPositioningHit(origin,direction,physicalSurfaces,surface=>surface.objectKind==='wall'&&surface.objectId!==entry.wall.id&&sameLevelWallIds.has(surface.objectId));
+        if(hit){const hitScalar=(hit.point[0]-entry.start[0])*entry.direction[0]+(hit.point[2]-entry.start[1])*entry.direction[1],point=facePoint(hitScalar);return {point,witness:[hit.point[0],hit.point[2]],objectId:hit.objectId};}
+        const face=facePoint(scalar);
+        const point:Point=[face[0]+towardRun[0]*hostHalf,face[1]+towardRun[1]*hostHalf];return {point,witness:point};
       };
-      const boundaryPoint=(candidate:typeof left,towardRun:Point)=>candidate.kind==='wall-end'?physicalWallEnd(candidate.scalar,towardRun):facePoint(candidate.scalar);
-      let previousPoint:Point=boundaryPoint(left,runFirst.direction),previousWitness=previousPoint,previousId:string|undefined;
-      run.forEach((entry,index)=>{const center=entry.center,referenceId=index===0?`${left.kind}:${left.sourceId}`:`device:${previousId}`;dimensions.push({id:`${entry.device.id}:position:wall:${entry.wall.id}:from:${referenceId}`,sourceId:entry.device.id,levelId,wallId:entry.wall.id,reference:previousPoint,center,referenceWitness:previousWitness,centerWitness:entry.center,direction:entry.direction,normal:entry.normal,lane,valueMeters:pointDistance(previousPoint,center),referenceKind:index===0?left.kind:'device-center',relatedIds:[entry.device.id,entry.wall.id,...(index===0&&left.sourceId!==entry.wall.id?[left.sourceId]:[]),...(previousId?[previousId]:[])],measurementBasis:'derived',confidence:'high',assumptions:['同墙同类型点位形成闭合定位尺寸链；门窗洞口将尺寸链分开，端部止于洞口边或墙端。']});previousPoint=center;previousWitness=entry.center;previousId=entry.device.id;});
-      const endBoundaryPoint:Point=boundaryPoint(right,[-runLast.direction[0],-runLast.direction[1]]),lastPoint:Point=runLast.center;dimensions.push({id:`${runLast.device.id}:position:wall:${runLast.wall.id}:to:${right.kind}:${right.sourceId}`,sourceId:runLast.device.id,levelId,wallId:runLast.wall.id,reference:endBoundaryPoint,center:lastPoint,referenceWitness:endBoundaryPoint,centerWitness:runLast.center,direction:runLast.direction,normal:runLast.normal,lane,valueMeters:pointDistance(endBoundaryPoint,lastPoint),referenceKind:right.kind,relatedIds:[runLast.device.id,runLast.wall.id,...(right.sourceId!==runLast.wall.id?[right.sourceId]:[])],measurementBasis:'derived',confidence:'high',assumptions:['同墙同类型点位形成闭合定位尺寸链；门窗洞口将尺寸链分开，端部止于洞口边或墙端。']});
+      const boundaryPoint=(candidate:typeof left,entry:typeof runFirst,towardRun:Point):{point:Point;witness:Point;objectId?:string}=>candidate.kind==='wall-end'?physicalWallEnd(entry,candidate.scalar,towardRun):(()=>{const point=facePoint(candidate.scalar);return {point,witness:point};})();
+      const edgePoint=(entry:typeof runFirst,side:-1|1):Point=>[entry.center[0]+entry.direction[0]*entry.edgeHalf*side,entry.center[1]+entry.direction[1]*entry.edgeHalf*side];
+      const leftBoundary=boundaryPoint(left,runFirst,runFirst.direction);let previousPoint:Point=leftBoundary.point,previousWitness=leftBoundary.witness,previousId:string|undefined,previousIsEdge=false;
+      run.forEach((entry,index)=>{const center=edgePoint(entry,-1),referenceId=index===0?`${left.kind}:${left.sourceId}`:`device:${previousId}`,isEdge=entry.edgeHalf>0;dimensions.push({id:`${entry.device.id}:position:wall:${entry.wall.id}:from:${referenceId}`,sourceId:entry.device.id,levelId,wallId:entry.wall.id,reference:previousPoint,center,referenceWitness:previousWitness,centerWitness:center,direction:entry.direction,normal:entry.normal,lane,valueMeters:pointDistance(previousPoint,center),referenceKind:index===0?left.kind:previousIsEdge?'device-edge':'device-center',centerKind:isEdge?'device-edge':'device-center',relatedIds:[entry.device.id,entry.wall.id,...(index===0&&left.sourceId!==entry.wall.id?[left.sourceId]:[]),...(index===0&&leftBoundary.objectId&&leftBoundary.objectId!==entry.wall.id?[leftBoundary.objectId]:[]),...(previousId?[previousId]:[])],measurementBasis:'derived',confidence:'high',assumptions:[entry.edgeHalf>0?'定位线量至强/弱电箱外壳边缘；墙端和洞口采用实体见证。':'同墙同类型点位形成闭合定位尺寸链；门窗洞口将尺寸链分开，端部止于洞口边或墙端。']});previousPoint=edgePoint(entry,1);previousWitness=previousPoint;previousId=entry.device.id;previousIsEdge=isEdge;});
+      const endBoundary=boundaryPoint(right,runLast,[-runLast.direction[0],-runLast.direction[1]]),endBoundaryPoint=endBoundary.point,lastPoint:Point=edgePoint(runLast,1);dimensions.push({id:`${runLast.device.id}:position:wall:${runLast.wall.id}:to:${right.kind}:${right.sourceId}`,sourceId:runLast.device.id,levelId,wallId:runLast.wall.id,reference:endBoundaryPoint,center:lastPoint,referenceWitness:endBoundary.witness,centerWitness:lastPoint,direction:runLast.direction,normal:runLast.normal,lane,valueMeters:pointDistance(endBoundaryPoint,lastPoint),referenceKind:right.kind,centerKind:runLast.edgeHalf>0?'device-edge':'device-center',relatedIds:[runLast.device.id,runLast.wall.id,...(right.sourceId!==runLast.wall.id?[right.sourceId]:[]),...(endBoundary.objectId&&endBoundary.objectId!==runLast.wall.id?[endBoundary.objectId]:[])],measurementBasis:'derived',confidence:'high',assumptions:[runLast.edgeHalf>0?'定位线量至强/弱电箱外壳边缘；墙端和洞口采用实体见证。':'同墙同类型点位形成闭合定位尺寸链；门窗洞口将尺寸链分开，端部止于洞口边或墙端。']});
     }
   });
   type PlaneEntry={device:NetworkDevice;center:Point;axis:Point;normal:Point;scalar:number;cross:number};

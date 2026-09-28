@@ -4,7 +4,7 @@ import { createEmptyOverlay, type RoutePoint } from "./overlay";
 import { planRoute } from "./routing";
 import { describeDevicePosition, editDevicePosition, resizeDevicePoint, resizeSpotlight } from "./device-positioning";
 import { buildPhysicalPositioningSurfaces } from "./physical-positioning-surfaces";
-import { devicePlanLabel, isFloorSocket } from "../plan/model";
+import { buildPlanAnnotations, devicePlanLabel, isFloorSocket } from "../plan/model";
 import { placeIndoorUnit } from "./hvac";
 import { parseOverlay } from "./overlay";
 
@@ -49,6 +49,58 @@ describe("device point positioning transaction", () => {
     const description = describeDevicePosition(overlay, device.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces });
 
     expect(description.planar?.find(reference => reference.key === "u+")).toMatchObject({ millimeters: 3500, witness: { objectId: wall.id, point: [4, 2.4, 0.06] } });
+  });
+  it.each([
+    { label: "default 100 mm", adjacentThickness: undefined, expectedMm: 793 },
+    { label: "explicit 200 mm", adjacentThickness: .2, expectedMm: 743 },
+  ])("measures a wall-mounted point to the first adjoining wall face with $label thickness", ({ adjacentThickness, expectedMm }) => {
+    const host = { id: "host-wall", type: "wall", parentId: "L0", start: [0, 0], end: [4, 0], height: 2.7, thickness: .1 };
+    const adjoining = { id: "adjacent-wall", type: "wall", parentId: "L0", start: [0, 0], end: [0, 4], height: 2.7, ...(adjacentThickness === undefined ? {} : { thickness: adjacentThickness }) };
+    const routePoint = wallPoint(.843, .493), device = { ...createNetworkDevice("socket", routePoint), position: { ...routePoint, position: [.843, .493, .05] as [number, number, number], attachment: { ...routePoint.attachment!, hostId: host.id } } };
+    const nodes = { L0: { id: "L0", type: "level", level: 0 }, [host.id]: host, [adjoining.id]: adjoining };
+    const physicalSurfaces = buildPhysicalPositioningSurfaces(nodes);
+    const wallFaces = [host, adjoining].map(wall => ({ id: wall.id, levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] }));
+    const description = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [device] }, device.id, { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces, physicalSurfaces });
+
+    const reference = description.planar?.find(item => item.key === "u-");
+    expect(reference).toMatchObject({ millimeters: expectedMm, witness: { objectId: "adjacent-wall", objectKind: "wall" } });
+    expect(reference?.witness?.point[0]).toBeCloseTo(expectedMm === 793 ? .05 : .1);
+  });
+  it("does not use adjacent-wall triangles when level identity is unavailable", () => {
+    const host = { id: "host-wall", type: "wall", parentId: "L0", start: [0, 0], end: [4, 0], height: 2.7, thickness: .1 };
+    const adjacent = { id: "adjacent-wall", type: "wall", parentId: "L0", start: [0, -2], end: [0, 2], height: 2.7, thickness: .1 };
+    const routePoint = wallPoint(.843, .493), device = { ...createNetworkDevice("socket", routePoint), position: { ...routePoint, position: [.843, .493, .05] as [number, number, number], attachment: { ...routePoint.attachment!, hostId: host.id } } };
+    const physicalSurfaces = buildPhysicalPositioningSurfaces({ L0: { id: "L0", type: "level", level: 0 }, [host.id]: host, [adjacent.id]: adjacent });
+    const reference = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [device] }, device.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces }).planar?.find(item => item.key === "u-");
+    expect(reference).toMatchObject({ millimeters: 843, witness: { objectId: host.id } });
+  });
+  it("measures to a diagonal adjoining wall face and keeps a nearer opening reveal first", () => {
+    const host = { id: "host-wall", type: "wall", parentId: "L0", start: [0, 0], end: [4, 0], height: 2.7, thickness: .1 };
+    const routePoint = wallPoint(.843, .493), device = { ...createNetworkDevice("socket", routePoint), position: { ...routePoint, position: [.843, .493, .05] as [number, number, number] } };
+    const tangent: [number, number] = [-.8, .6], hit: [number, number, number] = [.05, .493, .049], extent = 5;
+    const angledFace = quad("angled-wall", "wall", [hit[0] - tangent[0] * extent, 0, hit[2] - tangent[1] * extent], [hit[0] + tangent[0] * extent, 0, hit[2] + tangent[1] * extent], [hit[0] + tangent[0] * extent, 2.7, hit[2] + tangent[1] * extent], [hit[0] - tangent[0] * extent, 2.7, hit[2] - tangent[1] * extent]);
+    const wallFaces = ["host-wall", "angled-wall"].map(id => ({ id, levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] }));
+    const diagonal = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [device] }, device.id, { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces, physicalSurfaces: [...buildPhysicalPositioningSurfaces({ L0: { id: "L0", type: "level", level: 0 }, [host.id]: host }), ...angledFace] });
+    const diagonalReference = diagonal.planar?.find(reference => reference.key === "u-");
+    expect(diagonalReference).toMatchObject({ millimeters: 793, witness: { objectId: "angled-wall", objectKind: "wall" } });
+    expect(diagonalReference?.witness?.point[0]).toBeCloseTo(.05);
+
+    const openingWall = { ...host, id: "opening-wall", start: [0, 0], end: [4, 0] };
+    const opening = { id: "door-a", type: "door", parentId: openingWall.id, wallId: openingWall.id, position: [2, 1, 0], width: 1, height: 2 };
+    const openingPoint = { ...wallPoint(1, 1), attachment: { ...wallPoint(1, 1).attachment!, hostId: openingWall.id } };
+    const besideOpening = { ...createNetworkDevice("socket", openingPoint), position: { ...openingPoint, position: [1, 1, .05] as [number, number, number] } };
+    const openingDescription = describeDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [besideOpening] }, besideOpening.id, { levelFloorY: { L0: 0 }, wallSpans: {}, wallOpenings: { [openingWall.id]: [{ id: opening.id, start: 1.5, end: 2.5 }] }, wallFaces: [{ id: openingWall.id, levelId: "L0", point: [0, 0, 0], normal: [0, 0, 1] }], physicalSurfaces: buildPhysicalPositioningSurfaces({ L0: { id: "L0", type: "level", level: 0 }, [openingWall.id]: openingWall, [opening.id]: opening }) });
+    expect(openingDescription.planar?.find(reference => reference.key === "u+")).toMatchObject({ millimeters: 500, witness: { objectId: openingWall.id, objectKind: "wall", point: [1.5, 1, .05] } });
+  });
+  it("measures strong and weak wall panels from their casing edges, including panel-to-panel clearance", () => {
+    const host = { id: "wall-a", type: "wall", parentId: "L0", start: [0, 0], end: [4, 0], height: 2.7, thickness: .1 };
+    const makePanel = (id: string, x: number) => ({ ...createNetworkDevice("strong-panel", wallPoint(x, 1)), id, position: { ...wallPoint(x, 1), position: [x, 1, .05] as [number, number, number] } });
+    const selected = makePanel("panel-a", 1), neighbor = makePanel("panel-b", 2), overlay = { ...createEmptyOverlay("a", "sha"), devices: [selected, neighbor] };
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces: [{ id: host.id, levelId: "L0", point: [0, 0, 0] as [number, number, number], normal: [0, 0, 1] as [number, number, number] }], physicalSurfaces: buildPhysicalPositioningSurfaces({ L0: { id: "L0", type: "level", level: 0 }, [host.id]: host }) };
+    const references = describeDevicePosition(overlay, selected.id, context).planar;
+
+    expect(references?.find(reference => reference.key === "u+")).toMatchObject({ millimeters: 500, witness: { objectId: neighbor.id, objectKind: "device-envelope", point: [1.75, 1, .05] } });
+    expect(references?.find(reference => reference.key === "u-")).toMatchObject({ millimeters: 750, witness: { objectId: host.id, objectKind: "wall" } });
   });
   it("does not treat an unrendered column node as a physical dimension target", () => {
     const device = createReferencePlaneDevice("luminaire", [0, 2, 0], "L0", 2000);
@@ -186,6 +238,19 @@ describe("device point positioning transaction", () => {
     expect(moved.status).toBe("committed");
     expect(moved.overlay.devices[0]?.position.position[1]).toBeCloseTo(.543);
     expect(describeDevicePosition(moved.overlay, socket.id, context).planar?.find(item => item.key === "v-")?.millimeters).toBe(500);
+  });
+
+  it("uses the same finished-floor witness for 2D H and the 3D wall-box elevation", () => {
+    const wall = { id: "wall-a", type: "wall", parentId: "L0", start: [0, 0], end: [4, 0], thickness: .1 };
+    const slab = { id: "slab-a", type: "slab", parentId: "L0", elevation: .05, polygon: [[0, -1], [4, -1], [4, 1], [0, 1]] };
+    const nodes = { L0: { id: "L0", type: "level", level: 0 }, [wall.id]: wall, [slab.id]: slab };
+    const socket = createNetworkDevice("socket", wallPoint(1, .3));
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [socket] };
+    const physicalSurfaces = buildPhysicalPositioningSurfaces(nodes);
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces };
+    const planHeight = buildPlanAnnotations(nodes, overlay, "L0", "millimeters").annotations[0]?.rows[0]?.height;
+    expect(planHeight).toBe("207 mm");
+    expect(describeDevicePosition(overlay, socket.id, context).vertical).toMatchObject({ millimeters: 207, kind: "finished-floor", witness: { objectId: "slab-a" } });
   });
 
   it("previews without mutation and moves only the selected wall device on commit", () => {

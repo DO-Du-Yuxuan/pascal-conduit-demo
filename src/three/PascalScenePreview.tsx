@@ -3,6 +3,7 @@ import { useEffect, useMemo } from "react";
 import { BoxGeometry, ExtrudeGeometry, Shape, ShapeGeometry } from "three";
 import { finalDimensions, resolveItemPlanTransform, resolveWallOpeningTransform } from "../geometry/transform";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
+import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 import type { NodeData } from "../types";
 import type { ThreeDLayerVisibility } from "./ThreeDWorkspace";
 import type { ThreeDLevelMode, ThreeDWallMode } from "./view-state";
@@ -162,7 +163,7 @@ function Wall({ node, hostId, levelId, openings, chases = EMPTY_CHASES, penetrat
   const length = Math.hypot(end[0] - start[0], end[2] - start[2]);
   if (length < .001) return null;
   if (isCurvedWall(node as any)) return <CurvedWall node={node} hostId={hostId} levelId={levelId} openings={openings} chases={chases} penetrations={penetrations} y={y} selected={selected} wallMode={wallMode} onSelect={onSelect} onSurfaceHit={onSurfaceHit} onSurfaceMove={onSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
-  const sourceHeight = Math.max(.1, numeric(node.height, 2.7)), height = wallMode === "cutaway" ? Math.min(sourceHeight, 1.15) : sourceHeight, thickness = Math.max(.05, numeric(node.thickness, .12));
+  const sourceHeight = Math.max(.1, numeric(node.height, 2.7)), height = wallMode === "cutaway" ? Math.min(sourceHeight, 1.15) : sourceHeight, thickness = Math.max(.05, numeric(node.thickness, DEFAULT_WALL_THICKNESS));
   const holes = openings.map((opening) => {
     const openingWidth = Math.max(.05, numeric(opening.width, .9)), openingHeight = Math.max(.05, numeric(opening.height, 2));
     const centerX = numeric(opening.position?.[0]), centerY = numeric(opening.position?.[1], openingHeight / 2);

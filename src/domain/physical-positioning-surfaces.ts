@@ -3,8 +3,34 @@ import { finalDimensions, resolveItemPlanTransform, resolveWallOpeningTransform 
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
 import type { NodeData, Vec3 } from "../types";
 import { validateBeam } from "./beams";
+import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 
 export type PositioningTriangle = { objectId: string; objectKind: string; vertices: readonly [Vec3, Vec3, Vec3] };
+export type PhysicalPositioningHit = { distance: number; objectId: string; objectKind: string; point: Vec3 };
+
+const subtract3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const addScaled3 = (origin: Vec3, direction: Vec3, distance: number): Vec3 => [origin[0] + direction[0] * distance, origin[1] + direction[1] * distance, origin[2] + direction[2] * distance];
+
+/** Shared finite-triangle witness used by 2D and 3D positioning dimensions. */
+export function firstPhysicalPositioningHit(origin: Vec3, direction: Vec3, surfaces: readonly PositioningTriangle[], accepts?: (surface: PositioningTriangle) => boolean): PhysicalPositioningHit | undefined {
+  const hits = surfaces.flatMap(surface => {
+    if (surface.objectKind === "item" || surface.objectKind === "shelf" || surface.objectKind === "cabinet" || surface.objectKind === "cabinet-module") return [];
+    if (accepts && !accepts(surface)) return [];
+    const [a, b, c] = surface.vertices, edge1 = subtract3(b, a), edge2 = subtract3(c, a);
+    const p: Vec3 = [direction[1] * edge2[2] - direction[2] * edge2[1], direction[2] * edge2[0] - direction[0] * edge2[2], direction[0] * edge2[1] - direction[1] * edge2[0]];
+    const determinant = dot3(edge1, p);
+    if (Math.abs(determinant) < 1e-9) return [];
+    const inverse = 1 / determinant, offset = subtract3(origin, a), u = dot3(offset, p) * inverse;
+    if (u < -1e-8 || u > 1 + 1e-8) return [];
+    const q: Vec3 = [offset[1] * edge1[2] - offset[2] * edge1[1], offset[2] * edge1[0] - offset[0] * edge1[2], offset[0] * edge1[1] - offset[1] * edge1[0]];
+    const v = dot3(direction, q) * inverse;
+    if (v < -1e-8 || u + v > 1 + 1e-8) return [];
+    const distance = dot3(edge2, q) * inverse;
+    return distance > 1e-7 ? [{ distance, objectId: surface.objectId, objectKind: surface.objectKind, point: addScaled3(origin, direction, distance) }] : [];
+  }).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId));
+  return hits[0];
+}
 
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const number = (value: unknown, fallback: number) => finite(value) ? value : fallback;
@@ -111,7 +137,7 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
     if (node.type === "wall") {
       const frame = wallDimensions(node);
       if (!frame) continue;
-      const height = Math.max(0.1, number(node.height, 2.7)), thickness = Math.max(0.05, number(node.thickness, 0.12));
+      const height = Math.max(0.1, number(node.height, 2.7)), thickness = Math.max(0.05, number(node.thickness, DEFAULT_WALL_THICKNESS));
       const segments = isCurvedWall(node as any) ? Math.max(12, Math.min(32, Math.ceil(frame.length * 3))) : 1;
       for (let segment = 0; segment < segments; segment += 1) {
         const t0 = segment / segments, t1 = (segment + 1) / segments;

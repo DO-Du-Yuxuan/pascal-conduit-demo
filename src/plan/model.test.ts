@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeData } from '../types';
 import { createEmptyOverlay, type HostAttachment, type NetworkDevice, type RouteSegment } from '../domain/overlay';
+import { describeDevicePosition } from '../domain/device-positioning';
+import { buildPhysicalPositioningSurfaces } from '../domain/physical-positioning-surfaces';
 import { buildPlanAnnotations, buildPointPositionDimensionReport, buildPointPositionDimensions, createPlanContext, devicePlanLabel } from './model';
 
 const nodes = { l0: { id: 'l0', type: 'level', level: 0 }, l1: { id: 'l1', type: 'level', level: 1 }, w: { id: 'w', type: 'wall', parentId: 'l0', start: [0, 0], end: [4, 0] }, w1: { id: 'w1', type: 'wall', parentId: 'l1', start: [0, 0], end: [4, 0] } } as unknown as Record<string, NodeData>;
@@ -16,6 +18,18 @@ describe('2D point annotations', () => {
     expect(report.annotations[0].text).toBe('插座\nH=257 mm');
     expect(report.annotations[0].rows[0]).toMatchObject({label:'插座',height:'257 mm'});
     expect(report.annotations[0].text).not.toMatch(/管径|上行|下行|墙端|模型层基准/);
+  });
+  it('measures wall-device H from the floor slab top when one covers the point', () => {
+    const overlay = createEmptyOverlay('a', 'sha'); overlay.devices = [device()];
+    const slabNodes = { ...nodes, slab: { id: 'slab', type: 'slab', parentId: 'l0', elevation: .05, polygon: [[-1, -1], [5, -1], [5, 1], [-1, 1]] } } as Record<string, NodeData>;
+
+    expect(buildPlanAnnotations(slabNodes, overlay, 'l0', 'millimeters').annotations[0]?.rows[0]?.height).toBe('207 mm');
+  });
+  it('ignores a same-level slab top above the 3D downward measurement origin', () => {
+    const overlay = createEmptyOverlay('a', 'sha'); overlay.devices = [device()];
+    const footprint = [[-1, -1], [5, -1], [5, 1], [-1, 1]];
+    const slabNodes = { ...nodes, slab: { id: 'slab', type: 'slab', parentId: 'l0', elevation: .05, polygon: footprint }, upper: { id: 'upper', type: 'slab', parentId: 'l0', elevation: .5, polygon: footprint } } as Record<string, NodeData>;
+    expect(buildPlanAnnotations(slabNodes, overlay, 'l0', 'millimeters').annotations[0]?.rows[0]?.height).toBe('207 mm');
   });
 
   it('labels sprinkler direction explicitly in 2D annotations', () => {
@@ -138,6 +152,21 @@ describe('2D point annotations', () => {
     const dimensions=buildPointPositionDimensions(nodes,overlay,'l0');
     expect(dimensions.map(d=>({basis:d.referenceKind,value:Math.round(d.valueMeters*1000),lane:d.lane}))).toEqual([{basis:'wall-end',value:750,lane:0},{basis:'device-center',value:400,lane:0},{basis:'device-center',value:600,lane:0},{basis:'wall-end',value:2150,lane:0}]);
   });
+  it('measures strong-panel wall clearances between the cabinet edges and physical references',()=>{
+    const overlay=createEmptyOverlay('a','sha'),panel={...device('panel',1),deviceType:'strong-panel' as const,name:'强电箱',sizeMm:[500,600,120] as [number,number,number],systems:['receptacle' as const,'lighting' as const]};overlay.devices=[panel];
+    const [from,to]=buildPointPositionDimensions(nodes,overlay,'l0');
+    expect(from).toMatchObject({referenceKind:'wall-end',centerKind:'device-edge',valueMeters:.7,measurementBasis:'derived',confidence:'high',relatedIds:['panel','w']});
+    expect(from.center[0]).toBeCloseTo(.75);
+    expect(to).toMatchObject({referenceKind:'wall-end',centerKind:'device-edge',valueMeters:2.7});
+    expect(to.center[0]).toBeCloseTo(1.25);
+    expect(from.centerWitness).toEqual(from.center);
+    expect(to.centerWitness).toEqual(to.center);
+  });
+  it('uses shell-edge witnesses between adjacent wall panels',()=>{
+    const overlay=createEmptyOverlay('a','sha'),panel=(id:string,x:number)=>({...device(id,x),deviceType:'strong-panel' as const,name:'强电箱',sizeMm:[500,600,120] as [number,number,number],systems:['receptacle' as const,'lighting' as const]});overlay.devices=[panel('left',1),panel('right',2)];
+    const middle=buildPointPositionDimensions(nodes,overlay,'l0').find(d=>d.sourceId==='right'&&d.referenceKind==='device-edge');
+    expect(middle).toMatchObject({reference:[1.25,.05],center:[1.75,.05],referenceWitness:[1.25,.05],centerWitness:[1.75,.05],valueMeters:.5});
+  });
 
   it('anchors wall-device symbols and witnesses on the attached physical wall face',()=>{
     const overlay=createEmptyOverlay('a','sha'),wall={...nodes.w,thickness:.2},wallNodes={...nodes,w:wall};
@@ -171,6 +200,20 @@ describe('2D point annotations', () => {
     expect(to.reference).toEqual([3.8,.1]);
     expect(from.valueMeters).toBeCloseTo(.9);
     expect(to.valueMeters).toBeCloseTo(2.8);
+  });
+
+  it('shares the physical witness and clearance between 2D and 3D for adjacent wall faces',()=>{
+    const overlay=createEmptyOverlay('a','sha'),wallNodes={...nodes,w:{...nodes.w,thickness:.1},end:{id:'end',type:'wall',parentId:'l0',start:[0,-2],end:[0,2],thickness:.1}} as Record<string,NodeData>;
+    const selected={...device('surface',.843),position:{position:[.843,.3,.1] as [number,number,number],attachment:host()}};overlay.devices=[selected];
+    const dimensions=buildPointPositionDimensions(wallNodes,overlay,'l0'),left=dimensions.find(d=>d.id.includes(':from:'))!;
+    const description=describeDevicePosition(overlay,selected.id,{levelFloorY:{l0:0},wallSpans:{},wallFaces:[{id:'w',levelId:'l0',point:[0,0,0],normal:[0,0,1]},{id:'end',levelId:'l0',point:[0,0,0],normal:[1,0,0]}],physicalSurfaces:buildPhysicalPositioningSurfaces(wallNodes)});
+    const threeD=description.planar?.find(reference=>reference.key==='u-')!;
+    expect(left.valueMeters).toBeCloseTo(.793);
+    expect(threeD.millimeters).toBe(793);
+    expect(left.referenceWitness[0]).toBeCloseTo(threeD.witness!.point[0]);
+    expect(left.referenceWitness[1]).toBeCloseTo(threeD.witness!.point[2]);
+    expect(left.relatedIds).toContain('end');
+    expect(threeD.witness?.objectId).toBe('end');
   });
 
   it('splits a same-wall chain at an opening instead of dimensioning through it',()=>{
