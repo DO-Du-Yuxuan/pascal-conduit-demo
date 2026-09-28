@@ -84,6 +84,16 @@ describe("conduit workspace UI contract", () => {
     expect(hvacSceneSource).toContain("port!.id === unit.powerPort?.id ? '#ef4444' : '#a78bfa'");
   });
 
+  it("previews FCU power and control port alignment before clicking the connector", () => {
+    expect(hvacSceneSource).toContain("onHoverTargetPort");
+    expect(hvacSceneSource).toContain("onPointerOver");
+    expect(hvacSceneSource).toContain("onPointerOut");
+    expect(threeDSource).toContain("hoveredHvacTarget");
+    expect(threeDSource).toContain("hoveredHvacAssist.mode === \"connect\" ? \"连接后结束\" : \"辅助对齐\"");
+    expect(threeDSource).toContain("targetAssist={hoveredHvacAssist}");
+    expect(threeDSource).toContain("draftControlRoute={hvacControlThermostatId");
+  });
+
   it("keeps HVAC port labels out of the way of clickable connection markers", () => {
     expect(hvacSceneSource).toContain("{!preview && selected && <Html center position=");
     expect(hvacSceneSource).not.toContain("{actionable && <><mesh");
