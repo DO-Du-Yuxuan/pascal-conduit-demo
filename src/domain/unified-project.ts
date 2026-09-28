@@ -1,4 +1,5 @@
 import { createEmptyOverlay, parseOverlay, type ConduitOverlayDocument, type RoutingSystem } from "./overlay";
+import { createHvacThermostatPort, ensureHvacThermostatPort, ensureHvacUnitPorts } from "./hvac";
 
 type Node = Record<string, any> & { id: string; type: string; parentId?: string | null; children?: string[] };
 type Project = Record<string, any> & { nodes: Record<string, Node> };
@@ -12,11 +13,12 @@ const DEVICE_TYPES: Record<string, string> = {
   NetworkOutlet: "network-outlet",
   SwitchPanel: "switch",
   Spotlight: "luminaire",
+  LightingJunctionBox: "luminaire",
   SprinklerHead: "sprinkler-head",
   TemperatureHumiditySensor: "sensor",
   RFIDReader: "rfid-reader",
 };
-const DEVICE_EXTERNAL = Object.fromEntries(Object.entries(DEVICE_TYPES).map(([type, kind]) => [kind, type]));
+const DEVICE_EXTERNAL: Record<string, string> = { ...Object.fromEntries(Object.entries(DEVICE_TYPES).map(([type, kind]) => [kind, type])), luminaire: "LightingJunctionBox" };
 const FITTING_TYPES: Record<string, string> = {
   ConduitConnector: "coupling",
   ConduitTee: "tee",
@@ -41,6 +43,7 @@ const AUTHORING_TYPE_PARENTS: Record<string, string> = {
   NetworkOutlet: "ElectricalSystem",
   SwitchPanel: "LightingSystem",
   Spotlight: "LightingSystem",
+  LightingJunctionBox: "LightingSystem",
   SprinklerHead: "FireProtectionSystem",
   FireWaterPipe: "FireProtectionSystem",
   FireWaterPipeConnector: "FireProtectionSystem",
@@ -48,6 +51,7 @@ const AUTHORING_TYPE_PARENTS: Record<string, string> = {
   FireWaterPipeElbow: "FireProtectionSystem",
   FanCoilUnit: "HVACSystem",
   FCUThermostat: "HVACSystem",
+  HVACControlConduit: "HVACSystem",
   TemperatureHumiditySensor: "HVACSystem",
   GalvanizedSheetMetalDuct: "HVACSystem",
   AirOutlet: "HVACSystem",
@@ -124,15 +128,40 @@ export function validateUnifiedProject(raw: unknown): asserts raw is Project {
     if (node.type === "FireProtectionSystem" && Array.isArray(node.circuits) && node.circuits.length) throw new Error("FireProtectionSystem 不支持 Circuit；消防管从自由起点或开放管端绘制。");
     if (node.type === "FireWaterPipe" && "circuitId" in node) throw new Error(`FireWaterPipe ${node.id} 不支持 circuitId；消防管不使用 Circuit。`);
     if (node.type === "FireWaterPipe" && "legacyUnrooted" in node) throw new Error(`FireWaterPipe ${node.id} 不支持 legacyUnrooted；消防管不使用 Circuit。`);
+    if (node.type === "HVACControlConduit") {
+      if (parentType !== "HVACSystem" || node.system !== "control" || typeof node.thermostatId !== "string" || typeof node.thermostatPortId !== "string" || typeof node.indoorUnitId !== "string" || typeof node.indoorUnitPortId !== "string" || !Array.isArray(node.segmentIds) || !node.segmentIds.length || !Array.isArray(node.segments) || node.segments.length !== node.segmentIds.length || !Array.isArray(node.fittingIds) || !Array.isArray(node.fittings) || node.fittings.length !== node.fittingIds.length || !Number.isFinite(node.diameterMm) || node.diameterMm <= 0) throw new Error(`HVACControlConduit ${node.id} 缺少有效系统、端口或管段数据。`);
+      if (node.segments.some((segment: any, index: number) => !record(segment) || typeof segment.id !== "string" || segment.id !== node.segmentIds[index] || !record(segment.start) || !Array.isArray(segment.start.position) || !record(segment.end) || !Array.isArray(segment.end.position))) throw new Error(`HVACControlConduit ${node.id} 的 segmentIds 与嵌套管段不一致。`);
+      if (node.fittings.some((fitting: any, index: number) => !record(fitting) || typeof fitting.id !== "string" || fitting.id !== node.fittingIds[index] || fitting.type !== "hvac-control-fitting" || fitting.system !== "control" || !Array.isArray(fitting.segmentIds) || fitting.segmentIds.some((id: string) => !node.segmentIds.includes(id)))) throw new Error(`HVACControlConduit ${node.id} 的 fittingIds 与弯头数据不一致。`);
+    }
   }
   const referencedIds = new Set(Object.keys(nodes));
   for (const node of Object.values(nodes)) {
-    for (const field of ["segments", "ports", "circuits", "surfaceChases", "penetrations", "lightingControlGroups", "controls", "wallPenetrations", "installationReferencePlanes", "layoutReferencePlanes"]) {
+    for (const field of ["segments", "fittings", "ports", "circuits", "surfaceChases", "penetrations", "controls", "wallPenetrations", "installationReferencePlanes", "layoutReferencePlanes"]) {
       if (!Array.isArray(node[field])) continue;
       for (const item of node[field]) if (record(item) && typeof item.id === "string") {
         if (referencedIds.has(item.id)) throw new Error(`重复节点或内嵌对象 ID：${item.id}`);
         referencedIds.add(item.id);
       }
+    }
+  }
+  for (const node of Object.values(nodes).filter((item) => item.type === "HVACControlConduit")) {
+    const thermostat = nodes[node.thermostatId], unit = nodes[node.indoorUnitId];
+    if (thermostat?.type !== "FCUThermostat" || unit?.type !== "FanCoilUnit") throw new Error(`HVACControlConduit ${node.id} 必须从 FCUThermostat 连接到 FanCoilUnit。`);
+    const source = thermostat.ports?.find((port: any) => port.id === node.thermostatPortId), target = unit.ports?.find((port: any) => port.id === node.indoorUnitPortId);
+    if (source?.system !== "hvac-control" || source.role !== "source" || target?.system !== "hvac-control" || target.role !== "sink") throw new Error(`HVACControlConduit ${node.id} 的控制端口引用无效。`);
+    const firstSegment = node.segments[0], lastSegment = node.segments[node.segments.length - 1];
+    if (!source.connectedSegmentIds?.includes(firstSegment.id) || !target.connectedSegmentIds?.includes(lastSegment.id)) throw new Error(`HVACControlConduit ${node.id} 未在端口记录连接管段。`);
+  }
+  const controlOwners = new Set<string>();
+  for (const node of Object.values(nodes).filter((item) => item.type === "HVACControlConduit")) for (const key of [`thermostat:${node.thermostatId}`, `fcu:${node.indoorUnitId}`]) {
+    if (controlOwners.has(key)) throw new Error(`HVAC 控制管违反一对一端口容量：${key}`);
+    controlOwners.add(key);
+  }
+  for (const node of Object.values(nodes).filter((item) => item.type === "Conduit")) {
+    const unit = Object.values(nodes).find((candidate) => candidate.type === "FanCoilUnit" && candidate.ports?.some((port: any) => port.id === node.endPortId));
+    if (unit) {
+      const port = unit.ports.find((candidate: any) => candidate.id === node.endPortId);
+      if (node.system !== "receptacle" || port.system !== "receptacle" || port.role !== "sink" || !Array.isArray(port.connectedSegmentIds) || port.connectedSegmentIds.length !== 1 || !port.connectedSegmentIds.includes(node.id)) throw new Error(`Conduit ${node.id} 与 FCU 电源端口的系统或连接引用无效。`);
     }
   }
   for (const node of Object.values(nodes)) {
@@ -169,8 +198,9 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
   const drawingNodes = Object.values(nodes).filter((node) => node.type === "Drawing");
   const activeDrawingIds = new Set(drawingNodes.filter((drawing) => defaultDrawing(drawingNodes, drawing.levelId)?.id === drawing.id).map((drawing) => drawing.id));
   for (const container of containers) {
-    if (container.type === "LightingSystem") overlay.lightingControlGroups = copy(container.lightingControlGroups ?? []);
-    if (container.type === "HVACSystem") { overlay.hvac.controls = copy(container.controls ?? []); overlay.hvac.wallPenetrations = copy(container.wallPenetrations ?? []); }
+    // Spotlight is a legacy public alias for the same four-port lighting junction box.
+    // Lighting control groups are intentionally discarded: control is expressed by routed conduit.
+    if (container.type === "HVACSystem") overlay.hvac.wallPenetrations = copy(container.wallPenetrations ?? []);
     if (["ElectricalSystem", "LightingSystem", "FireProtectionSystem"].includes(container.type)) {
       if (["ElectricalSystem", "LightingSystem"].includes(container.type)) {
         for (const item of container.circuits ?? []) overlay.circuits.push(copy(item));
@@ -199,10 +229,20 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
     else if (CONDUIT_FITTING_TYPES.has(node.type) && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.fittings.push({ ...asInternal(node, "conduit-fitting"), system: routingSystem(node, parent.type), fitting: node.type === "ConduitElbow" && record(node.bridge) ? "bridge-bend" : FITTING_TYPES[node.type] } as any);
     else if (FIRE_WATER_FITTING_TYPES.has(node.type) && parent.type === "FireProtectionSystem") overlay.fittings.push({ ...asInternal(node, "sprinkler-fitting"), system: "sprinkler", fitting: FITTING_TYPES[node.type] } as any);
     else if (node.type === "JunctionBox" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.junctionBoxes.push({ ...asInternal(node, "junction-box"), system: routingSystem(node, parent.type) } as any);
-    else if (node.type === "FanCoilUnit" && parent.type === "HVACSystem") overlay.hvac.indoorUnits.push(asInternal(node, "indoor-air-handling-unit") as any);
+    else if (node.type === "FanCoilUnit" && parent.type === "HVACSystem") {
+      const unit = asInternal(node, "indoor-air-handling-unit") as any, ports = Array.isArray(node.ports) ? node.ports : [];
+      unit.powerPort ??= ports.find((port: any) => port.id === `${node.id}:power-port`);
+      unit.controlPort ??= ports.find((port: any) => port.id === `${node.id}:control-port`);
+      overlay.hvac.indoorUnits.push(ensureHvacUnitPorts(unit));
+    }
     else if (node.type === "GalvanizedSheetMetalDuct" && parent.type === "HVACSystem") { overlay.hvac.ducts.push(asInternal(node, "hvac-duct") as any); overlay.hvac.segments.push(...copy(node.segments ?? [])); }
     else if (node.type === "AirOutlet" && parent.type === "HVACSystem") overlay.hvac.outlets.push(asInternal(node, "hvac-duct-outlet") as any);
-    else if (node.type === "FCUThermostat" && parent.type === "HVACSystem") overlay.hvac.thermostats.push(asInternal(node, "thermostat") as any);
+    else if (node.type === "FCUThermostat" && parent.type === "HVACSystem") {
+      const thermostat = asInternal(node, "thermostat") as any, ports = Array.isArray(node.ports) ? node.ports : [];
+      thermostat.controlPort ??= ports.find((port: any) => port.id === `${node.id}:control-port`);
+      overlay.hvac.thermostats.push(ensureHvacThermostatPort(thermostat));
+    }
+    else if (node.type === "HVACControlConduit" && parent.type === "HVACSystem") { overlay.hvac.controlConduits.push(asInternal(node, "hvac-control-conduit") as any); overlay.hvac.controlSegments.push(...copy(node.segments ?? [])); overlay.hvac.controlFittings.push(...copy(node.fittings ?? [])); }
   }
   for (const drawing of drawingNodes) for (const id of drawing.children ?? []) {
     const node = nodes[id];
@@ -211,6 +251,24 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
     const key = typeof node.derivedId === "string" ? node.derivedId : id;
     if (node.type === "PointDimension") { overlay.pointDimensionEvidence[key] = { levelId: drawing.levelId, sourceObjectIds: copy(node.sourceObjectIds), basis: copy(node.basis) }; if (typeof node.layout?.labelPosition === "number") overlay.pointPositionDimensionLabelPositions[key] = node.layout.labelPosition; if (typeof node.layout?.lineOffset === "number") overlay.pointPositionDimensionLineOffsets[key] = node.layout.lineOffset; if (node.layout?.hidden) overlay.hiddenPointPositionDimensionIds.push(key); }
     if (node.type === "ConstructionAnnotation") { overlay.constructionAnnotationEvidence[key] = { levelId: drawing.levelId, sourceObjectIds: copy(node.sourceObjectIds), basis: copy(node.basis ?? { kind: "derived", reference: "height", assumptions: ["原始图纸未提供测量依据。"], confidence: "unknown" }) }; if (node.layout?.labelPosition) overlay.constructionAnnotationLabelPositions[key] = copy(node.layout.labelPosition); if (node.layout?.placementSignature) overlay.constructionAnnotationLabelPlacementSignatures[key] = node.layout.placementSignature; if (node.layout?.hidden) overlay.hiddenConstructionAnnotationIds.push(key); }
+  }
+  // Earlier Demo builds placed the thermostat source 25 mm proud of its wall.
+  // Normalize only that exact generated endpoint, and its linked first segment,
+  // while retaining every stable ID and all unrelated imported geometry.
+  for (const thermostat of overlay.hvac.thermostats) {
+    const port = thermostat.controlPort, host = thermostat.position.attachment, normal = host?.normal, portHost = port?.position.attachment;
+    if (!port || thermostat.sizeMm[0] !== 86 || thermostat.sizeMm[1] !== 86 || thermostat.sizeMm[2] !== 50 || port.id !== `${thermostat.id}:control-port` || port.ownerId !== thermostat.id || port.role !== "source" || port.system !== "hvac-control" || !normal) continue;
+    const magnitude = Math.hypot(...normal) || 1, unitNormal = normal.map(value => value / magnitude) as [number, number, number];
+    const legacyPosition = thermostat.position.position.map((value, axis) => value + unitNormal[axis]! * thermostat.sizeMm[2] / 2000) as [number, number, number];
+    const close = (a: readonly number[], b: readonly number[]) => a.length === b.length && a.every((value, index) => Math.abs(value - b[index]!) < 1e-8);
+    if (!portHost || portHost.hostId !== host.hostId || portHost.hostKind !== host.hostKind || portHost.surface !== host.surface || portHost.levelId !== host.levelId || !close(portHost.normal, host.normal)) continue;
+    if (!close(port.position.position, legacyPosition) || !close(port.direction, unitNormal)) continue;
+    const route = overlay.hvac.controlConduits.find(item => item.thermostatId === thermostat.id && item.thermostatPortId === port.id);
+    const firstSegment = route && overlay.hvac.controlSegments.find(segment => segment.id === route.segmentIds[0]);
+    if (route && (!firstSegment || !close(firstSegment.start.position, port.position.position))) continue;
+    const corrected = createHvacThermostatPort(thermostat.id, thermostat.position, thermostat.sizeMm);
+    thermostat.controlPort = { ...port, position: corrected.position, direction: corrected.direction };
+    if (firstSegment) firstSegment.start = corrected.position;
   }
   // The internal overlay parser checks endpoint, port, and device shapes and duplicate IDs.
   const checked = parseOverlay(overlay);
@@ -252,7 +310,7 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
     const parent = nodes[node.parentId ?? ""];
     if (!parent) continue;
     const t = parent.type;
-    if ((DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "FireProtectionSystem", "SmartSystem"].includes(t)) || (["Conduit", "ConduitConnector", "ConduitTee", "ConduitElbow", "JunctionBox"].includes(node.type) && ["ElectricalSystem", "LightingSystem"].includes(t)) || (["FireWaterPipe", "FireWaterPipeConnector", "FireWaterPipeTee", "FireWaterPipeElbow"].includes(node.type) && t === "FireProtectionSystem") || (["FanCoilUnit", "GalvanizedSheetMetalDuct", "AirOutlet", "FCUThermostat"].includes(node.type) && t === "HVACSystem")) removeEdited.add(id);
+    if ((DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "FireProtectionSystem", "SmartSystem"].includes(t)) || (["Conduit", "ConduitConnector", "ConduitTee", "ConduitElbow", "JunctionBox"].includes(node.type) && ["ElectricalSystem", "LightingSystem"].includes(t)) || (["FireWaterPipe", "FireWaterPipeConnector", "FireWaterPipeTee", "FireWaterPipeElbow"].includes(node.type) && t === "FireProtectionSystem") || (["FanCoilUnit", "GalvanizedSheetMetalDuct", "AirOutlet", "FCUThermostat", "HVACControlConduit"].includes(node.type) && t === "HVACSystem")) removeEdited.add(id);
   }
   for (const id of removeEdited) { const parent = nodes[original[id].parentId!]; parent.children = (parent.children ?? []).filter((child) => child !== id); delete nodes[id]; }
   for (const item of overlay.devices) put(item, item.deviceType === "switch" || item.deviceType === "luminaire" ? "LightingSystem" : item.deviceType === "sprinkler-head" ? "FireProtectionSystem" : item.deviceType === "sensor" ? "HVACSystem" : item.deviceType === "rfid-reader" ? "SmartSystem" : "ElectricalSystem", DEVICE_EXTERNAL[item.deviceType]);
@@ -264,7 +322,7 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
   }
   for (const item of overlay.fittings) put(item, systemFor(item.system), item.system === "sprinkler" ? item.fitting === "coupling" ? "FireWaterPipeConnector" : item.fitting === "tee" ? "FireWaterPipeTee" : "FireWaterPipeElbow" : item.fitting === "coupling" ? "ConduitConnector" : item.fitting === "tee" ? "ConduitTee" : "ConduitElbow", item.fitting === "bridge-bend" ? { fitting: "elbow" } : {});
   for (const item of overlay.junctionBoxes) put(item, systemFor(item.system), "JunctionBox");
-  for (const item of overlay.hvac.indoorUnits) put(item, "HVACSystem", "FanCoilUnit");
+  for (const item of overlay.hvac.indoorUnits) put(item, "HVACSystem", "FanCoilUnit", { ports: [item.powerPort, item.controlPort].filter(Boolean) });
   const hvacSegmentsById = new Map(overlay.hvac.segments.map((segment) => [segment.id, segment]));
   for (const item of overlay.hvac.ducts) put(item, "HVACSystem", "GalvanizedSheetMetalDuct", {
     segments: mergeFields(original[item.id]?.segments, item.segmentIds.flatMap((id) => {
@@ -273,7 +331,13 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
     })),
   });
   for (const item of overlay.hvac.outlets) put(item, "HVACSystem", "AirOutlet");
-  for (const item of overlay.hvac.thermostats) put(item, "HVACSystem", "FCUThermostat");
+  for (const item of overlay.hvac.thermostats) put(item, "HVACSystem", "FCUThermostat", { ports: item.controlPort ? [item.controlPort] : [] });
+  const controlSegmentsById = new Map(overlay.hvac.controlSegments.map((segment) => [segment.id, segment]));
+  const controlFittingsById = new Map(overlay.hvac.controlFittings.map((fitting) => [fitting.id, fitting]));
+  for (const item of overlay.hvac.controlConduits) put(item, "HVACSystem", "HVACControlConduit", {
+    segments: mergeFields(original[item.id]?.segments, item.segmentIds.flatMap((id) => { const segment = controlSegmentsById.get(id); return segment ? [segment] : []; })),
+    fittings: mergeFields(original[item.id]?.fittings, item.fittingIds.flatMap((id) => { const fitting = controlFittingsById.get(id); return fitting ? [fitting] : []; })),
+  });
   const originalArrayOwner = (field: "surfaceChases" | "penetrations", id: string): string | null => containers.find((node) => (original[node.id]?.[field] ?? []).some((item: any) => item.id === id))?.type ?? null;
   const routeElementSystem = (id: string): RoutingSystem | undefined => overlay.segments.find((item) => item.id === id)?.system
     ?? overlay.fittings.find((item) => item.id === id)?.system
@@ -284,8 +348,10 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
     container.surfaceChases = mergeFields(original[container.id]?.surfaceChases, overlay.surfaceChases.filter((item) => (originalArrayOwner("surfaceChases", item.id) ?? systemFor(routeElementSystem(item.routeElementId) ?? "receptacle")) === container.type));
     container.penetrations = mergeFields(original[container.id]?.penetrations, overlay.penetrations.filter((item) => (originalArrayOwner("penetrations", item.id) ?? systemFor(overlay.segments.find((segment) => segment.id === item.segmentId)?.system ?? "receptacle")) === container.type));
   }
-  byType.LightingSystem.lightingControlGroups = mergeFields(original[byType.LightingSystem.id]?.lightingControlGroups, overlay.lightingControlGroups);
-  byType.HVACSystem.controls = mergeFields(original[byType.HVACSystem.id]?.controls, overlay.hvac.controls);
+  // Do not retain legacy switch-to-luminaire logical controls in the new project.
+  delete byType.LightingSystem.lightingControlGroups;
+  // Logical thermostat bindings are retired; imported records are deliberately removed on save.
+  delete byType.HVACSystem.controls;
   byType.HVACSystem.wallPenetrations = mergeFields(original[byType.HVACSystem.id]?.wallPenetrations, overlay.hvac.wallPenetrations);
   byType.ElectricalSystem.settings = { ...byType.ElectricalSystem.settings, bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm, junctionBoxSizeMm: copy(overlay.settings.junctionBoxSizeMm) };
   nodes[root].settings = { ...nodes[root].settings, colors: copy(overlay.settings.colors), visibleSystems: copy(overlay.settings.visibleSystems), sensorVisible: overlay.settings.sensorVisible, hvacVisible: overlay.hvac.visible };

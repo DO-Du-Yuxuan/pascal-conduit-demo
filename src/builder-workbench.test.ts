@@ -31,9 +31,9 @@ describe("Builder system workbench", () => {
     expect(BUILDER_CARDS.electrical.filter((card) => card.section === "draw").map((card) => card.label)).toEqual(["绘制插座管", "绘制网络管"]);
     expect(BUILDER_CARDS.lighting.filter((card) => card.section === "edit").map((card) => card.tool)).toEqual(["branch"]);
     expect(BUILDER_CARDS.hvac.filter((card) => card.section === "place").map((card) => card.label)).toEqual(["FCU 空调内机", "FCU 温控器", "温湿度传感器"]);
-    expect(BUILDER_CARDS.hvac.filter((card) => card.section === "draw").map((card) => card.label)).toEqual(["绘制镀锌铁皮风管"]);
+    expect(BUILDER_CARDS.hvac.filter((card) => card.section === "draw").map((card) => card.label)).toEqual(["绘制镀锌铁皮风管", "绘制控制线管"]);
     expect(BUILDER_CARDS.hvac.filter((card) => card.section === "edit").map((card) => card.label)).toEqual(["添加风口"]);
-    expect(BUILDER_CARDS.hvac.some((card) => card.tool === "hvac-bind")).toBe(false);
+    expect(BUILDER_CARDS.hvac.some((card) => card.tool === "hvac-control")).toBe(true);
     expect(BUILDER_CARDS.smart.map((card) => card.label)).toEqual(["RFID 读写器"]);
     expect(BUILDER_CARDS.fire.map((card) => card.section)).toEqual(["place", "draw", "edit"]);
   });

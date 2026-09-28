@@ -11,7 +11,7 @@ export type DevicePositioningContext = {
 };
 
 export type DevicePositionDescription = {
-  vertical?: { millimeters: number; kind: "finished-floor" | "reference-plane"; direction?: Vec3; witness?: { objectId: string; objectKind: string; point: Vec3 } };
+  vertical?: { millimeters: number; kind: "finished-floor" | "reference-plane" | "floor-socket"; direction?: Vec3; witness?: { objectId: string; objectKind: string; point: Vec3 } };
   horizontal?: { millimeters: number; kind: "device" | "wall-end" | "opening"; referenceId: string; direction: -1 | 1 };
   planar?: { key: string; millimeters: number; wallId: string; direction: Vec3; witness?: { objectId: string; objectKind: string; point: Vec3 } }[];
 };
@@ -41,6 +41,8 @@ const wallCoordinate = (device: NetworkDevice) => device.position.attachment?.lo
 const halfWallWidth = (device: NetworkDevice) => device.sizeMm[0] / 2000;
 const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const subtract = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const isWall86Box = (device: NetworkDevice) => device.position.attachment?.hostKind === "wall" && ["socket", "switch", "network-outlet"].includes(device.deviceType);
+const isFloorSocket = (device: NetworkDevice) => device.deviceType === "socket" && device.position.attachment?.hostKind === "slab";
 
 function rayTriangle(origin: Vec3, direction: Vec3, vertices: readonly [Vec3, Vec3, Vec3]): number | null {
   const [a, b, c] = vertices, edge1 = subtract(b, a), edge2 = subtract(c, a);
@@ -66,6 +68,19 @@ function firstPhysicalHit(origin: Vec3, direction: Vec3, context: DevicePosition
     return distance === null ? [] : [{ distance, objectId: surface.objectId, objectKind: surface.objectKind, point: add(origin, scale(direction, distance)) }];
   }).sort((a, b) => a.distance - b.distance || a.objectId.localeCompare(b.objectId));
   return hits[0];
+}
+
+function liesWithinSlabFootprint(point: Vec3, slabId: string, context: DevicePositioningContext): boolean | undefined {
+  const triangles = (context.physicalSurfaces ?? []).filter(surface => surface.objectId === slabId && surface.objectKind === "slab");
+  if (!triangles.length) return undefined;
+  return triangles.some(({ vertices: [a, b, c] }) => {
+    const v0 = [b[0] - a[0], b[2] - a[2]], v1 = [c[0] - a[0], c[2] - a[2]], v2 = [point[0] - a[0], point[2] - a[2]];
+    const denominator = v0[0] * v1[1] - v1[0] * v0[1];
+    if (Math.abs(denominator) < 1e-10) return false;
+    const u = (v2[0] * v1[1] - v1[0] * v2[1]) / denominator;
+    const v = (v0[0] * v2[1] - v2[0] * v0[1]) / denominator;
+    return u >= -1e-8 && v >= -1e-8 && u + v <= 1 + 1e-8;
+  });
 }
 
 function normalized(vector: Vec3 | undefined): Vec3 | null {
@@ -118,7 +133,8 @@ function wallPlanarReferences(overlay: ConduitOverlayDocument, device: NetworkDe
       const hit = firstPhysicalHit(origin, direction, context, downward
         ? surface => surface.objectKind === "slab"
         : surface => surface.objectKind === "wall" && surface.objectId === attachment.hostId);
-      return hit ? [{ key, wallId: key, direction, millimeters: Math.round(hit.distance * 1000), witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
+      const clearanceMm = hit ? Math.round(hit.distance * 1000) - (downward && isWall86Box(device) ? device.sizeMm[1] / 2 : 0) : 0;
+      return hit && clearanceMm >= 0 ? [{ key, wallId: key, direction, millimeters: clearanceMm, witness: { objectId: hit.objectId, objectKind: hit.objectKind, point: hit.point } }] : [];
     }
 
     const peerHits = overlay.devices.flatMap(peer => {
@@ -196,7 +212,10 @@ export function describeDevicePosition(overlay: ConduitOverlayDocument, deviceId
   const device = overlay.devices.find((candidate) => candidate.id === deviceId);
   if (!device) return {};
   const attachment = device.position.attachment;
-  if (attachment && context.physicalSurfaces) return { planar: planarReferences(overlay, device, context) };
+  if (attachment && context.physicalSurfaces) return {
+    ...(isFloorSocket(device) ? { vertical: { millimeters: 0, kind: "floor-socket" as const, direction: [0, -1, 0] as Vec3, witness: { objectId: attachment.hostId, objectKind: "slab", point: device.position.position } } } : {}),
+    planar: planarReferences(overlay, device, context),
+  };
   if (device.mount?.kind === "reference-plane" && context.physicalSurfaces) {
     const hit = firstPhysicalHit(device.position.position, [0, -1, 0], context);
     return {
@@ -273,6 +292,12 @@ function removeAdjacentSegments(overlay: ConduitOverlayDocument, movedIds: Reado
       fittings,
       junctionBoxes,
       devices,
+      hvac: {
+        ...overlay.hvac,
+        indoorUnits: overlay.hvac.indoorUnits.map((unit) => unit.powerPort
+          ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter((id) => segmentIds.has(id)) } }
+          : unit),
+      },
       circuits: overlay.circuits.map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((id) => segmentIds.has(id)), status: circuit.segmentIds.some((id) => removedIds.has(id)) ? "broken" as const : circuit.status })),
       surfaceChases: overlay.surfaceChases.filter((chase) => segmentIds.has(chase.routeElementId) || fittingIds.has(chase.routeElementId)),
       penetrations: overlay.penetrations.filter((penetration) => segmentIds.has(penetration.segmentId)),
@@ -282,7 +307,7 @@ function removeAdjacentSegments(overlay: ConduitOverlayDocument, movedIds: Reado
 
 export function editDevicePosition(overlay: ConduitOverlayDocument, edit: DevicePositionEdit, context: DevicePositioningContext, mode: "preview" | "commit"): DevicePositionEditResult {
   if (!edit.deviceIds.length || !finiteNonNegative(edit.bottomHeightMm) || !finiteNonNegative(edit.horizontalClearanceMm) || !finiteNonNegative(edit.elevationMm) || !finiteNonNegative(edit.verticalClearanceMm) || Object.values(edit.planarClearanceMm ?? {}).some((value) => !finiteNonNegative(value))) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: edit.deviceIds, diagnostics: ["定位尺寸必须是非负有限数值。"] };
-  const selected = new Set(edit.deviceIds), skipped: string[] = [], moved = new Map<string, NetworkDevice>();
+  const selected = new Set(edit.deviceIds), skipped: string[] = [], moved = new Map<string, NetworkDevice>(), outsideSlabIds: string[] = [];
   for (const device of overlay.devices) {
     if (!selected.has(device.id)) continue;
     let delta: Vec3 = [0, 0, 0];
@@ -295,7 +320,7 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
           const lateral = planar.witness ? subtract(subtract(planar.witness.point, device.position.position), scale(planar.direction, dot(subtract(planar.witness.point, device.position.position), planar.direction))) : [0, 0, 0] as Vec3;
           const lateralMm = Math.hypot(...lateral) * 1000;
           if (requested < lateralMm) { skipped.push(device.id); break; }
-          const desiredAlongMm = Math.sqrt(Math.max(0, requested * requested - lateralMm * lateralMm));
+          const desiredAlongMm = Math.sqrt(Math.max(0, requested * requested - lateralMm * lateralMm)) + (planar.key === "v-" && isWall86Box(device) ? device.sizeMm[1] / 2 : 0);
           const currentAlongMm = planar.witness ? dot(subtract(planar.witness.point, device.position.position), planar.direction) * 1000 : planar.millimeters;
           delta = add(delta, scale(planar.direction, (currentAlongMm - desiredAlongMm) / 1000));
         }
@@ -310,8 +335,16 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
       if (!hasMovement(delta)) continue;
       const levelId = referencePlaneLevelId(device) ?? device.position.attachment?.levelId;
       const floor = levelId ? context.levelFloorY[levelId] : undefined;
-      const promotesHostedPoint = device.position.attachment?.hostKind !== "wall" && canEditAsReferencePlane(device);
+      // A slab-top point is already on its intended installation plane. Moving
+      // it in that plane must keep the real slab attachment (and floor-socket
+      // identity); Ceiling and Beam edits still detach into the virtual plane.
+      const hostKind = device.position.attachment?.hostKind;
+      const promotesHostedPoint = hostKind !== "wall" && hostKind !== "slab" && canEditAsReferencePlane(device);
       if (promotesHostedPoint && floor === undefined) { skipped.push(device.id); continue; }
+      if (hostKind === "slab" && device.position.attachment) {
+        const withinHost = liesWithinSlabFootprint(add(device.position.position, delta), device.position.attachment.hostId, context);
+        if (withinHost === false) { skipped.push(device.id); outsideSlabIds.push(device.id); continue; }
+      }
       const referencePlaneMount = device.mount?.kind === "reference-plane" && floor !== undefined
         ? { levelId: device.mount.levelId, elevationMm: Math.round((device.position.position[1] + delta[1] - floor) * 1000) }
         : promotesHostedPoint && levelId && floor !== undefined
@@ -367,12 +400,12 @@ export function editDevicePosition(overlay: ConduitOverlayDocument, edit: Device
     } else { skipped.push(device.id); continue; }
     if (hasMovement(delta)) moved.set(device.id, moveDevice(device, delta, reference, undefined, mode === "commit"));
   }
-  if (!moved.size) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: skipped, diagnostics: ["所选设备没有可编辑的定位参考。"] };
+  if (!moved.size) return { status: "rejected", overlay, removedSegmentIds: [], skippedDeviceIds: skipped, diagnostics: [outsideSlabIds.length ? "设备不能移出其当前楼板范围。" : "所选设备没有可编辑的定位参考。"] };
   const withMovedDevices = { ...overlay, devices: overlay.devices.map((device) => moved.get(device.id) ?? device) };
   if (mode === "preview") return { status: "preview", overlay: withMovedDevices, removedSegmentIds: [], skippedDeviceIds: skipped, diagnostics: [] };
   const removed = removeAdjacentSegments(overlay, new Set(moved.keys()));
   const committed = { ...removed.overlay, devices: removed.overlay.devices.map((device) => moved.get(device.id) ?? device) };
-  return { status: "committed", overlay: committed, removedSegmentIds: [...removed.removedIds], skippedDeviceIds: skipped, diagnostics: skipped.length ? ["部分所选设备不属于安装参考平面，未移动。"] : [] };
+  return { status: "committed", overlay: committed, removedSegmentIds: [...removed.removedIds], skippedDeviceIds: skipped, diagnostics: outsideSlabIds.length ? ["部分设备将超出当前楼板范围，未移动。"] : skipped.length ? ["部分所选设备不属于安装参考平面，未移动。"] : [] };
 }
 
 export function ensureInstallationReferencePlane(overlay: ConduitOverlayDocument, levelId: string, elevationMm = 2700): ConduitOverlayDocument {
@@ -388,7 +421,7 @@ export function resizeDevicePoint(overlay: ConduitOverlayDocument, deviceId: str
 }
 
 /**
- * A Spotlight's installation centre and cable ports are physical references.
+ * A lighting junction box's installation centre and conduit ports are physical references.
  * Its cylinder can change diameter/depth without rebuilding that topology.
  */
 export function resizeSpotlight(overlay: ConduitOverlayDocument, deviceId: string, diameterMm: number, depthMm: number): ConduitOverlayDocument {

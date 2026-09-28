@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Model lighting controls separately from circuits
+
+Superseded by [ADR 0007](0007-lighting-junction-boxes-and-physical-control-routing.md). Lighting control groups are no longer imported, authored, displayed, or exported. This document remains as a record of the previous model.
 
 Persist each lighting control group as a logical relationship between exactly one switch device point and one or more luminaires, independently of conduit geometry, lighting circuits, and level placement. A switch may own multiple groups and derives its gang count from them, while each luminaire belongs to at most one group in the MVP; physical button positions and multi-location switching are not modeled.
 

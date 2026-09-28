@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
 import { createEmptyOverlay, DEVICE_TYPES, parseOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
-import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planRoute, startRouteFromJunctionBox } from "./routing";
+import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, junctionBoxStartPorts, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostKind: HostKind = "wall"): RoutePoint => ({ position: [x, y, z], attachment: { hostId: `${hostKind}-a`, hostKind, surface: hostKind === "wall" ? "interior" : "top", normal: hostKind === "wall" ? [0, 0, 1] : [0, 1, 0], levelId: "L0" } });
@@ -43,6 +43,16 @@ describe("network devices and rooted circuits", () => {
     expect(targets.some((port) => port.id === occupiedId)).toBe(false);
     expect(deviceTargetPorts(withOccupiedPort, "lighting")).toEqual([]);
     expect(nearestDeviceTargetPort(withOccupiedPort, "receptacle", expected.position.position)?.id).toBe(expected.id);
+  });
+
+  it("offers only source ports belonging to the selected route system while retaining the shared strong-panel ports", () => {
+    const overlay = createEmptyOverlay("a.json", "sha"), panel = createNetworkDevice("strong-panel", point(0, 1, 0)), socket = createNetworkDevice("socket", point(2, 1, 0));
+
+    const lightingSources = deviceStartPorts(overlay, panel, "lighting");
+    expect(lightingSources.length).toBeGreaterThan(0);
+    expect(lightingSources.every((port) => port.system === "lighting")).toBe(true);
+    expect(deviceStartPorts(overlay, panel, "receptacle").every((port) => port.system === "receptacle")).toBe(true);
+    expect(deviceStartPorts(overlay, socket, "lighting")).toEqual([]);
   });
 
   it("keeps a bridge bend when a routed endpoint connects to a target device port", () => {
@@ -244,6 +254,8 @@ describe("network devices and rooted circuits", () => {
     const box = branched.junctionBoxes[0], occupied = box.ports.find((port) => port.connectedSegmentIds.length > 0)!;
     expect(box.ports).toHaveLength(8);
     expect(junctionBoxPortCanStart(branched, box, occupied)).toBe(true);
+    expect(junctionBoxStartPorts(branched, box, "receptacle").length).toBeGreaterThan(0);
+    expect(junctionBoxStartPorts(branched, box, "lighting")).toEqual([]);
     const before = branched.segments.map((segment) => ({ id: segment.id, start: [...segment.start.position], end: [...segment.end.position] }));
     const started = startRouteFromJunctionBox(branched, box.id, occupied.id);
     expect(started.port.id).toBe(occupied.id);

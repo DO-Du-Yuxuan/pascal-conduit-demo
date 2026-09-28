@@ -92,9 +92,6 @@ export function HvacPlan({ overlay, levelId, selectedId, onSelect, scale, rotati
       const size = item.sizeMm[0] / 1000;
       return <g key={item.id} data-hvac-thermostat={item.id} transform={`translate(${item.position.position[0]} ${item.position.position[2]}) rotate(${-rotation})`} onClick={event => { event.stopPropagation(); onSelect(item.id); }}><rect x={-size / 2} y={-size / 2} width={size} height={size} fill="#fff" stroke={selectedId === item.id ? '#f36b00' : '#7c3aed'} strokeWidth={1.5 / scale}/><circle r={size * .19} fill="none" stroke="#7c3aed" strokeWidth={1 / scale}/></g>;
     })}
-    {overlay.hvac.controls.map(control => {
-      const thermostat = overlay.hvac.thermostats.find(item => item.id === control.thermostatId), unit = units.find(item => item.id === control.indoorUnitId);
-      return thermostat && unit && levelFor(thermostat) === levelId ? <line key={control.id} data-hvac-control-line={control.id} x1={thermostat.position.position[0]} y1={thermostat.position.position[2]} x2={unit.position.position[0]} y2={unit.position.position[2]} stroke="#64748b" strokeWidth={1.2 / scale} strokeDasharray={`${5 / scale} ${4 / scale}`} pointerEvents="none" /> : null;
-    })}
+    {overlay.hvac.controlSegments.filter(segment => levelFor({ position: segment.start }) === levelId || levelFor({ position: segment.end }) === levelId).map(segment => <line key={segment.id} data-hvac-control-conduit={segment.id} x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke="#ffffff" strokeWidth={2 / scale} strokeOpacity=".95" pointerEvents="none" />)}
   </g>;
 }

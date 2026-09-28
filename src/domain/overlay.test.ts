@@ -255,6 +255,26 @@ describe("Conduit overlay", () => {
     expect(plan.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 150, arc: expect.any(Object) });
   });
 
+  it("stores the selected radius on new elbows without changing previously committed bends", () => {
+    resetRoutingIdsForTests();
+    const base = createEmptyOverlay("default-layout.json", "abc");
+    const first = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(1, 1, 0), point(1, 1, 1)], undefined, [], { bendRadiusMm: 150 }));
+    const oldElbow = first.fittings.find((fitting) => fitting.fitting === "elbow")!;
+    const changedSettings = { ...first, settings: { ...first.settings, bendRadiusMm: 300 } };
+    const next = commitPlannedRoute(changedSettings, planRoute("receptacle", 20, "surface", [point(3, 1, 0), point(4, 1, 0), point(4, 1, 1)], undefined, [], { bendRadiusMm: 300 }));
+    const newElbow = next.fittings.find((fitting) => fitting.id !== oldElbow.id && fitting.fitting === "elbow")!;
+    expect(next.fittings.find((fitting) => fitting.id === oldElbow.id)).toEqual(oldElbow);
+    expect(oldElbow.radiusMm).toBe(150);
+    expect(newElbow).toMatchObject({ radiusMm: 300, arc: expect.any(Object) });
+    expect(Math.hypot(...newElbow.arc!.start.map((value, axis) => value - newElbow.arc!.center[axis]!))).toBeCloseTo(0.3);
+  });
+
+  it("uses a selected radius for newly drawn branch elbows", () => {
+    const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(2, 1, 0)]));
+    const plan = planBranchContinuation(routed, routed.segments[0].id, [point(1, 1, 0), point(1, 2, 0), point(2, 2, 0)], { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }, [], { bendRadiusMm: 250 });
+    expect(plan?.fittings.find((fitting) => fitting.fitting === "elbow")).toMatchObject({ bendStyle: "sweep", radiusMm: 250, arc: expect.any(Object) });
+  });
+
   it("splits a sprinkler segment at a physical tee", () => {
     resetRoutingIdsForTests();
     const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(2, 2, 0)]));

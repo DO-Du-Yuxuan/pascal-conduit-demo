@@ -41,16 +41,22 @@ describe('2D point annotations', () => {
     expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0]?.text).toContain('温湿度传感器');
   });
 
-  it('derives switch gang text from persisted independent control groups', () => {
+  it('does not derive switch labels from persisted legacy control groups', () => {
     const overlay = createEmptyOverlay('a', 'sha'), wallSwitch = { ...device('switch'), deviceType: 'switch' as const, name: '开关', systems: ['lighting' as const] };
     overlay.devices = [wallSwitch];
     overlay.lightingControlGroups = [
       { id: 'a', switchDeviceId: wallSwitch.id, luminaireDeviceIds: ['light-a'], createdAt: '' },
       { id: 'b', switchDeviceId: wallSwitch.id, luminaireDeviceIds: ['light-b'], createdAt: '' },
     ];
-    expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0].text).toBe('双开开关\nH=257 mm');
+    expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0].text).toBe('开关\nH=257 mm');
     wallSwitch.name = '玄关总控';
     expect(buildPlanAnnotations(nodes, overlay, 'l0', 'millimeters').annotations[0].text).toBe('玄关总控\nH=257 mm');
+  });
+
+  it('renames the legacy Spotlight default label to the lighting junction box label', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    const legacyPoint = { ...device('spotlight'), deviceType: 'luminaire' as const, name: '圆柱形射灯', systems: ['lighting' as const] };
+    expect(devicePlanLabel(legacyPoint, overlay)).toBe('灯位接线盒');
   });
 
   it('keeps editable names through movement and formats model-derived heights', () => {

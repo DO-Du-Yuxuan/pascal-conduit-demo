@@ -4,6 +4,9 @@ import { createEmptyOverlay, type RoutePoint } from "./overlay";
 import { planRoute } from "./routing";
 import { describeDevicePosition, editDevicePosition, resizeDevicePoint, resizeSpotlight } from "./device-positioning";
 import { buildPhysicalPositioningSurfaces } from "./physical-positioning-surfaces";
+import { devicePlanLabel, isFloorSocket } from "../plan/model";
+import { placeIndoorUnit } from "./hvac";
+import { parseOverlay } from "./overlay";
 
 const quad = (objectId: string, objectKind: string, a: [number, number, number], b: [number, number, number], c: [number, number, number], d: [number, number, number]) => [
   { objectId, objectKind, vertices: [a, b, c] as [[number, number, number], [number, number, number], [number, number, number]] },
@@ -31,7 +34,7 @@ describe("device point positioning transaction", () => {
     const description = describeDevicePosition(overlay, selected.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces });
 
     expect(description.planar?.map(({ key, millimeters, witness }) => [key, millimeters, witness?.objectId])).toEqual([
-      ["u+", 1400, "neighbor"], ["u-", 1000, "wall-a"], ["v+", 3697, "wall-a"], ["v-", 443, "slab-a"],
+      ["u+", 1400, "neighbor"], ["u-", 1000, "wall-a"], ["v+", 3697, "wall-a"], ["v-", 400, "slab-a"],
     ]);
     expect(description.planar?.find(reference => reference.key === "u+")?.witness?.point).toEqual([4.4, .493, .06]);
   });
@@ -166,6 +169,25 @@ describe("device point positioning transaction", () => {
     });
   });
 
+  it("measures and edits a wall 86 box downward from its lower edge while keeping other axes at centre", () => {
+    const socket = createNetworkDevice("socket", wallPoint(1, 1.043));
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [socket] };
+    const physicalSurfaces = [
+      ...quad("wall-a", "wall", [0, 3, -1], [4, 3, -1], [4, 3, 1], [0, 3, 1]),
+      ...quad("slab-a", "slab", [0, 0, -1], [4, 0, -1], [4, 0, 1], [0, 0, 1]),
+    ];
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces };
+
+    const before = describeDevicePosition(overlay, socket.id, context);
+    expect(before.planar?.find(item => item.key === "v-")).toMatchObject({ millimeters: 1000, witness: { objectId: "slab-a", point: [1, 0, 0] } });
+    expect(before.planar?.find(item => item.key === "v+")?.millimeters).toBe(1957);
+
+    const moved = editDevicePosition(overlay, { deviceIds: [socket.id], planarClearanceMm: { "v-": 500 } }, context, "commit");
+    expect(moved.status).toBe("committed");
+    expect(moved.overlay.devices[0]?.position.position[1]).toBeCloseTo(.543);
+    expect(describeDevicePosition(moved.overlay, socket.id, context).planar?.find(item => item.key === "v-")?.millimeters).toBe(500);
+  });
+
   it("previews without mutation and moves only the selected wall device on commit", () => {
     const selected = createNetworkDevice("switch", wallPoint(2, 1.2));
     const neighbor = createNetworkDevice("socket", wallPoint(1, .3));
@@ -206,6 +228,22 @@ describe("device point positioning transaction", () => {
     expect(result.overlay.devices.find((device) => device.id === socket.id)?.ports.every((port) => port.connectedSegmentIds.length === 0)).toBe(true);
     expect(result.overlay.devices.find((device) => device.id === source.id)?.ports.every((port) => port.connectedSegmentIds.length === 0)).toBe(true);
     expect(result.overlay.circuits[0]).toMatchObject({ status: "broken", segmentIds: [] });
+  });
+
+  it("releases an FCU power port when moving the ordinary device at the other end of its red route", () => {
+    let overlay = placeNetworkDevice(createEmptyOverlay("a", "sha"), "strong-panel", wallPoint(0, 1));
+    const placed = placeIndoorUnit(overlay, wallPoint(2, 1));
+    overlay = placed.overlay;
+    const started = startRouteFromDevice(overlay, overlay.devices[0]!.id, "receptacle");
+    overlay = commitDeviceRoute(started.overlay, planRoute("receptacle", 20, "surface", [started.port.position, placed.unit.powerPort!.position]), started.circuit, started.port, placed.unit.id, placed.unit.powerPort!.id);
+    const powerSegmentId = overlay.hvac.indoorUnits[0]!.powerPort!.connectedSegmentIds[0]!;
+    expect(overlay.hvac.indoorUnits[0]?.powerPort?.connectedSegmentIds).toEqual([powerSegmentId]);
+
+    const result = editDevicePosition(overlay, { deviceIds: [overlay.devices[0]!.id], bottomHeightMm: 400 }, { levelFloorY: { L0: 0 }, wallSpans: { "wall-a": [0, 4] } }, "commit");
+
+    expect(result.removedSegmentIds).toContain(powerSegmentId);
+    expect(result.overlay.hvac.indoorUnits[0]?.powerPort?.connectedSegmentIds).toEqual([]);
+    expect(() => parseOverlay(result.overlay)).not.toThrow();
   });
 
   it("stops local removal at the next route leg and exposes its boundary as an open end", () => {
@@ -276,6 +314,34 @@ describe("device point positioning transaction", () => {
     expect(moved.overlay.devices[0]?.position.position).toEqual([2.5, 2.7, 3]);
     expect(moved.overlay.devices[0]?.position.attachment).toBeUndefined();
     expect(moved.overlay.devices[0]?.mount).toEqual({ kind: "reference-plane", levelId: "L0", elevationMm: 2700 });
+  });
+
+  it("keeps a slab-mounted socket a floor socket after editing a planar clearance", () => {
+    const socket = createNetworkDevice("socket", {
+      position: [2, 0, 2],
+      attachment: { hostId: "slab-a", hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: "L0", localPosition: [2, 0, 2], basis: { u: [1, 0, 0], v: [0, 0, 1] } },
+    });
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [socket] };
+    const physicalSurfaces = [
+      ...quad("east-wall", "wall", [3, -1, 0], [3, -1, 4], [3, 3, 4], [3, 3, 0]),
+      ...quad("slab-a", "slab", [0, 0, 0], [4, 0, 0], [4, 0, 4], [0, 0, 4]),
+    ];
+
+    const moved = editDevicePosition(overlay, { deviceIds: [socket.id], planarClearanceMm: { "u+": 500 } }, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces }, "commit");
+    const movedSocket = moved.overlay.devices[0]!;
+
+    expect(moved.status).toBe("committed");
+    expect(movedSocket.position.position).toEqual([2.5, 0, 2]);
+    expect(movedSocket.position.attachment).toMatchObject({ hostId: "slab-a", hostKind: "slab", surface: "top", levelId: "L0" });
+    expect(movedSocket.mount).toMatchObject({ kind: "host", attachment: { hostId: "slab-a", hostKind: "slab" } });
+    expect(isFloorSocket(movedSocket)).toBe(true);
+    expect(devicePlanLabel(movedSocket, moved.overlay)).toBe("地插");
+    expect(describeDevicePosition(moved.overlay, movedSocket.id, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces }).vertical).toMatchObject({ millimeters: 0, kind: "floor-socket" });
+
+    const outsideSlab = editDevicePosition(moved.overlay, { deviceIds: [movedSocket.id], planarClearanceMm: { "u+": 5000 } }, { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces }, "commit");
+    expect(outsideSlab.status).toBe("rejected");
+    expect(outsideSlab.overlay.devices[0]?.position.position).toEqual([2.5, 0, 2]);
+    expect(outsideSlab.skippedDeviceIds).toEqual([movedSocket.id]);
   });
 
   it("bulk-edits the bottom-edge height of multiple wall device points", () => {

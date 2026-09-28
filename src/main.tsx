@@ -942,7 +942,7 @@ function App() {
             }}
           />}
           {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
-            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} />
+            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} selectedBuilderSystem={selectedBuilderSystem} onAuthoringSystemChange={system => { setSelectedBuilderSystem(system); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }} />
           </div>}
           </div>
           <div className="builder-toolbar-stack">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectRouteDirectionToHost, projectRoutePointToDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
+import { projectRouteDirectionToHost, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
 import type { RoutePoint } from "./overlay";
 
 const point = (x: number, y: number, z: number): RoutePoint => ({ position: [x, y, z], attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", localPosition: [x, y, z], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
@@ -43,6 +43,13 @@ describe("route object snap resolution", () => {
 
   it("projects a raw pointer intent onto the selected orthogonal direction", () => {
     expect(projectRoutePointToDirection(point(1, 2, 3), point(5, 7, 9), [0, 0, 1])).toMatchObject({ position: [1, 2, 9] });
+  });
+
+  it("projects HVAC surface hits onto each world-axis line without retaining a false host", () => {
+    const start = point(1, 2, 3), hit = point(5, 7, 9);
+    expect(projectRoutePointToWorldAxis(start, hit, "x")).toEqual({ position: [5, 2, 3] });
+    expect(projectRoutePointToWorldAxis(start, hit, "y")).toEqual({ position: [1, 7, 3] });
+    expect(projectRoutePointToWorldAxis(start, hit, "z")).toEqual({ position: [1, 2, 9] });
   });
 
   it("rejects a Beam hit when the locked direction cannot reach its physical face", () => {

@@ -120,25 +120,17 @@ _Avoid_: Device description, automatic point annotation, measurement
 The shared visual alignment position for the separate short vertical rules of point annotations on one building side. A point annotation uses an outward secondary column only when its text would collide with another annotation, and later non-colliding annotations return to the primary column. The short rules remain disconnected.
 _Avoid_: Continuous callout line, permanent alternating lane
 
-**Lighting control group**:
-A logical relationship in which one set of luminaires is operated together as one control channel on a switch device point. A switch device point may own multiple groups, but in the MVP each luminaire belongs to at most one group and therefore one switch. A group can be defined before conduit is drawn and must not be inferred from conduit geometry, circuit membership, or level placement. Moving a member preserves the group; deleting its switch dissolves the switch's groups, deleting a luminaire removes that member, and an empty group does not persist.
-_Avoid_: Lighting circuit, conduit branch, selected luminaires
-
-**Switch gang count**:
-The number of distinct lighting control groups assigned to one switch device point. It is derived from the assigned groups rather than entered before binding; the number of luminaires inside a group does not increase the gang count.
-_Avoid_: Luminaire count, lighting circuit count, preset switch size
-
 **Switch device point**:
-A device point representing one complete switch faceplate. Its control groups determine its gang count, while the physical left-to-right position of those controls is outside the MVP model.
-_Avoid_: Switch button, control channel, preset gang device
+A placed Lighting-system switch panel with its own physical conduit port. It has no saved logical association with lighting junction boxes.
+_Avoid_: Lighting control group, gang count, control channel
 
 **Network outlet point**:
 An 86-format data outlet that terminates one network conduit route. It is an Electrical-system endpoint rather than a network distribution panel or optical-network terminal.
 _Avoid_: Network panel, router, weak-current distribution box
 
-**Spotlight point**:
-A cylindrical Lighting-system spotlight that mounts to a Ceiling or Beam and may connect to a lighting conduit route. Its selected properties expose editable diameter and depth without changing its device identity.
-_Avoid_: Generic luminaire, ceiling lamp, linear light
+**Lighting junction box point**:
+A circular Lighting-system point with four independent horizontal physical ports for blue lighting conduit. The public type is `LightingJunctionBox`; an imported legacy `Spotlight` keeps its stable identity, position, ports, and conduit connections and exports as `LightingJunctionBox`.
+_Avoid_: Spotlight, luminaire, lighting control group
 
 **RFID reader point**:
 A Smart-system device point representing one RFID reader/writer at an installation location.
@@ -185,8 +177,8 @@ An adjustable rectangular opening attached to one exterior face of a rectangular
 _Avoid_: Wall opening, Ceiling grille, device port
 
 **FCU thermostat point**:
-An 86-panel thermostat point that has a one-to-one logical control relationship with one FCU. The relationship is independent of physical ducts, electrical conduit, and location, and is visibly presented in 2D and 3D like a lighting-control relationship.
-_Avoid_: Switch device point, lighting control group, air outlet
+An 86-panel thermostat point mounted on a Wall or Beam face. When unconnected, it offers the eight perimeter holes of a standard 86 box as alternative control-source positions. Selecting one persists that hole position and direction in its single stable control port; it connects to at most one FCU control port through one HVACControlConduit.
+_Avoid_: Logical thermostat binding, switch device point, lighting control group, air outlet
 
 **Duct penetration**:
 A fixed-clearance rectangular opening through a Wall, explicitly created by Ctrl while drafting a duct. It is Overlay-owned construction evidence and does not imply structural approval.
@@ -199,3 +191,12 @@ _Avoid_: Auto-routed unit, stretchable duct anchor
 **Rectangular duct elbow**:
 A fixed 90-degree fitting that joins two perpendicular rectangular duct segments. The current HVAC version does not model non-right-angle, tapered, or branch fittings.
 _Avoid_: Round conduit bend, mitred arbitrary-angle turn, tee
+
+
+**HVAC control conduit**:
+A physical white HVACSystem route from a thermostat source port to one FCU control sink port. It has independent route, segment, fitting, and endpoint port IDs; it is separate from white Electrical network conduit and cannot cross-connect. Legacy HVAC `controls` relations are discarded on import without inferred routing.
+_Avoid_: thermostat binding, logical dashed association, electrical network conduit
+
+**FCU power and control ports**:
+Stable physical endpoints on the FCU casing: one red receptacle-system power sink and one white HVAC-control sink, each with capacity for one conduit. The thermostat has a white HVAC-control source port and routes do not require a weak-current panel.
+_Avoid_: a single ambiguous FCU connection point, inferred legacy route

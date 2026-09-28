@@ -24,6 +24,12 @@ export function projectRoutePointToDirection(start: RoutePoint, target: RoutePoi
   return { ...target, position: add(start.position, scale(direction, dot(delta, direction))) };
 }
 
+/** Projects a hit onto a free-space axis through the current route point. */
+export function projectRoutePointToWorldAxis(start: RoutePoint, target: RoutePoint, axis: WorldAxis): RoutePoint {
+  const direction = axisVector(axis), delta = subtract(target.position, start.position);
+  return { position: add(start.position, scale(direction, dot(delta, direction))) };
+}
+
 /** Resolves an orthogonal route direction against the actual target host plane. */
 export function projectRouteDirectionToHost(start: RoutePoint, target: RoutePoint, direction: Vec3): RoutePoint | null {
   const host = target.attachment;

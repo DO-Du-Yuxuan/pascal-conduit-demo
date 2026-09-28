@@ -155,6 +155,12 @@ export function junctionBoxPortCanStart(overlay: ConduitOverlayDocument, box: Ju
   return port.connectedSegmentIds.length === 0 || Boolean(sameFaceFreePeer(box.ports, port, box.system));
 }
 
+/** Available continuation holes for the currently selected route system. */
+export function junctionBoxStartPorts(overlay: ConduitOverlayDocument, box: JunctionBox, system: RoutingSystem): NetworkPort[] {
+  if (box.system !== system) return [];
+  return box.ports.filter((port) => port.system === system && junctionBoxPortCanStart(overlay, box, port));
+}
+
 /** Moves the 86 box, never its existing conduit, when an occupied hole is reused. */
 function releaseJunctionBoxPort(overlay: ConduitOverlayDocument, box: JunctionBox, port: NetworkPort): { overlay: ConduitOverlayDocument; port: NetworkPort } | null {
   if (!port.connectedSegmentIds.length) return { overlay, port };
@@ -221,13 +227,13 @@ export function branchAtSegment(overlay: ConduitOverlayDocument, segmentId: stri
 }
 
 /** Plans the continuation from a physical branch-node port, rather than through its body. */
-export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = []): PlannedRoute | null {
+export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], options?: { bendRadiusMm?: number; stockLengthMm?: number }): PlannedRoute | null {
   const target = overlay.segments.find((segment) => segment.id === segmentId);
   if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return null;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
   const previewPorts = electrical ? eightBoxPorts("junction-box", "branch-preview", center, boxFrame(center, mainDirection), overlay.settings.junctionBoxSizeMm, target.system, "branch") : [];
   const branchPortPoint = electrical ? copyPoint(selectPortDirection(previewPorts, branchDirection)?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(branchDirection, target.diameterMm / 1000)) };
-  return planRoute(target.system, target.diameterMm, target.system === "sprinkler" ? "suspended" : "surface", [branchPortPoint, ...branchPoints.slice(1)], parameters, explicitPenetrations, { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
+  return planRoute(target.system, target.diameterMm, target.system === "sprinkler" ? "suspended" : "surface", [branchPortPoint, ...branchPoints.slice(1)], parameters, explicitPenetrations, { bendRadiusMm: options?.bendRadiusMm ?? overlay.settings.bendRadiusMm, stockLengthMm: options?.stockLengthMm ?? overlay.settings.stockLengthMm });
 }
 
 export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], plannedRoute?: PlannedRoute): ConduitOverlayDocument {
@@ -273,7 +279,8 @@ export function deleteNetworkObject(overlay: ConduitOverlayDocument, id: string)
   const segments = overlay.segments.filter((segment) => segment.id !== id && !connectedSegmentIds.has(segment.id)), remainingIds = new Set(segments.map((segment) => segment.id)), removedIds = new Set(overlay.segments.filter((segment) => !remainingIds.has(segment.id)).map((segment) => segment.id));
   const remainingFittings = overlay.fittings.filter((fitting) => fitting.id !== id && fitting.segmentIds.every((segmentId) => remainingIds.has(segmentId))), remainingElementIds = new Set([...remainingIds, ...remainingFittings.map((fitting) => fitting.id)]);
   const devices = overlay.devices.filter((item) => item.id !== id).map((item) => ({ ...item, ports: item.ports.map((port) => ({ ...port, connectedSegmentIds: port.connectedSegmentIds.filter((segmentId) => remainingIds.has(segmentId)) })) }));
-  return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), lightingControlGroups: cleanLightingControlGroupsAfterDeviceDeletion(overlay, id), manualCallouts: overlay.manualCallouts.filter((callout) => callout.targetId !== id && !removedIds.has(callout.targetId)), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
+  const indoorUnits = overlay.hvac.indoorUnits.map((unit) => unit.powerPort ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter((segmentId) => remainingIds.has(segmentId)) } } : unit);
+  return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, hvac: { ...overlay.hvac, indoorUnits }, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), lightingControlGroups: cleanLightingControlGroupsAfterDeviceDeletion(overlay, id), manualCallouts: overlay.manualCallouts.filter((callout) => callout.targetId !== id && !removedIds.has(callout.targetId)), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
 }
 
 /** Kept as a test seam for callers from the former sequential-ID implementation. */

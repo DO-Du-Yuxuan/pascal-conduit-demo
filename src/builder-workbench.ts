@@ -1,7 +1,7 @@
 import type { NetworkDeviceType, RoutingSystem } from "./domain/overlay";
 
 export type BuilderSystemId = "electrical" | "plumbing" | "lighting" | "hvac" | "smart" | "water" | "bath" | "fire" | "irrigation" | "gas";
-export type BuilderAuthorTool = "select" | "draw" | "branch" | "point" | "beam" | "delete" | "hvac-unit" | "hvac-duct" | "hvac-outlet" | "hvac-thermostat" | "hvac-bind";
+export type BuilderAuthorTool = "select" | "draw" | "branch" | "point" | "beam" | "delete" | "hvac-unit" | "hvac-duct" | "hvac-outlet" | "hvac-thermostat" | "hvac-control";
 export type BuilderCardSection = "place" | "draw" | "edit";
 export type BuilderCard = { label: string; icon: string; section: BuilderCardSection; tool: BuilderAuthorTool; system?: RoutingSystem; deviceType?: NetworkDeviceType };
 export type BuilderCatalogLock = { tools?: readonly BuilderAuthorTool[]; systems?: readonly RoutingSystem[]; deviceTypes?: readonly NetworkDeviceType[] };
@@ -15,8 +15,7 @@ export const BUILDER_CARD_SECTION_LABELS: Record<BuilderCardSection, string> = {
 /** A card starts one bounded authoring flow; its portal must not reopen the old global picker. */
 export function catalogLockForBuilderCard(card: Pick<BuilderCard, "tool" | "system" | "deviceType">): BuilderCatalogLock {
   return {
-    // Binding is an object-property action on the selected FCU, not a catalog card.
-    tools: card.tool === "hvac-unit" ? [card.tool, "hvac-bind"] : [card.tool],
+    tools: [card.tool],
     ...(card.system ? { systems: [card.system] } : {}),
     ...(card.deviceType ? { deviceTypes: [card.deviceType] } : {}),
   };
@@ -56,7 +55,7 @@ export const BUILDER_CARDS: Readonly<Record<BuilderSystemId, ReadonlyArray<Build
   plumbing: [],
   lighting: [
     { label: "开关", icon: "◫", section: "place", tool: "point", system: "lighting", deviceType: "switch" },
-    { label: "圆柱形射灯", icon: "☼", section: "place", tool: "point", system: "lighting", deviceType: "luminaire" },
+    { label: "灯位接线盒", icon: "☼", section: "place", tool: "point", system: "lighting", deviceType: "luminaire" },
     { label: "绘制照明管", icon: "⌁", section: "draw", tool: "draw", system: "lighting" },
     { label: "创建管线分支", icon: "⑂", section: "edit", tool: "branch", system: "lighting" },
   ],
@@ -65,6 +64,7 @@ export const BUILDER_CARDS: Readonly<Record<BuilderSystemId, ReadonlyArray<Build
     { label: "FCU 温控器", icon: "◫", section: "place", tool: "hvac-thermostat" },
     { label: "温湿度传感器", icon: "◉", section: "place", tool: "point", deviceType: "sensor" },
     { label: "绘制镀锌铁皮风管", icon: "▱", section: "draw", tool: "hvac-duct" },
+    { label: "绘制控制线管", icon: "⌁", section: "draw", tool: "hvac-control" },
     { label: "添加风口", icon: "▥", section: "edit", tool: "hvac-outlet" },
   ],
   smart: [

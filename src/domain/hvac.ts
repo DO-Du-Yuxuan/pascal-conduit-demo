@@ -1,8 +1,13 @@
-import type { ConduitOverlayDocument, HvacControl, HvacDuct, HvacDuctOutlet, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, HvacWallPenetration, RoutePoint, Vec3 } from './overlay';
+import type { ConduitOverlayDocument, HvacControlConduit, HvacDuct, HvacDuctOutlet, HvacDevicePort, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, HvacWallPenetration, RoutePoint, Vec3 } from './overlay';
+import { deviceFrame } from './devices';
+import { validatePlannedRoute } from './routing-collision';
+import { planRoute, type PlannedRoute } from './routing';
 
 export const HVAC_DEFAULT_UNIT_SIZE_MM: [number, number, number] = [1000, 600, 300];
 export const HVAC_DEFAULT_SECTION_MM: [number, number] = [500, 200];
 export const HVAC_DEFAULT_OUTLET_MM: [number, number] = [300, 150];
+export const HVAC_CONTROL_CONDUIT_DIAMETER_MM = 20;
+export const HVAC_CONTROL_CONDUIT_COLOR = '#ffffff';
 export const HVAC_COLORS: Record<HvacSystem, string> = { supply: '#0ea5e9', return: '#f97316' };
 const stamp = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
@@ -101,7 +106,73 @@ export function hvacAxisPlanarReferences(unit: HvacIndoorUnit, walls: readonly H
     return [{ key: axis.key, label: axis.label, axis: axis.axis, sign: axis.sign, start: addScaled(origin, axis.direction, ownExtent), end: addScaled(origin, axis.direction, target.distance), millimeters: Math.max(0, Math.round((target.distance - ownExtent) * 1000)), targetId: target.targetId, targetKind: target.targetKind }];
   });
 }
-export const hvacUnitConnected = (overlay: ConduitOverlayDocument, unitId: string) => overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.segmentIds.length > 0);
+export const hvacUnitConnected = (overlay: ConduitOverlayDocument, unitId: string) => overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.segmentIds.length > 0)
+  || overlay.hvac.controlConduits.some(route => route.indoorUnitId === unitId)
+  || Boolean(overlay.hvac.indoorUnits.find(unit => unit.id === unitId)?.powerPort?.connectedSegmentIds.length);
+
+export function createHvacUnitPorts(id: string, position: RoutePoint, sizeMm: [number, number, number], rotationYDegrees: number): Pick<HvacIndoorUnit, 'powerPort' | 'controlPort'> {
+  const yaw = rotationYDegrees * Math.PI / 180, right: Vec3 = [Math.cos(yaw), 0, -Math.sin(yaw)], forward: Vec3 = [Math.sin(yaw), 0, Math.cos(yaw)];
+  const port = (kind: 'power' | 'control', side: 1 | -1, along: 1 | -1, system: HvacDevicePort['system']): HvacDevicePort => {
+    const direction: Vec3 = right.map(value => value * side) as Vec3;
+    const longitudinal = sizeMm[0] / 4000 * along;
+    const offset = sizeMm[1] / 2000;
+    const point: RoutePoint = { position: position.position.map((value, axis) => value + direction[axis] * offset + forward[axis] * longitudinal) as Vec3, ...(position.attachment ? { attachment: clone(position.attachment) } : {}) };
+    return { id: `${id}:${kind}-port`, ownerId: id, position: point, direction, role: kind === 'power' ? 'sink' : 'sink', system, connectedSegmentIds: [] };
+  };
+  return { powerPort: port('power', 1, -1, 'receptacle'), controlPort: port('control', -1, 1, 'hvac-control') };
+}
+
+export type HvacThermostatPortCandidate = { key: string; position: RoutePoint; direction: Vec3 };
+export function hvacThermostatPortCandidates(position: RoutePoint, sizeMm: [number, number, number]): HvacThermostatPortCandidate[] {
+  const frame = deviceFrame(position), sides: Array<{ face: string; direction: Vec3; lateral: Vec3; extent: number; span: number }> = [
+    { face: 'top', direction: frame.up, lateral: frame.right, extent: sizeMm[1] / 2000, span: sizeMm[0] / 1000 },
+    { face: 'bottom', direction: frame.up.map(value => -value) as Vec3, lateral: frame.right, extent: sizeMm[1] / 2000, span: sizeMm[0] / 1000 },
+    { face: 'left', direction: frame.right.map(value => -value) as Vec3, lateral: frame.up, extent: sizeMm[0] / 2000, span: sizeMm[1] / 1000 },
+    { face: 'right', direction: frame.right, lateral: frame.up, extent: sizeMm[0] / 2000, span: sizeMm[1] / 1000 },
+  ];
+  return sides.flatMap(side => ([-1, 1] as const).map((slot, index) => ({
+    key: `${side.face}:${index}`,
+    position: { position: position.position.map((value, axis) => value + side.direction[axis]! * side.extent + side.lateral[axis]! * side.span * .22 * slot) as Vec3, ...(position.attachment ? { attachment: clone(position.attachment) } : {}) },
+    direction: side.direction.map(value => value === 0 ? 0 : value) as Vec3,
+  })));
+}
+
+export function createHvacThermostatPort(id: string, position: RoutePoint, sizeMm: [number, number, number], candidateKey = 'bottom:0'): HvacDevicePort {
+  // The alternatives use the same eight perimeter holes as a physical 86 box.
+  const candidate = hvacThermostatPortCandidates(position, sizeMm).find(item => item.key === candidateKey) ?? hvacThermostatPortCandidates(position, sizeMm)[2]!;
+  return { id: `${id}:control-port`, ownerId: id, position: clone(candidate.position), direction: candidate.direction, role: 'source', system: 'hvac-control', connectedSegmentIds: [] };
+}
+export const ensureHvacUnitPorts = (unit: HvacIndoorUnit): HvacIndoorUnit => {
+  if (unit.powerPort && unit.controlPort) return unit;
+  const defaults = createHvacUnitPorts(unit.id, unit.position, unit.sizeMm, unit.rotationYDegrees);
+  return { ...unit, ...(!unit.powerPort ? { powerPort: defaults.powerPort } : {}), ...(!unit.controlPort ? { controlPort: defaults.controlPort } : {}) };
+};
+export const ensureHvacThermostatPort = (thermostat: HvacThermostat): HvacThermostat => ({ ...thermostat, ...(!thermostat.controlPort ? { controlPort: createHvacThermostatPort(thermostat.id, thermostat.position, thermostat.sizeMm) } : {}) });
+
+export function selectHvacThermostatPort(overlay: ConduitOverlayDocument, thermostatId: string, candidateKey: string): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
+  const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId);
+  if (!thermostat) return { overlay, reason: '控温器不存在。' };
+  if (thermostat.controlPort?.connectedSegmentIds.length || overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId)) return { overlay, reason: '控温器已连接控制管，不能更换接管孔。' };
+  const candidate = hvacThermostatPortCandidates(thermostat.position, thermostat.sizeMm).find(item => item.key === candidateKey);
+  if (!candidate) return { overlay, reason: '控温器接管孔无效。' };
+  const current = ensureHvacThermostatPort(thermostat).controlPort!;
+  if (JSON.stringify(current.position) === JSON.stringify(candidate.position) && current.direction.every((value, index) => Math.abs(value - candidate.direction[index]!) < 1e-9)) return { overlay };
+  return { overlay: { ...overlay, hvac: { ...overlay.hvac, thermostats: overlay.hvac.thermostats.map(item => item.id === thermostatId ? { ...item, controlPort: { ...current, position: clone(candidate.position), direction: [...candidate.direction] as Vec3 } } : item) } } };
+}
+
+/** A routed thermostat stays fixed so its physical endpoint cannot drift from the saved route. */
+export function editThermostat(overlay: ConduitOverlayDocument, thermostatId: string, change: Partial<Pick<HvacThermostat, 'name' | 'position' | 'mount' | 'positioning'>>): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
+  const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId);
+  if (!thermostat) return { overlay, reason: '控温器不存在。' };
+  const routed = overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId);
+  if (routed && (change.position || change.mount || change.positioning)) return { overlay, reason: '控温器已连接控制线管，请先删除线管再移动。' };
+  const next = { ...ensureHvacThermostatPort(thermostat), ...change };
+  if (change.position && next.controlPort) {
+    const offset = next.controlPort.position.position.map((value, axis) => value - thermostat.position.position[axis]) as Vec3;
+    next.controlPort = { ...next.controlPort, position: { position: change.position.position.map((value, axis) => value + offset[axis]!) as Vec3, ...(change.position.attachment ? { attachment: clone(change.position.attachment) } : {}) } };
+  }
+  return { overlay: { ...overlay, hvac: { ...overlay.hvac, thermostats: overlay.hvac.thermostats.map(item => item.id === thermostatId ? next : item) } } };
+}
 
 /** A connected unit may change its shared duct section but never move, yaw, or change casing length. */
 export function editIndoorUnit(overlay: ConduitOverlayDocument, unitId: string, change: Partial<Pick<HvacIndoorUnit, 'position' | 'rotationYDegrees' | 'sizeMm' | 'sectionMm'>>): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
@@ -113,18 +184,21 @@ export function editIndoorUnit(overlay: ConduitOverlayDocument, unitId: string, 
   const requestedSize = change.sizeMm ? [...change.sizeMm] as [number, number, number] : unit.sizeMm;
   const next = { ...unit, ...change, sizeMm: requestedSize, sectionMm };
   if (next.sectionMm.some(value => !Number.isFinite(value) || value <= 0)) return { overlay, reason: '风管截面必须为正数。' };
+  if (!connected && (change.position || change.rotationYDegrees !== undefined || change.sizeMm)) Object.assign(next, createHvacUnitPorts(unit.id, next.position, next.sizeMm, next.rotationYDegrees));
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, indoorUnits: overlay.hvac.indoorUnits.map(item => item.id === unitId ? next : item) } } };
 }
 
 export function placeIndoorUnit(overlay: ConduitOverlayDocument, position: RoutePoint, name = 'FCU 空调内机'): { overlay: ConduitOverlayDocument; unit: HvacIndoorUnit } {
   const supportedCenter: RoutePoint = { ...clone(position), position: [position.position[0], position.position[1] + HVAC_DEFAULT_UNIT_SIZE_MM[2] / 2000, position.position[2]] };
-  const unit: HvacIndoorUnit = { id: id('hvac-unit'), type: 'indoor-air-handling-unit', name, position: supportedCenter, mount: position.attachment ? { kind: 'host', attachment: clone(position.attachment) } : undefined, sizeMm: [...HVAC_DEFAULT_UNIT_SIZE_MM], sectionMm: [...HVAC_DEFAULT_SECTION_MM], rotationYDegrees: 0, createdAt: stamp() };
+  const unitId = id('hvac-unit'), sizeMm: [number, number, number] = [...HVAC_DEFAULT_UNIT_SIZE_MM];
+  const unit: HvacIndoorUnit = { id: unitId, type: 'indoor-air-handling-unit', name, position: supportedCenter, mount: position.attachment ? { kind: 'host', attachment: clone(position.attachment) } : undefined, sizeMm, sectionMm: [...HVAC_DEFAULT_SECTION_MM], rotationYDegrees: 0, ...createHvacUnitPorts(unitId, supportedCenter, sizeMm, 0), createdAt: stamp() };
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, indoorUnits: [...overlay.hvac.indoorUnits, unit] } }, unit };
 }
 
 export function placeThermostat(overlay: ConduitOverlayDocument, position: RoutePoint, name = 'FCU 温控器'): { overlay: ConduitOverlayDocument; thermostat: HvacThermostat } | { overlay: ConduitOverlayDocument; reason: string } {
   if (position.attachment?.hostKind !== 'wall' && position.attachment?.hostKind !== 'beam') return { overlay, reason: '控温器只能安装在墙面或梁侧面。' };
-  const thermostat: HvacThermostat = { id: id('thermostat'), type: 'thermostat', name, position: clone(position), mount: { kind: 'host', attachment: clone(position.attachment) }, sizeMm: [86, 86, 50], createdAt: stamp() };
+  const thermostatId = id('thermostat'), sizeMm: [number, number, number] = [86, 86, 50];
+  const thermostat: HvacThermostat = { id: thermostatId, type: 'thermostat', name, position: clone(position), mount: { kind: 'host', attachment: clone(position.attachment) }, sizeMm, controlPort: createHvacThermostatPort(thermostatId, position, sizeMm), createdAt: stamp() };
   return { overlay: { ...overlay, hvac: { ...overlay.hvac, thermostats: [...overlay.hvac.thermostats, thermostat] } }, thermostat };
 }
 
@@ -184,11 +258,49 @@ export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string
   return { overlay: { ...candidate.overlay, hvac: { ...candidate.overlay.hvac, outlets: [...candidate.overlay.hvac.outlets.filter(item => item.id !== candidate.outlet.id), replacement] } } };
 }
 
-export function bindThermostat(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string): { overlay: ConduitOverlayDocument; control: HvacControl } | { overlay: ConduitOverlayDocument; reason: string } {
-  if (!overlay.hvac.thermostats.some(item => item.id === thermostatId) || !overlay.hvac.indoorUnits.some(item => item.id === indoorUnitId)) return { overlay, reason: '控温器或内机不存在。' };
-  if (overlay.hvac.controls.some(item => item.thermostatId === thermostatId || item.indoorUnitId === indoorUnitId)) return { overlay, reason: '控温器和内机在当前版本均只能一对一关联。' };
-  const control: HvacControl = { id: id('hvac-control'), thermostatId, indoorUnitId, createdAt: stamp() };
-  return { overlay: { ...overlay, hvac: { ...overlay.hvac, controls: [...overlay.hvac.controls, control] } }, control };
+export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { overlay: ConduitOverlayDocument; conduit: HvacControlConduit } | { overlay: ConduitOverlayDocument; reason: string } {
+  const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId), unit = overlay.hvac.indoorUnits.find(item => item.id === indoorUnitId);
+  if (!thermostat || !unit) return { overlay, reason: '控温器或 FCU 不存在。' };
+  const sourcePort = ensureHvacThermostatPort(thermostat).controlPort, targetPort = ensureHvacUnitPorts(unit).controlPort;
+  if (!sourcePort || sourcePort.system !== 'hvac-control' || sourcePort.role !== 'source' || !targetPort || targetPort.system !== 'hvac-control' || targetPort.role !== 'sink') return { overlay, reason: '控温器或 FCU 的控制端口无效。' };
+  if (sourcePort.connectedSegmentIds.length || targetPort.connectedSegmentIds.length || overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId || route.indoorUnitId === indoorUnitId)) return { overlay, reason: '温控器和 FCU 控制端口各只能连接一条控制管。' };
+  const points = [sourcePort.position, ...waypoints.map(clone), targetPort.position];
+  const clean = points.filter((point, index) => index === 0 || length(points[index - 1]!.position, point.position) > 1e-6);
+  if (clean.length < 2) return { overlay, reason: '控制管至少需要一个有效管段。' };
+  const conduitId = id('hvac-control-conduit'), createdAt = stamp();
+  const plan: PlannedRoute = planRoute('network', HVAC_CONTROL_CONDUIT_DIAMETER_MM, 'surface', clean, undefined, [], { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
+  if (!plan.canCommit) return { overlay, reason: plan.diagnostics[0]?.message ?? '控制管转弯空间不足。' };
+  const collision = validatePlannedRoute(overlay, plan);
+  if (collision.length) return { overlay, reason: collision[0]!.message };
+  const plannedSegments = plan.segments.map((segment, index) => ({ ...segment, ...(index === 0 ? { startPortId: sourcePort.id } : {}), ...(index === plan.segments.length - 1 ? { endPortId: targetPort.id } : {}) }));
+  const segments = plannedSegments.map(({ type: _type, system: _system, diameterMm: _diameterMm, createdAt: _createdAt, startPortId: _startPortId, endPortId: _endPortId, circuitId: _circuitId, legacyUnrooted: _legacyUnrooted, ...segment }) => segment);
+  const fittings = plan.fittings.map(({ id: fittingId, fitting, bendStyle, radiusMm, arc, bridge, diameterMm, position, segmentIds }) => ({ id: fittingId, type: 'hvac-control-fitting' as const, system: 'control' as const, fitting: fitting === 'bridge-bend' ? 'bridge-bend' as const : fitting === 'coupling' ? 'coupling' as const : 'elbow' as const, ...(bendStyle === 'sweep' || bendStyle === 'right-angle' ? { bendStyle } : {}), ...(radiusMm !== undefined ? { radiusMm } : {}), ...(arc ? { arc } : {}), ...(bridge ? { bridge } : {}), diameterMm, position: clone(position), segmentIds: [...segmentIds] }));
+  const conduit: HvacControlConduit = { id: conduitId, type: 'hvac-control-conduit', system: 'control', thermostatId, thermostatPortId: sourcePort.id, indoorUnitId, indoorUnitPortId: targetPort.id, segmentIds: segments.map(segment => segment.id), fittingIds: fittings.map(fitting => fitting.id), diameterMm: HVAC_CONTROL_CONDUIT_DIAMETER_MM, createdAt };
+  const firstId = segments[0]!.id, lastId = segments[segments.length - 1]!.id;
+  return { conduit, overlay: { ...overlay, hvac: { ...overlay.hvac, controlConduits: [...overlay.hvac.controlConduits, conduit], controlSegments: [...overlay.hvac.controlSegments, ...segments], controlFittings: [...overlay.hvac.controlFittings, ...fittings], thermostats: overlay.hvac.thermostats.map(item => {
+    if (item.id !== thermostatId) return item;
+    const ensured = ensureHvacThermostatPort(item);
+    return { ...ensured, controlPort: { ...ensured.controlPort!, connectedSegmentIds: [firstId] } };
+  }), indoorUnits: overlay.hvac.indoorUnits.map(item => {
+    if (item.id !== indoorUnitId) return item;
+    const ensured = ensureHvacUnitPorts(item);
+    return { ...ensured, controlPort: { ...ensured.controlPort!, connectedSegmentIds: [lastId] } };
+  }) } } };
+}
+
+export function deleteHvacControlConduit(overlay: ConduitOverlayDocument, conduitId: string): ConduitOverlayDocument {
+  const conduit = overlay.hvac.controlConduits.find(item => item.id === conduitId);
+  if (!conduit) return overlay;
+  const segmentIds = new Set(conduit.segmentIds);
+  return { ...overlay, hvac: { ...overlay.hvac, controlConduits: overlay.hvac.controlConduits.filter(item => item.id !== conduitId), controlSegments: overlay.hvac.controlSegments.filter(item => !segmentIds.has(item.id)), controlFittings: overlay.hvac.controlFittings.filter(item => !conduit.fittingIds.includes(item.id)), thermostats: overlay.hvac.thermostats.map(item => {
+    if (item.id !== conduit.thermostatId) return item;
+    const port = ensureHvacThermostatPort(item).controlPort!;
+    return { ...item, controlPort: { ...port, connectedSegmentIds: port.connectedSegmentIds.filter(id => !segmentIds.has(id)) } };
+  }), indoorUnits: overlay.hvac.indoorUnits.map(item => {
+    if (item.id !== conduit.indoorUnitId) return item;
+    const port = ensureHvacUnitPorts(item).controlPort!;
+    return { ...item, controlPort: { ...port, connectedSegmentIds: port.connectedSegmentIds.filter(id => !segmentIds.has(id)) } };
+  }) } };
 }
 
 /** Ctrl-created ducts keep their Wall opening as fixed Overlay construction evidence. */
@@ -200,12 +312,16 @@ export function addHvacWallPenetration(overlay: ConduitOverlayDocument, wallId: 
 }
 
 export function deleteHvacObject(overlay: ConduitOverlayDocument, objectId: string): { overlay: ConduitOverlayDocument } | { overlay: ConduitOverlayDocument; reason: string } {
-  const hvac = overlay.hvac, unit = hvac.indoorUnits.find(item => item.id === objectId), thermostat = hvac.thermostats.find(item => item.id === objectId), duct = hvac.ducts.find(item => item.id === objectId), outlet = hvac.outlets.find(item => item.id === objectId), segment = hvac.segments.find(item => item.id === objectId);
+  const hvac = overlay.hvac, unit = hvac.indoorUnits.find(item => item.id === objectId), thermostat = hvac.thermostats.find(item => item.id === objectId), controlRoute = hvac.controlConduits.find(item => item.id === objectId || item.segmentIds.includes(objectId) || item.fittingIds.includes(objectId)), duct = hvac.ducts.find(item => item.id === objectId), outlet = hvac.outlets.find(item => item.id === objectId), segment = hvac.segments.find(item => item.id === objectId);
+  if (controlRoute) return { overlay: deleteHvacControlConduit(overlay, controlRoute.id) };
   if (unit) {
-    if (hvacUnitConnected(overlay, unit.id)) return { overlay, reason: '仍连接风管的内机不能删除，请先删除送风和回风管。' };
-    return { overlay: { ...overlay, hvac: { ...hvac, indoorUnits: hvac.indoorUnits.filter(item => item.id !== unit.id), controls: hvac.controls.filter(item => item.indoorUnitId !== unit.id) } } };
+    if (hvacUnitConnected(overlay, unit.id)) return { overlay, reason: '仍连接管线的 FCU 不能删除，请先删除相连风管和线管。' };
+    return { overlay: { ...overlay, hvac: { ...hvac, indoorUnits: hvac.indoorUnits.filter(item => item.id !== unit.id) } } };
   }
-  if (thermostat) return { overlay: { ...overlay, hvac: { ...hvac, thermostats: hvac.thermostats.filter(item => item.id !== thermostat.id), controls: hvac.controls.filter(item => item.thermostatId !== thermostat.id) } } };
+  if (thermostat) {
+    const route = hvac.controlConduits.find(item => item.thermostatId === thermostat.id), base = route ? deleteHvacControlConduit(overlay, route.id) : overlay;
+    return { overlay: { ...base, hvac: { ...base.hvac, thermostats: base.hvac.thermostats.filter(item => item.id !== thermostat.id) } } };
+  }
   if (duct) {
     const segments = new Set(duct.segmentIds);
     return { overlay: { ...overlay, hvac: { ...hvac, ducts: hvac.ducts.filter(item => item.id !== duct.id), segments: hvac.segments.filter(item => !segments.has(item.id)), outlets: hvac.outlets.filter(item => item.ductId !== duct.id), wallPenetrations: hvac.wallPenetrations.filter(item => !segments.has(item.segmentId)) } } };

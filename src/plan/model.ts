@@ -3,7 +3,6 @@ import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegmen
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
 import { DEVICE_DEFAULTS, sprinklerDirectionOf } from '../domain/devices';
-import { switchGangCount, switchGangLabel } from '../domain/lighting-controls';
 
 export type Point = [number, number];
 export type PlanAnnotation = {
@@ -48,17 +47,16 @@ export function devicePlanAnchor(nodes: Record<string, NodeData>, device: Networ
   const rawNormal: Point = [attachment.normal[0], attachment.normal[2]], normalLength = Math.hypot(...rawNormal), normal: Point = normalLength > 1e-6 ? [rawNormal[0] / normalLength, rawNormal[1] / normalLength] : [-tangent[1], tangent[0]], halfThickness = Math.max(0, Number(wall.thickness) || DEFAULT_WALL_THICKNESS_METERS) / 2;
   return [start[0] + tangent[0] * along + normal[0] * halfThickness, start[1] + tangent[1] * along + normal[1] * halfThickness];
 }
-export function devicePlanLabel(device: NetworkDevice, overlay: ConduitOverlayDocument): string {
+export function devicePlanLabel(device: NetworkDevice, _overlay: ConduitOverlayDocument): string {
   const source = device.name.trim();
+  if (device.deviceType === 'luminaire' && (!source || source === '圆柱形射灯')) return DEVICE_DEFAULTS.luminaire.label;
   if (device.deviceType === 'sensor') return source || '传感器';
   if (device.deviceType === 'sprinkler-head') {
     const direction = sprinklerDirectionOf(device) === 'pendent' ? '向下喷' : '向上喷';
     return !source || source === DEVICE_DEFAULTS['sprinkler-head'].label || source === '向上喷淋头' || source === '向下喷淋头' ? `${direction}淋头` : `${source}（${direction}）`;
   }
   if (isFloorSocket(device) && (!source || source === DEVICE_DEFAULTS.socket.label)) return '地插';
-  if (device.deviceType !== 'switch' || (source && source !== DEVICE_DEFAULTS.switch.label)) return source || DEVICE_DEFAULTS[device.deviceType].label;
-  const gangs = switchGangCount(overlay, device.id);
-  return gangs ? switchGangLabel(gangs) : DEVICE_DEFAULTS.switch.label;
+  return source || DEVICE_DEFAULTS[device.deviceType].label;
 }
 export function createPlanContext(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, hidden: ReadonlySet<string> = new Set(), systemVisibility: Readonly<Record<RoutingSystem, boolean>> = overlay.settings.visibleSystems, sensorVisible = overlay.settings.sensorVisible) {
   const scene = parseBuilding({ nodes });

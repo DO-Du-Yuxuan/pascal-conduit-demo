@@ -18,6 +18,8 @@ export function overlayForLevel(overlay: ConduitOverlayDocument, levelId: string
   const hvacSegmentIds = new Set(ducts.flatMap((duct) => duct.segmentIds));
   const thermostats = overlay.hvac.thermostats.filter((thermostat) => onLevel(levelId, mountLevel(thermostat.mount), pointLevel(thermostat.position)));
   const thermostatIds = new Set(thermostats.map((thermostat) => thermostat.id));
+  const controlConduits = overlay.hvac.controlConduits.filter((route) => unitIds.has(route.indoorUnitId) && thermostatIds.has(route.thermostatId));
+  const controlSegmentIds = new Set(controlConduits.flatMap((route) => route.segmentIds));
   return {
     ...overlay,
     segments,
@@ -28,12 +30,17 @@ export function overlayForLevel(overlay: ConduitOverlayDocument, levelId: string
     lightingControlGroups: overlay.lightingControlGroups.filter((group) => deviceIds.has(group.switchDeviceId) && group.luminaireDeviceIds.some((id) => deviceIds.has(id))).map((group) => ({ ...group, luminaireDeviceIds: group.luminaireDeviceIds.filter((id) => deviceIds.has(id)) })),
     hvac: {
       ...overlay.hvac,
-      indoorUnits: units,
+      indoorUnits: units.map(unit => ({ ...unit,
+        powerPort: unit.powerPort ? { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter(id => segmentIds.has(id)) } : undefined,
+        controlPort: unit.controlPort ? { ...unit.controlPort, connectedSegmentIds: unit.controlPort.connectedSegmentIds.filter(id => controlSegmentIds.has(id)) } : undefined,
+      })),
       ducts,
       segments: overlay.hvac.segments.filter((segment) => hvacSegmentIds.has(segment.id)),
       outlets: overlay.hvac.outlets.filter((outlet) => ductIds.has(outlet.ductId)),
-      thermostats,
-      controls: overlay.hvac.controls.filter((control) => unitIds.has(control.indoorUnitId) && thermostatIds.has(control.thermostatId)),
+      thermostats: thermostats.map(thermostat => ({ ...thermostat, controlPort: thermostat.controlPort ? { ...thermostat.controlPort, connectedSegmentIds: thermostat.controlPort.connectedSegmentIds.filter(id => controlSegmentIds.has(id)) } : undefined })),
+      controls: [],
+      controlConduits,
+      controlSegments: overlay.hvac.controlSegments.filter(segment => controlSegmentIds.has(segment.id)),
       wallPenetrations: overlay.hvac.wallPenetrations.filter((item) => hvacSegmentIds.has(item.segmentId)),
     },
   };

@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { createEmptyOverlay } from "./overlay";
 import { commitPlannedRoute, planRoute } from "./routing";
-import { validateBranchCandidate, withCollisionDiagnostics } from "./routing-collision";
+import { validateBranchCandidate, validatePlannedRoute, withCollisionDiagnostics } from "./routing-collision";
 import { placeNetworkDevice } from "./devices";
 
 const point = (x: number, y: number, z: number, hostId = "slab") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
 
 describe("routing collision validation", () => {
+  it("checks candidate conduits against persisted HVAC control routes", () => {
+    const overlay = createEmptyOverlay("a.json", "sha");
+    overlay.hvac.controlConduits = [{ id: "hvac-route", type: "hvac-control-conduit", system: "control", thermostatId: "t", thermostatPortId: "t:control-port", indoorUnitId: "u", indoorUnitPortId: "u:control-port", segmentIds: ["hvac-segment"], fittingIds: [], diameterMm: 20, createdAt: "now" }];
+    overlay.hvac.controlSegments = [{ id: "hvac-segment", start: point(-1, 1, 0), end: point(1, 1, 0) }];
+    const crossing = planRoute("network", 20, "surface", [point(0, 1, -1), point(0, 1, 1)]);
+    expect(validatePlannedRoute(overlay, crossing)).toEqual(expect.arrayContaining([expect.objectContaining({ code: "route_collision", objectIds: expect.arrayContaining(["hvac-segment"]) })]));
+  });
+
   it("includes network device bodies in route collision checks", () => {
     const overlay = placeNetworkDevice(createEmptyOverlay("a.json", "sha"), "strong-panel", { ...point(0, 0, 0), attachment: { ...point(0, 0, 0).attachment, hostKind: "wall" as const } });
     const plan = withCollisionDiagnostics(overlay, planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
@@ -81,6 +89,30 @@ describe("routing collision validation", () => {
     expect(preview.canCommit).toBe(true);
     expect(bridge?.bridge).toMatchObject({ obstacleSegmentId: base.segments[0].id, clearanceMm: 10 });
     expect(bridge?.bridge?.crestStart[1]).toBeGreaterThan(0);
+    expect(bridge?.bridge?.riseMm).toBe(30);
+    expect(bridge?.bridge?.entry[2]).toBeCloseTo(-.05);
+    expect(bridge?.bridge?.exit[2]).toBeCloseTo(.05);
+  });
+
+  it("uses one wider bridge over overlapping crossings and raises it for the widest conduit", () => {
+    let base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, -.05, "floor-a"), point(1, 0, -.05, "floor-a")]));
+    base = commitPlannedRoute(base, planRoute("network", 50, "surface", [point(-1, 0, .05, "floor-a"), point(1, 0, .05, "floor-a")]));
+    const preview = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
+    const bridges = preview.fittings.filter((fitting) => fitting.fitting === "bridge-bend");
+    expect(preview.canCommit).toBe(true);
+    expect(bridges).toHaveLength(1);
+    expect(bridges[0]?.bridge?.obstacleSegmentIds).toEqual(base.segments.map(segment => segment.id));
+    expect(bridges[0]?.bridge?.riseMm).toBeCloseTo(45, 8);
+    expect(bridges[0]?.bridge?.crestStart[2]).toBeCloseTo(-.07);
+    expect(bridges[0]?.bridge?.crestEnd[2]).toBeCloseTo(.085);
+  });
+
+  it("keeps separated crossing groups as separate bridges", () => {
+    let base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, -.3, "floor-a"), point(1, 0, -.3, "floor-a")]));
+    base = commitPlannedRoute(base, planRoute("network", 20, "surface", [point(-1, 0, .3, "floor-a"), point(1, 0, .3, "floor-a")]));
+    const preview = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
+    expect(preview.canCommit).toBe(true);
+    expect(preview.fittings.filter((fitting) => fitting.fitting === "bridge-bend")).toHaveLength(2);
   });
 
   it("raises every red, blue and white cross-system floor combination", () => {

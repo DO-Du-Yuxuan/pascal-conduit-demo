@@ -68,24 +68,23 @@ describe('construction plan rendering integration',()=>{
   expect(lighting.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke')).toBe('#2563c7');
   expect(lighting.querySelector('[data-conduit-stroke="core"]')).toBeNull();
  });
- it('keeps switch control relations visible when the conduit layer is hidden',()=>{
+ it('does not draw legacy switch control relations when the conduit layer is hidden',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]},light={...device,id:'light',deviceType:'luminaire' as const,name:'灯具',systems:['lighting' as const],position:{position:[3,2.7,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};
   overlay.devices=[wallSwitch,light];overlay.lightingControlGroups=[{id:'control',switchDeviceId:'switch',luminaireDeviceIds:['light'],createdAt:''}];
   overlay.segments=[{id:'pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:wallSwitch.position,end:light.position,createdAt:''}];
   const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} conduitsVisible={false}/></svg>));
-  expect(div.querySelector('[data-lighting-control-line]')).not.toBeNull();
+  expect(div.querySelector('[data-lighting-control-line]')).toBeNull();
   expect(div.querySelector('[data-conduit-segment]')).toBeNull();
-  expect(div.querySelector('[data-lighting-control-line]')?.textContent).toBe('');
  });
- it('renders one switch blade for each persisted control group',()=>{
+ it('does not derive switch blades from persisted legacy control groups',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]};overlay.devices=[wallSwitch];
   overlay.lightingControlGroups=[{id:'a',switchDeviceId:'switch',luminaireDeviceIds:['light-a'],createdAt:''},{id:'b',switchDeviceId:'switch',luminaireDeviceIds:['light-b'],createdAt:''}];
   const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
-  const symbol=div.querySelector('[data-device-symbol="switch"]');expect(symbol?.getAttribute('data-switch-gangs')).toBe('2');expect(symbol?.querySelectorAll('path')).toHaveLength(2);
+  const symbol=div.querySelector('[data-device-symbol="switch"]');expect(symbol?.getAttribute('data-switch-gangs')).toBeNull();expect(symbol?.querySelectorAll('path')).toHaveLength(1);
  });
  it('renders an explicit pendent sprinkler symbol in the 2D plan',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
@@ -160,7 +159,7 @@ describe('construction plan rendering integration',()=>{
  it('projects HVAC hardware from its 3D dimensions without automatic duct-length labels',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');
-  overlay.hvac={visible:true,indoorUnits:[{id:'unit',type:'indoor-air-handling-unit',name:'空调内机',position:{position:[1,2.85,1],attachment:{hostId:'ceiling',hostKind:'ceiling',surface:'bottom',normal:[0,-1,0],levelId:'l'}},sizeMm:[600,1000,300],sectionMm:[1000,300],rotationYDegrees:0,createdAt:''}],ducts:[{id:'duct',type:'hvac-duct',indoorUnitId:'unit',system:'supply',segmentIds:['segment'],createdAt:''}],segments:[{id:'segment',start:{position:[1,2.85,1.3]},end:{position:[3,2.85,1.3]}}],outlets:[{id:'outlet',type:'hvac-duct-outlet',ductId:'duct',segmentId:'segment',face:'left',offsetMm:400,sizeMm:[300,150],createdAt:''}],thermostats:[{id:'thermostat',type:'thermostat',name:'控温器',position:{position:[.2,1.3,1],attachment:{hostId:'w',hostKind:'wall',surface:'front',normal:[0,0,1],levelId:'l'}},sizeMm:[86,86,50],createdAt:''}],controls:[{id:'control',thermostatId:'thermostat',indoorUnitId:'unit',createdAt:''}],wallPenetrations:[]};
+  overlay.hvac={visible:true,indoorUnits:[{id:'unit',type:'indoor-air-handling-unit',name:'空调内机',position:{position:[1,2.85,1],attachment:{hostId:'ceiling',hostKind:'ceiling',surface:'bottom',normal:[0,-1,0],levelId:'l'}},sizeMm:[600,1000,300],sectionMm:[1000,300],rotationYDegrees:0,createdAt:''}],ducts:[{id:'duct',type:'hvac-duct',indoorUnitId:'unit',system:'supply',segmentIds:['segment'],createdAt:''}],segments:[{id:'segment',start:{position:[1,2.85,1.3]},end:{position:[3,2.85,1.3]}}],outlets:[{id:'outlet',type:'hvac-duct-outlet',ductId:'duct',segmentId:'segment',face:'left',offsetMm:400,sizeMm:[300,150],createdAt:''}],thermostats:[{id:'thermostat',type:'thermostat',name:'控温器',position:{position:[.2,1.3,1],attachment:{hostId:'w',hostKind:'wall',surface:'front',normal:[0,0,1],levelId:'l'}},sizeMm:[86,86,50],createdAt:''}],controls:[],controlConduits:[],controlSegments:[],controlFittings:[],wallPenetrations:[]};
   const context=createPlanContext(nodes,overlay);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   expect(div.querySelector('[data-hvac-duct-segment="segment"]')?.getAttribute('points')).toContain('1,0.8');

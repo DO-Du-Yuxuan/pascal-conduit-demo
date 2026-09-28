@@ -31,7 +31,7 @@ export const DEVICE_DEFAULTS: Record<NetworkDeviceType, DeviceDefinition> = {
   "weak-panel": { label: "弱电箱", systems: ["network"], hostKinds: ["wall", "beam"], sizeMm: [350, 400, 100], portRole: "source", source: true, canInsertMidSegment: false },
   socket: { label: "插座", systems: ["receptacle"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   switch: { label: "开关", systems: ["lighting"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "bidirectional", source: false, canInsertMidSegment: true },
-  luminaire: { label: "圆柱形射灯", systems: ["lighting"], hostKinds: ["ceiling", "beam"], sizeMm: [90, 90, 100], portRole: "bidirectional", source: false, canInsertMidSegment: true },
+  luminaire: { label: "灯位接线盒", systems: ["lighting"], hostKinds: ["ceiling", "beam"], sizeMm: [90, 90, 100], portRole: "bidirectional", source: false, canInsertMidSegment: true },
   "network-outlet": { label: "网络插座", systems: ["network"], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [86, 86, 50], portRole: "sink", source: false, canInsertMidSegment: false },
   "sprinkler-head": { label: "喷淋头", systems: ["sprinkler"], hostKinds: ["ceiling", "slab", "wall", "beam"], sizeMm: [80, 80, 100], portRole: "sink", source: false, canInsertMidSegment: true },
   sensor: { label: "温湿度传感器", systems: [], hostKinds: ["wall", "slab", "ceiling", "beam"], sizeMm: [80, 80, 30], portRole: "sink", source: false, canInsertMidSegment: false },
@@ -170,6 +170,12 @@ export function portCanStart(overlay: ConduitOverlayDocument, device: NetworkDev
   return overlay.circuits.some((circuit) => (circuit.status === "rooted" || circuit.status === "broken") && circuit.system === system && circuit.segmentIds.some((id) => deviceSegments.includes(id)));
 }
 
+/** Physical source ports that can start a route in the currently selected system. */
+export function deviceStartPorts(overlay: ConduitOverlayDocument, device: NetworkDevice, system: RoutingSystem): NetworkPort[] {
+  if (!device.systems.includes(system)) return [];
+  return device.ports.filter((port) => port.system === system && portCanStart(overlay, device, port, system));
+}
+
 /** Frees a clicked occupied 86-box hole by moving its existing connection to the other hole on the same side. */
 function releaseBoxPortForRoute(overlay: ConduitOverlayDocument, device: NetworkDevice, port: NetworkPort, system: RoutingSystem): { overlay: ConduitOverlayDocument; releasedPort: NetworkPort } | null {
   if (!port.connectedSegmentIds.length) return { overlay, releasedPort: port };
@@ -238,14 +244,23 @@ export function commitDeviceRoute(overlay: ConduitOverlayDocument, plan: Planned
   const segments = plan.segments.map((segment) => ({ ...segment, circuitId: circuit.id, legacyUnrooted: false }));
   segments[0].startPortId = startPort.id;
   let devices = overlay.devices.map((device) => device.id === startPort.owner.id ? { ...device, ports: device.ports.map((port) => port.id === startPort.id ? { ...port, connectedSegmentIds: [...new Set([...port.connectedSegmentIds, segments[0].id])] } : port) } : device);
+  let indoorUnits = overlay.hvac.indoorUnits;
   if (endDeviceId) {
-    const endDevice = devices.find((device) => device.id === endDeviceId), terminalOccupied = endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length > 0), endPort = terminalOccupied ? undefined : endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0) ?? endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
-    if (!endDevice || !endPort) return overlay;
-    segments[segments.length - 1].endPortId = endPort.id;
-    devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);
+    const hvacUnit = indoorUnits.find((unit) => unit.id === endDeviceId);
+    if (hvacUnit) {
+      const port = hvacUnit.powerPort;
+      if (plan.system !== "receptacle" || !port || port.id !== endPortId || port.system !== "receptacle" || port.role !== "sink" || port.connectedSegmentIds.length) return overlay;
+      segments[segments.length - 1].endPortId = port.id;
+      indoorUnits = indoorUnits.map((unit) => unit.id === endDeviceId ? { ...unit, powerPort: { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } } : unit);
+    } else {
+      const endDevice = devices.find((device) => device.id === endDeviceId), terminalOccupied = endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length > 0), endPort = terminalOccupied ? undefined : endDevice?.ports.find((port) => port.id === endPortId && port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0) ?? endDevice?.ports.find((port) => port.system === plan.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+      if (!endDevice || !endPort) return overlay;
+      segments[segments.length - 1].endPortId = endPort.id;
+      devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [segments[segments.length - 1].id] } : port) } : device);
+    }
   }
   const nextCircuit = { ...activeCircuit, segmentIds: [...new Set([...activeCircuit.segmentIds, ...segments.map((segment) => segment.id)])] };
-  return { ...overlay, devices, circuits: overlay.circuits.map((item) => item.id === circuit.id ? nextCircuit : item), segments: [...overlay.segments, ...segments], fittings: [...overlay.fittings, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations] };
+  return { ...overlay, devices, hvac: { ...overlay.hvac, indoorUnits }, circuits: overlay.circuits.map((item) => item.id === circuit.id ? nextCircuit : item), segments: [...overlay.segments, ...segments], fittings: [...overlay.fittings, ...plan.fittings], junctionBoxes: [...overlay.junctionBoxes, ...plan.junctionBoxes], surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], penetrations: [...overlay.penetrations, ...plan.penetrations] };
 }
 
 /** Reassigns a compatible legacy-unrooted connected component after a new rooted route reaches one of its open ends. */

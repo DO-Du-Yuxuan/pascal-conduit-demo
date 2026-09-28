@@ -1,6 +1,7 @@
 import type { ThreeDLayerVisibility } from "./ThreeDWorkspace";
 
 export type ThreeDViewPreset = "exterior" | "interior" | "floor" | "ceiling" | "top" | "front" | "back" | "left" | "right" | "isometric";
+export type ViewPresetRequest = { preset: ThreeDViewPreset; commandId: number; revision: number };
 export type ThreeDLevelMode = "stacked" | "exploded" | "solo";
 export type ThreeDWallMode = "up" | "cutaway" | "down" | "translucent";
 
@@ -12,6 +13,12 @@ export type ThreeDViewState = Pick<
   { preset: ThreeDViewPreset; layers: ThreeDLayerVisibility; levelMode: ThreeDLevelMode; wallMode: ThreeDWallMode; walkthrough: boolean },
   "preset" | "layers" | "levelMode" | "wallMode" | "walkthrough"
 >;
+
+/** Repeated commands for the same preset are still distinct camera actions. */
+export function applyViewPresetRequest(current: ViewPresetRequest, commandId: number, preset: ThreeDViewPreset): ViewPresetRequest {
+  if (current.commandId === commandId) return current;
+  return { preset, commandId, revision: current.revision + 1 };
+}
 
 /** View presets only affect temporary presentation state, never JSON or evaluation data. */
 export function viewStateForPreset(current: ThreeDViewState, preset: Extract<ThreeDViewPreset, "exterior" | "interior" | "floor" | "ceiling">): ThreeDViewState {

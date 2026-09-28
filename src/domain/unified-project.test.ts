@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBeam, validateBeam } from "./beams";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./unified-project";
+import { commitPlannedRoute, planRoute } from "./routing";
 import { commitWorkspaceTransaction, createWorkspace, projectDocument } from "./workspace";
 import { parseProject } from "../parser/parse";
 
@@ -36,6 +37,23 @@ describe("unified project file", () => {
     expect(exported.nodes.PlumbingSystem.futureRecords).toEqual(raw.nodes.PlumbingSystem.futureRecords);
     expect(exported.topExtra).toBe("preserve");
     expect(decodeUnifiedProject(exported, "saved.json", "sha2").overlay.devices[0].name).toBe("新插座");
+  });
+
+  it("round-trips the chosen sweep radius and arc geometry on a new ConduitElbow", () => {
+    const loaded = decodeUnifiedProject(project(), "project.json", "sha");
+    const radiusMm = 275;
+    const plan = planRoute("receptacle", 20, "surface", [
+      { position: [0, 1, 0] },
+      { position: [1, 1, 0] },
+      { position: [1, 1, 1] },
+    ], undefined, [], { bendRadiusMm: radiusMm });
+    const withRoute = commitPlannedRoute({ ...loaded.overlay, settings: { ...loaded.overlay.settings, bendRadiusMm: radiusMm } }, plan);
+    const elbow = withRoute.fittings.find((fitting) => fitting.fitting === "elbow")!;
+    const exported = encodeUnifiedProject(loaded.projectRaw, withRoute) as any;
+    expect(exported.nodes[elbow.id]).toMatchObject({ type: "ConduitElbow", radiusMm, arc: elbow.arc });
+    const reopened = decodeUnifiedProject(exported, "saved.json", "sha2");
+    expect(reopened.overlay.fittings.find((fitting) => fitting.id === elbow.id)).toMatchObject({ radiusMm, arc: elbow.arc });
+    expect(reopened.overlay.settings.bendRadiusMm).toBe(radiusMm);
   });
 });
 
@@ -264,7 +282,7 @@ it("exports a bridge bend through the public ConduitElbow fitting discriminator"
     position: { position: [1, 0.2, 0] as [number, number, number] },
     segmentIds: ["bridge-before", "bridge-after"],
     ports: [],
-    bridge: { obstacleSegmentId: "crossing", entry: [0.9, 0, 0] as [number, number, number], crestStart: [0.95, 0.1, 0] as [number, number, number], crestEnd: [1.05, 0.1, 0] as [number, number, number], exit: [1.1, 0, 0] as [number, number, number], riseMm: 100, clearanceMm: 10 },
+    bridge: { obstacleSegmentId: "crossing", obstacleSegmentIds: ["crossing", "crossing-2"], entry: [0.9, 0, 0] as [number, number, number], crestStart: [0.95, 0.1, 0] as [number, number, number], crestEnd: [1.05, 0.1, 0] as [number, number, number], exit: [1.1, 0, 0] as [number, number, number], riseMm: 100, clearanceMm: 10 },
   };
   const overlay = { ...loaded.overlay, fittings: [bridge] };
   const saved = encodeUnifiedProject(loaded.projectRaw, overlay);
@@ -349,8 +367,9 @@ it("preserves unknown fields inside authored relationship and construction array
   expect(saved.nodes.ElectricalSystem.circuits[1]).toMatchObject({ status: "broken", plugin: { first: true } });
   expect(saved.nodes.ElectricalSystem.surfaceChases[0]).toMatchObject({ plugin: { chase: true }, path: { plugin: { path: true } } });
   expect(saved.nodes.LightingSystem.penetrations[0].plugin).toEqual({ penetration: true });
-  expect(saved.nodes.LightingSystem.lightingControlGroups[0].plugin).toEqual({ scene: "A" });
-  expect(saved.nodes.HVACSystem.controls[0].plugin).toEqual({ protocol: "future" });
+  expect(loaded.overlay.lightingControlGroups).toEqual([]);
+  expect(saved.nodes.LightingSystem.lightingControlGroups).toBeUndefined();
+  expect(saved.nodes.HVACSystem.controls).toBeUndefined();
   expect(saved.nodes.HVACSystem.wallPenetrations[0].plugin).toEqual({ approval: "pending" });
   expect(saved.nodes.level.installationReferencePlanes[0]).toMatchObject({ id: "install-plane", plugin: { source: "survey" } });
   expect(saved.nodes.level.layoutReferencePlanes[0]).toMatchObject({ id: "layout-plane", plugin: { owner: "future" } });

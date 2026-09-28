@@ -57,6 +57,20 @@ function primitivesForPlan(plan: PlannedRoute): Primitive[] {
 
 function primitivesForOverlay(overlay: ConduitOverlayDocument, ignoredSegmentId?: string): Primitive[] {
   const result = overlay.segments.filter((segment) => segment.id !== ignoredSegmentId).map(segmentPrimitive);
+  for (const route of overlay.hvac.controlConduits ?? []) for (const [index, segmentId] of route.segmentIds.entries()) {
+    const segment = overlay.hvac.controlSegments.find((item) => item.id === segmentId);
+    if (!segment || segmentId === ignoredSegmentId) continue;
+    result.push({ id: segment.id, segmentId: segment.id, a: segment.start.position, b: segment.end.position, radius: route.diameterMm / 2000, portIds: [index === 0 ? route.thermostatPortId : undefined, index === route.segmentIds.length - 1 ? route.indoorUnitPortId : undefined].filter((value): value is string => Boolean(value)) });
+  }
+  for (const fitting of overlay.hvac.controlFittings ?? []) if (!fitting.segmentIds.some((id) => id === ignoredSegmentId)) {
+    if (fitting.arc) {
+      const points = arcPoints(fitting.arc);
+      for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
+    } else if (fitting.bridge) {
+      const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
+      for (let index = 0; index < points.length - 1; index += 1) result.push({ id: fitting.id, a: points[index], b: points[index + 1], radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds });
+    } else result.push({ id: fitting.id, a: fitting.position.position, b: fitting.position.position, radius: fitting.diameterMm / 1800, relatedSegmentIds: fitting.segmentIds });
+  }
   for (const fitting of overlay.fittings) if (!fitting.segmentIds.includes(ignoredSegmentId ?? "")) {
     if (fitting.arc) {
       const points = arcPoints(fitting.arc);
@@ -152,32 +166,54 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute): P
   for (const proposed of plan.segments) {
     if (!electrical(proposed.system) || !isGroundSegment(proposed)) continue;
     const direction = normalize(subtract(proposed.end.position, proposed.start.position)), proposedLength = segmentLength(proposed);
+    const crossings: Array<{ obstacle: RouteSegment; along: number; rise: number; topHalf: number; spanStart: number; spanEnd: number }> = [];
     for (const obstacle of overlay.segments) {
       if (!electrical(obstacle.system) || !sameGround(proposed, obstacle)) continue;
       const obstacleDirection = normalize(subtract(obstacle.end.position, obstacle.start.position));
       if (Math.abs(dot(direction, obstacleDirection)) > .98) continue;
       const first = segmentPrimitive(proposed), second = segmentPrimitive(obstacle), hit = closestSegmentPoints(first, second);
       if (hit.distance > first.radius + second.radius + .001) continue;
-      const along = dot(subtract(hit.point, proposed.start.position), direction), rise = first.radius + second.radius + .01, topHalf = second.radius + .01, required = rise + topHalf + .02;
-      if (along < required || proposedLength - along < required) continue;
-      const entry = add(hit.point, scale(direction, -(rise + topHalf))), crestStart = add(add(hit.point, scale(direction, -topHalf)), [0, rise, 0]), crestEnd = add(add(hit.point, scale(direction, topHalf)), [0, rise, 0]), exit = add(hit.point, scale(direction, rise + topHalf));
-      const entryFactor = Math.max(0, Math.min(1, dot(subtract(entry, proposed.start.position), direction) / proposedLength)), exitFactor = Math.max(0, Math.min(1, dot(subtract(exit, proposed.start.position), direction) / proposedLength));
-      const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor), endPortId: undefined }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor), startPortId: undefined };
-      const bridgeId = `${proposed.id}:bridge`, bridgePorts: NetworkPort[] = [
-        { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system: proposed.system, connectedSegmentIds: [before.id], segmentId: before.id },
-        { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
-      ];
-      before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
-      const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: DEFAULT_BEND_RADIUS_MM, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: [...hit.point] as Vec3, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacle.id, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
-      const replacementFor = (position: Vec3) => samePoint(position, proposed.start.position) ? before.id : after.id;
-      const fittings = plan.fittings.map((item) => {
-        if (!item.segmentIds.includes(proposed.id)) return item;
-        const ports = item.ports.map((port) => port.segmentId !== proposed.id ? port : { ...port, segmentId: replacementFor(port.position.position), connectedSegmentIds: port.connectedSegmentIds.map((id) => id === proposed.id ? replacementFor(port.position.position) : id) });
-        return { ...item, ports, segmentIds: item.segmentIds.flatMap((id) => id !== proposed.id ? [id] : [...new Set(ports.filter((port) => port.segmentId === before.id || port.segmentId === after.id).map((port) => port.segmentId!))]) };
-      });
-      const surfaceChases = plan.surfaceChases.flatMap((chase) => chase.routeElementId !== proposed.id || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: `${chase.id}:bridge-a`, routeElementId: before.id, path: { kind: "line" as const, start: clonePoint(before.start), end: clonePoint(before.end) } }, { ...chase, id: `${chase.id}:bridge-b`, routeElementId: after.id, path: { kind: "line" as const, start: clonePoint(after.start), end: clonePoint(after.end) } }]);
-      return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...fittings, fitting], surfaceChases };
+      const along = dot(subtract(hit.point, proposed.start.position), direction), rise = first.radius + second.radius + .01, topHalf = second.radius + .01, halfSpan = rise + topHalf;
+      // Keep the old single-obstacle profile, and merge only when its occupied
+      // ramp/crest interval overlaps the next crossing's interval.
+      if (along < halfSpan + .02 || proposedLength - along < halfSpan + .02) continue;
+      crossings.push({ obstacle, along, rise, topHalf, spanStart: along - halfSpan, spanEnd: along + halfSpan });
     }
+    crossings.sort((left, right) => left.spanStart - right.spanStart || left.spanEnd - right.spanEnd || left.obstacle.id.localeCompare(right.obstacle.id));
+    const firstCrossing = crossings[0];
+    if (!firstCrossing) continue;
+    const group = [firstCrossing];
+    let groupEnd = firstCrossing.spanEnd;
+    for (const crossing of crossings.slice(1)) {
+      if (crossing.spanStart > groupEnd + 1e-7) break;
+      group.push(crossing);
+      groupEnd = Math.max(groupEnd, crossing.spanEnd);
+    }
+    const rise = Math.max(...group.map((crossing) => crossing.rise));
+    const crestStartAlong = Math.min(...group.map((crossing) => crossing.along - crossing.topHalf));
+    const crestEndAlong = Math.max(...group.map((crossing) => crossing.along + crossing.topHalf));
+    const entryAlong = crestStartAlong - rise, exitAlong = crestEndAlong + rise;
+    if (entryAlong < .02 || proposedLength - exitAlong < .02) continue;
+    const routePointAt = (along: number) => pointAt(proposed, along / proposedLength);
+    const entry = routePointAt(entryAlong).position, crestStart = add(routePointAt(crestStartAlong).position, [0, rise, 0]), crestEnd = add(routePointAt(crestEndAlong).position, [0, rise, 0]), exit = routePointAt(exitAlong).position;
+    const entryFactor = entryAlong / proposedLength, exitFactor = exitAlong / proposedLength;
+    const hit = routePointAt(group.reduce((sum, crossing) => sum + crossing.along, 0) / group.length).position;
+    const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor), endPortId: undefined }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor), startPortId: undefined };
+    const bridgeId = `${proposed.id}:bridge`, bridgePorts: NetworkPort[] = [
+      { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system: proposed.system, connectedSegmentIds: [before.id], segmentId: before.id },
+      { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
+    ];
+    before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
+    const obstacleSegmentIds = [...new Set(group.map((crossing) => crossing.obstacle.id))];
+    const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: DEFAULT_BEND_RADIUS_MM, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: hit, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: obstacleSegmentIds[0]!, obstacleSegmentIds, entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
+    const replacementFor = (position: Vec3) => samePoint(position, proposed.start.position) ? before.id : after.id;
+    const fittings = plan.fittings.map((item) => {
+      if (!item.segmentIds.includes(proposed.id)) return item;
+      const ports = item.ports.map((port) => port.segmentId !== proposed.id ? port : { ...port, segmentId: replacementFor(port.position.position), connectedSegmentIds: port.connectedSegmentIds.map((id) => id === proposed.id ? replacementFor(port.position.position) : id) });
+      return { ...item, ports, segmentIds: item.segmentIds.flatMap((id) => id !== proposed.id ? [id] : [...new Set(ports.filter((port) => port.segmentId === before.id || port.segmentId === after.id).map((port) => port.segmentId!))]) };
+    });
+    const surfaceChases = plan.surfaceChases.flatMap((chase) => chase.routeElementId !== proposed.id || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: `${chase.id}:bridge-a`, routeElementId: before.id, path: { kind: "line" as const, start: clonePoint(before.start), end: clonePoint(before.end) } }, { ...chase, id: `${chase.id}:bridge-b`, routeElementId: after.id, path: { kind: "line" as const, start: clonePoint(after.start), end: clonePoint(after.end) } }]);
+    return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...fittings, fitting], surfaceChases };
   }
   return null;
 }

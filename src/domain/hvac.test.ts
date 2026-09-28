@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, bindThermostat, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitCasingSizeMeters, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
-import { createEmptyOverlay } from './overlay';
+import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, createHvacControlConduit, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, editThermostat, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitCasingSizeMeters, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
+import { createEmptyOverlay, parseOverlay } from './overlay';
 
 const point = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number] });
 describe('HVAC Overlay', () => {
@@ -99,13 +99,43 @@ describe('HVAC Overlay', () => {
     if (!('outlet' in outlet)) throw new Error('fixture');
     expect(hvacOutletEdgeClearances(outlet.overlay, outlet.outlet.id)).toEqual({ fromStartMm: 500, toEndMm: 2000 });
   });
-  it('keeps thermostat control one-to-one and wall-mounted', () => {
+  it('gives FCUs distinct stable power/control surface ports and a thermostat source port', () => {
     const unit = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));
+    expect(unit.unit.powerPort).toMatchObject({ id: `${unit.unit.id}:power-port`, ownerId: unit.unit.id, role: 'sink', system: 'receptacle' });
+    expect(unit.unit.controlPort).toMatchObject({ id: `${unit.unit.id}:control-port`, ownerId: unit.unit.id, role: 'sink', system: 'hvac-control' });
+    expect(unit.unit.powerPort?.position.position).not.toEqual(unit.unit.controlPort?.position.position);
+    expect(unit.unit.powerPort?.position.position[0]).not.toBeCloseTo(indoorUnitPort(unit.unit, 'supply').position[0]);
+    const turned = editIndoorUnit(unit.overlay, unit.unit.id, { rotationYDegrees: 90 });
+    if ('reason' in turned) throw new Error('fixture');
+    expect(turned.overlay.hvac.indoorUnits[0]?.powerPort?.position.position).not.toEqual(unit.unit.powerPort?.position.position);
     expect(placeThermostat(unit.overlay, point(1, 1.3, 0))).toHaveProperty('reason');
     const thermostat = placeThermostat(unit.overlay, { ...point(1, 1.3, 0), attachment: { hostId: 'wall', hostKind: 'wall', surface: 'front', normal: [0, 0, 1], levelId: 'L0' } });
     if (!('thermostat' in thermostat)) throw new Error('fixture');
     expect(thermostat.thermostat.name).toBe('FCU 温控器');
-    expect(bindThermostat(thermostat.overlay, thermostat.thermostat.id, unit.unit.id)).toHaveProperty('control');
+    expect(thermostat.thermostat.controlPort).toMatchObject({ id: `${thermostat.thermostat.id}:control-port`, ownerId: thermostat.thermostat.id, role: 'source', system: 'hvac-control' });
+    expect(thermostat.thermostat.controlPort?.position.position).toEqual([0.98108, 1.2570000000000001, 0]);
+    expect(thermostat.thermostat.controlPort?.direction).toEqual([0, -1, 0]);
+    expect(thermostat.thermostat.controlPort?.position.attachment).toEqual(thermostat.thermostat.position.attachment);
+    const route = createHvacControlConduit(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, [point(1, 1.3, .8), point(.5, 2, .8)]);
+    if (!('conduit' in route)) throw new Error(route.reason);
+    expect(route.conduit).toMatchObject({ system: 'control', thermostatPortId: thermostat.thermostat.controlPort?.id, indoorUnitPortId: unit.unit.controlPort?.id, diameterMm: 20 });
+    expect(route.overlay.hvac.controlSegments).toHaveLength(3);
+    expect(route.overlay.hvac.thermostats[0]?.controlPort?.connectedSegmentIds).toEqual([route.conduit.segmentIds[0]]);
+    expect(route.overlay.hvac.indoorUnits[0]?.controlPort?.connectedSegmentIds).toEqual([route.conduit.segmentIds[route.conduit.segmentIds.length - 1]]);
+    expect(route.conduit.fittingIds).toHaveLength(2);
+    expect(route.overlay.hvac.controlFittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: 'elbow', bendStyle: 'sweep', radiusMm: 150, arc: expect.any(Object) })]));
+    expect(parseOverlay(route.overlay).hvac.controlConduits).toEqual(route.overlay.hvac.controlConduits);
+    const invalidPort = structuredClone(route.overlay);
+    invalidPort.hvac.thermostats[0]!.controlPort!.connectedSegmentIds = [];
+    expect(() => parseOverlay(invalidPort)).toThrow('端口的连接引用不一致');
+    expect(editThermostat(route.overlay, thermostat.thermostat.id, { position: point(2, 1.3, 0) })).toHaveProperty('reason');
+    expect(createHvacControlConduit(route.overlay, thermostat.thermostat.id, unit.unit.id)).toHaveProperty('reason');
+    const freed = deleteHvacControlConduit(route.overlay, route.conduit.id);
+    expect(freed.hvac.controlConduits).toEqual([]);
+    expect(freed.hvac.thermostats[0]?.controlPort?.connectedSegmentIds).toEqual([]);
+    expect(createHvacControlConduit(freed, thermostat.thermostat.id, unit.unit.id)).toHaveProperty('conduit');
+    const moved = editThermostat(freed, thermostat.thermostat.id, { position: point(2, 1.3, 0) });
+    expect(moved.overlay.hvac.thermostats[0]?.controlPort?.position.position).toEqual([1.98108, 1.2570000000000001, 0]);
   });
   it('locks a connected unit but propagates its shared section and records fixed-clearance Wall penetrations', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));

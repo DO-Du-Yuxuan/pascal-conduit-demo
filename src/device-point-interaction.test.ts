@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { BUILDER_CARDS, canUseCatalogSystem, catalogLockForBuilderCard } from "./builder-workbench";
+import { strongPanelRouteSystem } from "./three/route-start-chooser";
 
 const workspace = readFileSync(new URL("./three/ThreeDWorkspace.tsx", import.meta.url), "utf8");
 const compactWorkspace = workspace.replace(/\s+/g, " ");
@@ -67,7 +68,7 @@ describe("device point interaction wiring", () => {
 
   it("uses the physical click position to choose the target device port", () => {
     expect(workspace).toContain("targetPoint?: [number, number, number]");
-    expect(scene).toContain("onStartDeviceRoute(device, port.id, [event.point.x, event.point.y, event.point.z])");
+    expect(scene).toContain("onStartDeviceRoute(device, port.id, [event.point.x, event.point.y, event.point.z], activeRouteSystem)");
   });
 
   it("reveals open destination ports and replaces the large cursor ball with a target reticle", () => {
@@ -79,18 +80,50 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain("activeTargetPortId");
   });
 
-  it("reveals the selected system's shared panel holes only while the pointer is over that panel", () => {
+  it("shows only system-compatible source holes and lets L choose the route system", () => {
     expect(scene).toContain('sourcePanel = device.deviceType === "strong-panel" || device.deviceType === "weak-panel"');
     expect(scene).toContain("showStartPorts = tool === \"draw\" && draft.length === 0 && (!sourcePanel || hoverId === device.id)");
-    expect(scene).toContain("port.system === startSystem && portCanStart");
+    expect(scene).toContain("startSystems: RoutingSystem[] = routeStartChooser ? device.deviceType === \"strong-panel\" ? [chooserPanelSystem === \"lighting\" ? \"lighting\" : \"receptacle\"]");
+    expect(scene).toContain("deviceStartPorts(overlay, device, candidate)");
+    expect(scene).toContain("routeStartChooser || endpoint.system === routeSystem");
+    expect(workspace).toContain("routeStartChooser={routeStartChooser && tool === \"draw\"}");
     expect(workspace).toContain("routeSystem={system}");
+    expect(workspace).toContain("chooserPanelSystem={strongPanelRouteSystem(selectedBuilderSystem)}");
+    expect(strongPanelRouteSystem("lighting")).toBe("lighting");
+    expect(strongPanelRouteSystem("electrical")).toBe("receptacle");
+    expect(strongPanelRouteSystem("hvac")).toBe("receptacle");
   });
 
   it("starts a panel route only from the explicitly clicked source hole", () => {
     expect(scene).toContain('else if (tool === "draw" && device.ports.length) { /* Route starts only from the explicitly clicked green port. */ }');
-    expect(scene).toContain('onStartDeviceRoute(device, port.id');
+    expect(scene).toContain('onStartDeviceRoute(device, port.id, undefined, candidate)');
     expect(scene).toContain("sourcePortDisplayPosition(port, device)");
     expect(scene).toContain('function sourcePortDisplayPosition(port: NetworkDevice["ports"][number], _device: NetworkDevice): Vec3 { return port.position.position; }');
+  });
+
+  it("makes L bypass a stale Builder card lock while Builder card commands restore their lock", () => {
+    const lHandler = workspace.slice(workspace.indexOf('event.key.toLowerCase() === "l") {'), workspace.indexOf('event.key.toLowerCase() === "d") {'));
+    expect(lHandler).toContain('event.key.toLowerCase() === "l") {');
+    expect(lHandler).not.toContain("catalogLock");
+    expect(lHandler).not.toContain("authorCommand");
+    expect(compactWorkspace).toContain("setUniversalRouteMode(true); setRouteStartChooser(true);");
+    expect(compactWorkspace).toContain("setExplicitPenetrations([]); resetRouteConstraints(); setDeviceRouteStart(null)");
+    expect(workspace).toContain("const catalogLock = universalRouteMode ? undefined : authorCommand?.catalogLock;");
+    expect(workspace).toContain("setUniversalRouteMode(false); setRouteStartChooser(false); setTool(next)");
+    expect(workspace).toContain("if (authorCommand.tool || authorCommand.catalogLock) { setUniversalRouteMode(false); setRouteStartChooser(false); }");
+    expect(workspace).toContain("onAuthoringSystemChange?.(category)");
+    const main = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
+    expect(main).toContain("selectedBuilderSystem={selectedBuilderSystem}");
+    expect(main).toContain("onAuthoringSystemChange={system => { setSelectedBuilderSystem(system)");
+  });
+
+  it("offers HVAC supply, return, and thermostat control sources in the universal chooser", () => {
+    const hvacScene = readFileSync(new URL("./components/HvacScene.tsx", import.meta.url), "utf8");
+    expect(hvacScene).toContain("routeStartChooser && overlay.hvac.indoorUnits.flatMap");
+    expect(hvacScene).toContain("(['supply', 'return'] as HvacSystem[])");
+    expect(hvacScene).toContain("thermostatCanStart(item)");
+    expect(workspace).toContain("setTool('hvac-control'); setHvacControlThermostatId(thermostatId)");
+    expect(workspace).toContain("setTool(system === 'supply' ? 'hvac-supply' : 'hvac-return')");
   });
 
   it("keeps stable default depth rendering for permanent pipes and fittings", () => {
@@ -110,7 +143,8 @@ describe("device point interaction wiring", () => {
   });
 
   it("wires L, D, and Delete shortcuts without interfering with text entry", () => {
-    expect(workspace).toContain('event.key.toLowerCase() === "l") { chooseTool("draw");');
+    expect(workspace).toContain('event.key.toLowerCase() === "l") {');
+    expect(compactWorkspace).toContain("setUniversalRouteMode(true); setRouteStartChooser(true);");
     expect(workspace).toContain('event.key.toLowerCase() === "d") { chooseTool("point");');
     expect(workspace).toContain('if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") {');
     expect(workspace).toContain("deleteSelectedObjects();");
@@ -124,23 +158,22 @@ describe("device point interaction wiring", () => {
     expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
   });
 
-  it("creates one lighting control group by selecting luminaires and then a switch", () => {
-    expect(workspace).toContain("绑定开关");
-    expect(workspace).toContain("createLightingControlGroup(overlay, deviceId, controlBinding.luminaireDeviceIds)");
-    expect(workspace).toContain("只能选择尚未绑定的灯具点位");
-    expect(scene).toContain('controlBinding === "create" && device.deviceType === "switch"');
+  it("does not expose logical switch-to-lighting-junction-box controls", () => {
+    expect(workspace).not.toContain("绑定开关");
+    expect(workspace).not.toContain("createLightingControlGroup");
+    expect(scene).not.toContain('controlBinding === "create" && device.deviceType === "switch"');
   });
 
-  it("edits and unbinds complete switch control groups", () => {
-    expect(workspace).toContain("重新选择灯具");
-    expect(workspace).toContain("解除该路");
-    expect(workspace).toContain("replaceLightingControlGroup(overlay, controlBinding.groupId, controlBinding.luminaireDeviceIds)");
-    expect(compactWorkspace).toMatch(/removeLightingControlGroup\(\s*overlay,\s*group\.id,?\s*\)/);
+  it("does not expose controls for editing or unbinding logical groups", () => {
+    expect(workspace).not.toContain("重新选择灯具");
+    expect(workspace).not.toContain("解除该路");
+    expect(workspace).not.toContain("replaceLightingControlGroup");
+    expect(compactWorkspace).not.toContain("removeLightingControlGroup");
   });
 
-  it("shows selected lighting relationships without rendering permanent physical conduit", () => {
-    expect(workspace).toContain("visibleControlGroups={visibleControlGroups}");
-    expect(scene).toContain('name="lighting-control-relation"');
-    expect(scene).toContain("dashed");
+  it("does not render logical lighting relationship lines", () => {
+    expect(workspace).not.toContain("visibleControlGroups");
+    expect(scene).not.toContain('name="lighting-control-relation"');
+    expect(scene).not.toContain("lightingControlRelationLines");
   });
 });
