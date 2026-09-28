@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { BackSide, Box3, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
 import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
-import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
+import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, inspectHvacControlConnection, isHvacObjectId, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
@@ -561,7 +561,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const ids = [...new Set(selectedSegmentIds.length ? selectedSegmentIds : selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
     let next = overlay;
-    const hvacIds = ids.filter(id => [...next.hvac.indoorUnits, ...next.hvac.ducts, ...next.hvac.segments, ...next.hvac.outlets, ...next.hvac.thermostats].some(item => item.id === id));
+    const hvacIds = ids.filter(id => isHvacObjectId(next, id));
     for (const id of hvacIds) {
       const result = deleteHvacObject(next, id);
       if ('reason' in result) { setStatus(result.reason); return; }
@@ -770,10 +770,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const hoveredHvacResolution = hoveredHvacAnchor && hoveredHvacPort && hoveredHvacPort.id === hoveredHvacTarget?.portId && !hoveredHvacPort.connectedSegmentIds.length
     ? resolveTargetClick(hoveredHvacAnchor, { kind: "device-port", point: hoveredHvacPort.position, targetId: hoveredHvacPort.id, label: "FCU 端口", distancePixels: 0, compatible: true }, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: hoveredHvacDirection })
     : null;
+  const hoveredHvacControlCheck = useMemo(() => hoveredHvacTarget?.kind === "control" && hoveredHvacResolution?.kind === "connect" && hvacControlThermostatId
+    ? inspectHvacControlConnection(overlay, hvacControlThermostatId, hoveredHvacTarget.unitId, hvacControlWaypoints)
+    : null, [overlay, hoveredHvacTarget, hoveredHvacResolution?.kind, hvacControlThermostatId, hvacControlWaypoints]);
   const hoveredHvacAssist = hoveredHvacResolution?.kind === "connect" || hoveredHvacResolution?.kind === "confirm-alignment" ? { point: hoveredHvacResolution.point.position, mode: hoveredHvacResolution.kind === "connect" ? "connect" as const : "alignment" as const } : null;
   const activeBeamSnap = beamSnapTarget;
   const snapStatus = hoveredHvacAssist && hoveredHvacTarget
-    ? `FCU ${hoveredHvacTarget.kind === "power" ? "电源" : "控制"}端口 · ${hoveredHvacAssist.mode === "connect" ? "连接后结束" : "辅助对齐"}`
+    ? hoveredHvacControlCheck && "reason" in hoveredHvacControlCheck ? `FCU 控制端口 · 暂不能连接：${hoveredHvacControlCheck.reason}` : `FCU ${hoveredHvacTarget.kind === "power" ? "电源" : "控制"}端口 · ${hoveredHvacAssist.mode === "connect" ? "连接后结束" : "辅助对齐"}`
     : (tool === "beam" || selectedBeam) && activeBeamSnap ? `梁表面捕捉 · ${activeBeamSnap.target.kind} · ${activeBeamSnap.target.id}` : !draft.length ? null : activeTargetDevice && activeTargetPort
     ? `设备端口 · ${deviceTargetMode === "connect" ? "连接后结束" : "辅助对齐"}`
     : branchPreview?.valid ? "分支捕捉" : hoverId?.startsWith("open-end:") ? "开放管端 · 捕捉" : null;
@@ -2520,7 +2523,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           />
           <Navigation bounds={scene.bounds} preset={preset} presetRevision={presetRequest.revision} projection={projection} onCameraRight={updateCameraRight} />
         </Canvas>
-        {snapStatus && <div className="conduit-snap-status">{snapStatus}</div>}
+        {snapStatus && <div className={`conduit-snap-status${hoveredHvacControlCheck && "reason" in hoveredHvacControlCheck ? " blocked" : ""}`}>{snapStatus}</div>}
         <div className="three-d-walkthrough-hint">
           空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z
           悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成

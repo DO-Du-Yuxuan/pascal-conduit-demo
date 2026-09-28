@@ -49,7 +49,7 @@ describe("device point interaction wiring", () => {
 
   it("keeps snap text in a fixed HUD instead of covering the 3D target", () => {
     expect(scene).not.toContain("conduit-snap-label");
-    expect(workspace).toContain('className="conduit-snap-status"');
+    expect(workspace).toContain('className={`conduit-snap-status${');
     expect(workspace).toContain("辅助对齐");
   });
 

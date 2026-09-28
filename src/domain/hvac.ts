@@ -258,20 +258,33 @@ export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string
   return { overlay: { ...candidate.overlay, hvac: { ...candidate.overlay.hvac, outlets: [...candidate.overlay.hvac.outlets.filter(item => item.id !== candidate.outlet.id), replacement] } } };
 }
 
-export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { overlay: ConduitOverlayDocument; conduit: HvacControlConduit } | { overlay: ConduitOverlayDocument; reason: string } {
+function planHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[]): { plan: PlannedRoute; sourcePort: HvacDevicePort; targetPort: HvacDevicePort } | { reason: string } {
   const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId), unit = overlay.hvac.indoorUnits.find(item => item.id === indoorUnitId);
-  if (!thermostat || !unit) return { overlay, reason: '控温器或 FCU 不存在。' };
+  if (!thermostat || !unit) return { reason: '控温器或 FCU 不存在。' };
   const sourcePort = ensureHvacThermostatPort(thermostat).controlPort, targetPort = ensureHvacUnitPorts(unit).controlPort;
-  if (!sourcePort || sourcePort.system !== 'hvac-control' || sourcePort.role !== 'source' || !targetPort || targetPort.system !== 'hvac-control' || targetPort.role !== 'sink') return { overlay, reason: '控温器或 FCU 的控制端口无效。' };
-  if (sourcePort.connectedSegmentIds.length || targetPort.connectedSegmentIds.length || overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId || route.indoorUnitId === indoorUnitId)) return { overlay, reason: '温控器和 FCU 控制端口各只能连接一条控制管。' };
+  if (!sourcePort || sourcePort.system !== 'hvac-control' || sourcePort.role !== 'source' || !targetPort || targetPort.system !== 'hvac-control' || targetPort.role !== 'sink') return { reason: '控温器或 FCU 的控制端口无效。' };
+  if (sourcePort.connectedSegmentIds.length || targetPort.connectedSegmentIds.length || overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId || route.indoorUnitId === indoorUnitId)) return { reason: '温控器和 FCU 控制端口各只能连接一条控制管。' };
   const points = [sourcePort.position, ...waypoints.map(clone), targetPort.position];
   const clean = points.filter((point, index) => index === 0 || length(points[index - 1]!.position, point.position) > 1e-6);
-  if (clean.length < 2) return { overlay, reason: '控制管至少需要一个有效管段。' };
-  const conduitId = id('hvac-control-conduit'), createdAt = stamp();
+  if (clean.length < 2) return { reason: '控制管至少需要一个有效管段。' };
   const plan: PlannedRoute = planRoute('network', HVAC_CONTROL_CONDUIT_DIAMETER_MM, 'surface', clean, undefined, [], { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
-  if (!plan.canCommit) return { overlay, reason: plan.diagnostics[0]?.message ?? '控制管转弯空间不足。' };
+  if (!plan.canCommit) return { reason: plan.diagnostics[0]?.message ?? '控制管转弯空间不足。' };
   const collision = validatePlannedRoute(overlay, plan);
-  if (collision.length) return { overlay, reason: collision[0]!.message };
+  if (collision.length) return { reason: collision[0]!.message };
+  return { plan, sourcePort, targetPort };
+}
+
+/** Uses the same geometry and collision checks as the final click. */
+export function inspectHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { reason: string } | { valid: true } {
+  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints);
+  return 'reason' in result ? { reason: result.reason } : { valid: true };
+}
+
+export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { overlay: ConduitOverlayDocument; conduit: HvacControlConduit } | { overlay: ConduitOverlayDocument; reason: string } {
+  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints);
+  if ('reason' in result) return { overlay, reason: result.reason };
+  const { plan, sourcePort, targetPort } = result;
+  const conduitId = id('hvac-control-conduit'), createdAt = stamp();
   const plannedSegments = plan.segments.map((segment, index) => ({ ...segment, ...(index === 0 ? { startPortId: sourcePort.id } : {}), ...(index === plan.segments.length - 1 ? { endPortId: targetPort.id } : {}) }));
   const segments = plannedSegments.map(({ type: _type, system: _system, diameterMm: _diameterMm, createdAt: _createdAt, startPortId: _startPortId, endPortId: _endPortId, circuitId: _circuitId, legacyUnrooted: _legacyUnrooted, ...segment }) => segment);
   const fittings = plan.fittings.map(({ id: fittingId, fitting, bendStyle, radiusMm, arc, bridge, diameterMm, position, segmentIds }) => ({ id: fittingId, type: 'hvac-control-fitting' as const, system: 'control' as const, fitting: fitting === 'bridge-bend' ? 'bridge-bend' as const : fitting === 'coupling' ? 'coupling' as const : 'elbow' as const, ...(bendStyle === 'sweep' || bendStyle === 'right-angle' ? { bendStyle } : {}), ...(radiusMm !== undefined ? { radiusMm } : {}), ...(arc ? { arc } : {}), ...(bridge ? { bridge } : {}), diameterMm, position: clone(position), segmentIds: [...segmentIds] }));
@@ -301,6 +314,12 @@ export function deleteHvacControlConduit(overlay: ConduitOverlayDocument, condui
     const port = ensureHvacUnitPorts(item).controlPort!;
     return { ...item, controlPort: { ...port, connectedSegmentIds: port.connectedSegmentIds.filter(id => !segmentIds.has(id)) } };
   }) } };
+}
+
+/** Includes nested route members selected directly from the 3D scene. */
+export function isHvacObjectId(overlay: ConduitOverlayDocument, objectId: string): boolean {
+  const hvac = overlay.hvac;
+  return [hvac.indoorUnits, hvac.ducts, hvac.segments, hvac.outlets, hvac.thermostats, hvac.controlConduits, hvac.controlSegments, hvac.controlFittings].some(items => items.some(item => item.id === objectId));
 }
 
 /** Ctrl-created ducts keep their Wall opening as fixed Overlay construction evidence. */

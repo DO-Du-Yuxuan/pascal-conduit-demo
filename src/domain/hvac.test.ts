@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, createHvacControlConduit, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, editThermostat, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitCasingSizeMeters, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
+import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, createHvacControlConduit, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, editThermostat, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitCasingSizeMeters, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, inspectHvacControlConnection, isHvacObjectId, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
 import { createEmptyOverlay, parseOverlay } from './overlay';
 
 const point = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number] });
@@ -151,6 +151,11 @@ describe('HVAC Overlay', () => {
     expect(route.overlay.hvac.indoorUnits[0]?.controlPort?.connectedSegmentIds).toEqual([route.conduit.segmentIds[route.conduit.segmentIds.length - 1]]);
     expect(route.conduit.fittingIds).toHaveLength(2);
     expect(route.overlay.hvac.controlFittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: 'elbow', bendStyle: 'sweep', radiusMm: 150, arc: expect.any(Object) })]));
+    expect(inspectHvacControlConnection(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, [point(1, 1.3, .8), point(.5, 2, .8)])).toEqual({ valid: true });
+    expect(inspectHvacControlConnection(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, [point(1, 1.3, .8), point(1, 1.3, .81)])).toHaveProperty('reason');
+    expect(isHvacObjectId(route.overlay, route.conduit.segmentIds[0]!)).toBe(true);
+    expect(isHvacObjectId(route.overlay, route.conduit.fittingIds[0]!)).toBe(true);
+    expect(isHvacObjectId(route.overlay, route.conduit.id)).toBe(true);
     expect(parseOverlay(route.overlay).hvac.controlConduits).toEqual(route.overlay.hvac.controlConduits);
     const invalidPort = structuredClone(route.overlay);
     invalidPort.hvac.thermostats[0]!.controlPort!.connectedSegmentIds = [];
