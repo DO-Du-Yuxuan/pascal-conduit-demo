@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS } from "./overlay";
-import { branchAtSegment, commitBranchRoute, commitPlannedRoute, deleteNetworkObject, planBranchContinuation, planRoute, resetRoutingIdsForTests, type PenetrationRequest } from "./routing";
+import { branchAtSegment, commitBranchRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, planBranchContinuation, planRoute, resetRoutingIdsForTests, type PenetrationRequest } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostId = "wall-a") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } });
@@ -291,6 +291,22 @@ describe("Conduit overlay", () => {
     expect(removedBox.surfaceChases).toHaveLength(0);
     const sprinkler = commitPlannedRoute(base, planRoute("sprinkler", 50, "suspended", [point(0, 2, 0), point(2, 2, 0)])), sprinklerBranch = branchAtSegment(sprinkler, sprinkler.segments[0].id, point(1, 2, 0), point(1, 2, 1)), tee = sprinklerBranch.fittings.find((fitting) => fitting.fitting === "tee")!;
     expect(deleteNetworkObject(sprinklerBranch, tee.id).segments).toHaveLength(0);
+  });
+
+  it("deletes a selected circuit's segments and fittings in one pass and cleans references", () => {
+    const base = createEmptyOverlay("default-layout.json", "abc"), routed = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(0, 1, 0), point(2, 1, 0)])), branched = branchAtSegment(routed, routed.segments[0].id, point(1, 1, 0), point(1, 1, 1));
+    const circuitId = "selected-circuit", segments = branched.segments.map((segment) => ({ ...segment, circuitId }));
+    const unrelatedBox = { ...branched.junctionBoxes[0]!, id: "unrelated-box", segmentIds: [], ports: [] };
+    const unrelatedChase = { ...branched.surfaceChases[0]!, id: "unrelated-box-chase", routeElementId: unrelatedBox.id };
+    const selected = { ...branched, segments, junctionBoxes: [...branched.junctionBoxes, unrelatedBox], surfaceChases: [...branched.surfaceChases, unrelatedChase], circuits: [{ id: circuitId, system: "receptacle" as const, sourceDeviceId: null, rootPortId: null, segmentIds: segments.map((segment) => segment.id), status: "rooted" as const, createdAt: "now" }], manualCallouts: [{ id: "callout", targetId: segments[0]!.id, levelId: "L0", anchor: [0, 0] as [number, number], label: [1, 1] as [number, number], text: "test", createdAt: "now" }], penetrations: [{ id: "penetration", type: "penetration" as const, hostId: "wall-a", hostKind: "wall" as const, segmentId: segments[0]!.id, entry: point(0, 1, 0), exit: point(0, 1, 0), direction: [0, 0, 1] as [number, number, number], diameterMm: 30 }] };
+    const deleted = deleteNetworkObjects(selected, [...segments.map((segment) => segment.id), ...selected.fittings.map((fitting) => fitting.id), ...branched.junctionBoxes.map((box) => box.id)]);
+    expect(deleted.segments).toHaveLength(0);
+    expect(deleted.fittings).toHaveLength(0);
+    expect(deleted.junctionBoxes.map((box) => box.id)).toEqual([unrelatedBox.id]);
+    expect(deleted.circuits).toHaveLength(0);
+    expect(deleted.surfaceChases.map((chase) => chase.id)).toEqual([unrelatedChase.id]);
+    expect(deleted.penetrations).toHaveLength(0);
+    expect(deleted.manualCallouts).toHaveLength(0);
   });
 
   it("creates a 150 mm tangent sweep on one electrical host", () => {

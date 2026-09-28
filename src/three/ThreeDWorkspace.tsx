@@ -7,14 +7,14 @@ import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview 
 import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
 import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
-import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
+import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
 import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { buildPhysicalPositioningSurfaces } from "../domain/physical-positioning-surfaces";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
-import { connectedRouteElementIds } from "../domain/route-selection";
+import { circuitRouteElementIds, connectedRouteElementIds } from "../domain/route-selection";
 import { projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
@@ -425,6 +425,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!ids.length) return;
     setSelectedSegmentIds(ids); setSelectedDeviceIds([]); onSelect(id);
   };
+  const selectCircuit = (id: string) => {
+    if (tool !== "select") return;
+    const ids = circuitRouteElementIds(overlay, id);
+    if (!ids.length) return;
+    setSelectedSegmentIds(ids); setSelectedDeviceIds([]); onSelect(id);
+  };
   const reportChaseFallback = useCallback((key: string, failed: boolean) => setChaseFallbacks((current) => {
     const next = new Set(current);
     if (failed) next.add(key); else next.delete(key);
@@ -526,7 +532,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     // A focused canvas control may stop keydown bubbling. Route undo must still
     // receive Escape after the pointer confirms a point on that control.
     window.addEventListener("keydown", onKeyDown, true); return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, selectedSegmentIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
 
   const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const deleteSelectedObjects = () => {
@@ -542,16 +548,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, nextOverlay, true, current.dirty || nextOverlay !== current.overlay);
       setBeamEditPreview(null); onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
     }
-    const ids = [...new Set(selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
+    const ids = [...new Set(selectedSegmentIds.length ? selectedSegmentIds : selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
     let next = overlay;
-    for (const id of ids) {
-      const hvacId = [...next.hvac.indoorUnits, ...next.hvac.ducts, ...next.hvac.segments, ...next.hvac.outlets, ...next.hvac.thermostats].some(item => item.id === id);
-      if (hvacId) { const result = deleteHvacObject(next, id); if ('reason' in result) { setStatus(result.reason); return; } next = result.overlay; }
-      else next = deleteNetworkObject(next, id);
+    const hvacIds = ids.filter(id => [...next.hvac.indoorUnits, ...next.hvac.ducts, ...next.hvac.segments, ...next.hvac.outlets, ...next.hvac.thermostats].some(item => item.id === id));
+    for (const id of hvacIds) {
+      const result = deleteHvacObject(next, id);
+      if ('reason' in result) { setStatus(result.reason); return; }
+      next = result.overlay;
     }
+    next = deleteNetworkObjects(next, ids.filter(id => !hvacIds.includes(id)));
     if (next === overlay) return;
-    commit(next); onSelect(null); setSelectedDeviceIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个点位及孤立施工特征。` : "已删除对象及孤立施工特征。");
+    commit(next); onSelect(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个选中管线对象及孤立施工特征。` : "已删除对象及孤立施工特征。");
   };
   const applyDevicePosition = (change?: { horizontalClearanceMm?: number; bottomHeightMm?: number; elevationMm?: number; verticalClearanceMm?: number; planarClearanceMm?: Record<string, number> }) => {
     if (!selectedDevice) return;
@@ -2384,6 +2392,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onDevicePreview={scheduleInlineDevicePreview}
             onSelect={selectWhileBrowsing}
             onSelectRoute={selectWholeRoute}
+            onSelectCircuit={selectCircuit}
             onBranch={(segment, position) => onBranch(segment.id, position)}
             onInsertDevice={(segment, position) => {
               const next = insertDeviceOnSegment(

@@ -40,3 +40,5 @@ Builder 风格底部主栏提供「系统」入口，第二行列出十个系统
 
 
 Project JSON 版本边界为 4.0：3.0 及更早格式和退休公共类型会被拒绝导入，不提供自动迁移；旧 4.0 `Spotlight` 按兼容别名导入并导出为 `LightingJunctionBox`。公开目录使用 `NetworkOutlet`、`LightingJunctionBox`、`FanCoilUnit`、`FCUThermostat`、`TemperatureHumiditySensor`、`RFIDReader`、`GalvanizedSheetMetalDuct` 等具体类型；内部 Overlay 通用名仅是适配实现细节。消防管以 `FireWaterPipe` 自由起画，不需要入户点，不创建 Circuit；弯头、三通、直接接头分别使用 `FireWaterPipeElbow`、`FireWaterPipeTee`、`FireWaterPipeConnector`。FCU 默认外壳为 1000 × 600 × 300 mm，镀锌铁皮风管截面为 500 × 200 mm。
+
+3D 选择模式中，单击管段或管件只选择该元素；双击沿 fittings 的连接关系选择连续管路；三击按所属 Circuit 扩展到全部管段及其相关 fittings 和 86 接线盒。无 Circuit 的消防管等退回到 fittings 所连接的物理连通范围。`Delete`/`Backspace` 对当前高亮的管线元素集合执行一次删除，并清理相应设备端口引用、空 Circuit、槽、穿孔及施工标注；Circuit 仍有剩余管段时保留其余拓扑并标为 broken。2D 图纸保持只读，不提供管线集合删除。

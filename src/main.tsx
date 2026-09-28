@@ -73,6 +73,7 @@ import { sha256Text } from "./domain/hash";
 import { type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
 import { projectDocument, readProjectIdentity } from "./domain/workspace";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./domain/unified-project";
+import { buildCrashDiagnostic, createRecoveryDownloadSnapshot, explainReactError, getLastSuccessfulRecoverySnapshot } from "./crash-recovery";
 import { validateBeam } from "./domain/beams";
 import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, type WorkspaceViewMode } from "./domain/workspace-layout";
@@ -160,25 +161,74 @@ const builtInRequirementLoad = loadRequirementHandoffJson(bellevueRequirementTex
 if (!builtInRequirementLoad.ok) throw new Error(builtInRequirementLoad.error);
 const BELLEVUE_DEMO_REQUIREMENTS = builtInRequirementLoad.handoff;
 
-class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
-  state: { error: Error | null } = { error: null };
+class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null; componentStack: string; recoveryStatus: string }> {
+  state: { error: Error | null; componentStack: string; recoveryStatus: string } = { error: null, componentStack: "", recoveryStatus: "" };
+  private recoveryUsedFallback = false;
 
   static getDerivedStateFromError(error: Error) {
     return { error };
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error("[DEBUG-beam-white-screen]", error, info.componentStack);
+    console.error("[UI-render-crash]", error, info.componentStack);
+    this.setState({ componentStack: info.componentStack || "未提供 React 组件栈" });
+  }
+
+  private downloadRecovery = async () => {
+    try {
+      const snapshot = createRecoveryDownloadSnapshot();
+      if (!snapshot) return;
+      this.recoveryUsedFallback = snapshot.usedFallback;
+      const label = snapshot.usedFallback ? "pascal-conduit-recovery-last-successful.json" : "pascal-conduit-recovery.json";
+      const result = await saveJsonFile(new Blob([JSON.stringify(snapshot.project, null, 2)], { type: "application/json" }), label);
+      this.setState({ recoveryStatus: result === "cancelled" ? "已取消恢复 JSON 保存。" : `恢复快照时间：${snapshot.snapshotAt}${snapshot.usedFallback ? "（使用最近一次成功编码的快照）" : ""}` });
+      if (result === "cancelled") return;
+    } catch (error) {
+      console.error("[recovery-project-export-failed]", error);
+      this.setState({ recoveryStatus: `恢复 JSON 导出失败：${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+
+  private downloadDiagnostic = async () => {
+    const state = useOverlayStore.getState(), project = state.project;
+    const recoverySnapshot = createRecoveryDownloadSnapshot() ?? getLastSuccessfulRecoverySnapshot();
+    const recoveryUsedFallback = recoverySnapshot && "usedFallback" in recoverySnapshot ? Boolean(recoverySnapshot.usedFallback) : this.recoveryUsedFallback;
+    const report = buildCrashDiagnostic({
+      error: this.state.error!, componentStack: this.state.componentStack, buildLabel: __BUILD_LABEL__,
+      url: window.location.href, userAgent: navigator.userAgent,
+      projectId: project?.projectId ?? null, sourceSha: project?.revisionSha256 ?? null,
+      projectDirty: state.projectDirty, overlayDirty: state.dirty,
+      recoverySnapshotAt: recoverySnapshot?.snapshotAt ?? null,
+      recoveryUsedFallback,
+      recoveryProjectId: recoverySnapshot?.projectId ?? null, recoverySourceSha: recoverySnapshot?.sourceSha ?? null,
+    });
+    try {
+      await saveJsonFile(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }), "pascal-conduit-crash-diagnostic.json");
+      this.setState({ recoveryStatus: "诊断报告已下载。" });
+    } catch (error) {
+      console.error("[crash-diagnostic-export-failed]", error);
+      this.setState({ recoveryStatus: `诊断报告导出失败：${error instanceof Error ? error.message : String(error)}` });
+    }
   }
 
   render() {
     if (!this.state.error) return this.props.children;
+    const workspace = useOverlayStore.getState(), canRecover = Boolean((workspace.project && workspace.overlay) || getLastSuccessfulRecoverySnapshot());
+    const explanation = explainReactError(this.state.error.message);
     return <main style={{ margin: 24, maxWidth: 900, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
       <h1>页面渲染错误</h1>
       <p>构建版本：{__BUILD_LABEL__}</p>
-      <p>请截取以下内容并发送给开发者：</p>
+      <p>{explanation}</p>
+      {this.state.error.message.includes("Minified React error #") && <p>React 错误说明：<a href={this.state.error.message.match(/https:\/\/react\.dev\/errors\/\d+/)?.[0] ?? "https://react.dev/errors"} target="_blank" rel="noreferrer">React 官方错误说明</a></p>}
+      <h2>原始错误与调用栈</h2>
       <pre data-debug-error="beam-white-screen">{`${this.state.error.name}: ${this.state.error.message}\n\n${this.state.error.stack || "未提供调用栈"}`}</pre>
+      <h2>React 组件栈</h2>
+      <pre>{this.state.componentStack || "正在读取组件栈…"}</pre>
+      <p>当前项目：{workspace.project?.projectId ?? "无"}；源文件 SHA：{workspace.project?.revisionSha256 ?? "无"}；未保存：{workspace.projectDirty || workspace.dirty ? "是" : "否"}</p>
+      <button disabled={!canRecover} onClick={() => void this.downloadRecovery()}>下载恢复 JSON</button>{!canRecover && <span> 尚无可恢复的已导入项目</span>}{" "}
+      <button onClick={() => void this.downloadDiagnostic()}>下载诊断报告</button>{" "}
       <button onClick={() => window.location.reload()}>刷新并重试</button>
+      {this.state.recoveryStatus && <p role="status">{this.state.recoveryStatus}</p>}
     </main>;
   }
 }

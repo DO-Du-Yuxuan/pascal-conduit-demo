@@ -272,15 +272,45 @@ export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: st
   return { ...overlay, segments: overlay.segments.flatMap((segment) => segment.id === segmentId ? routedSegments : [segment]), fittings: [...fittings, ...route.fittings], junctionBoxes, circuits: overlay.circuits.map((circuit) => circuit.id === target.circuitId ? { ...circuit, segmentIds: circuit.segmentIds.flatMap((id) => id === segmentId ? routedSegments.map((item) => item.id) : [id]) } : circuit), surfaceChases: [...splitChases, ...route.surfaceChases], penetrations: [...penetrations, ...route.penetrations] };
 }
 
-/** Removes a network member and every dependency that can no longer exist. */
+/** Removes selected network members in one pass and cleans every dependent reference. */
+export function deleteNetworkObjects(overlay: ConduitOverlayDocument, ids: readonly string[]): ConduitOverlayDocument {
+  const requestedIds = new Set(ids);
+  if (!requestedIds.size) return overlay;
+  const requestedDevices = overlay.devices.filter((item) => requestedIds.has(item.id));
+  const removedCircuitIds = new Set(overlay.circuits.filter((circuit) => requestedDevices.some((device) => device.id === circuit.sourceDeviceId)).map((circuit) => circuit.id));
+  const removedSegmentIds = new Set([
+    ...overlay.segments.filter((segment) => requestedIds.has(segment.id) || Boolean(segment.circuitId && removedCircuitIds.has(segment.circuitId))).map((segment) => segment.id),
+    ...overlay.fittings.filter((fitting) => requestedIds.has(fitting.id)).flatMap((fitting) => fitting.segmentIds),
+    ...overlay.junctionBoxes.filter((box) => requestedIds.has(box.id)).flatMap((box) => box.segmentIds),
+    ...requestedDevices.flatMap((device) => device.ports.flatMap((port) => port.connectedSegmentIds)),
+  ]);
+  const segments = overlay.segments.filter((segment) => !removedSegmentIds.has(segment.id));
+  const remainingSegmentIds = new Set(segments.map((segment) => segment.id));
+  const removedIds = new Set(overlay.segments.filter((segment) => removedSegmentIds.has(segment.id)).map((segment) => segment.id));
+  const fittings = overlay.fittings.filter((fitting) => !requestedIds.has(fitting.id) && fitting.segmentIds.every((segmentId) => remainingSegmentIds.has(segmentId)));
+  const junctionBoxes = overlay.junctionBoxes.filter((box) => !requestedIds.has(box.id) && box.segmentIds.every((segmentId) => remainingSegmentIds.has(segmentId)));
+  const removedElementIds = new Set([...removedIds, ...overlay.fittings.filter((fitting) => !fittings.some((item) => item.id === fitting.id)).map((fitting) => fitting.id), ...overlay.junctionBoxes.filter((box) => !junctionBoxes.some((item) => item.id === box.id)).map((box) => box.id)]);
+  const remainingElementIds = new Set([...remainingSegmentIds, ...fittings.map((fitting) => fitting.id), ...junctionBoxes.map((box) => box.id)]);
+  const devices = overlay.devices.filter((item) => !requestedIds.has(item.id)).map((item) => ({ ...item, ports: item.ports.map((port) => ({ ...port, connectedSegmentIds: port.connectedSegmentIds.filter((segmentId) => remainingSegmentIds.has(segmentId)) })) }));
+  const indoorUnits = overlay.hvac.indoorUnits.map((unit) => unit.powerPort ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter((segmentId) => remainingSegmentIds.has(segmentId)) } } : unit);
+  return {
+    ...overlay,
+    segments,
+    fittings,
+    junctionBoxes,
+    devices,
+    hvac: { ...overlay.hvac, indoorUnits },
+    circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingSegmentIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" as const : circuit.status })).filter((circuit) => circuit.segmentIds.length > 0),
+    lightingControlGroups: requestedDevices.reduce((current, device) => cleanLightingControlGroupsAfterDeviceDeletion({ ...overlay, lightingControlGroups: current }, device.id), overlay.lightingControlGroups),
+    manualCallouts: overlay.manualCallouts.filter((callout) => !requestedIds.has(callout.targetId) && !removedElementIds.has(callout.targetId)),
+    surfaceChases: overlay.surfaceChases.filter((chase) => !requestedIds.has(chase.id) && remainingElementIds.has(chase.routeElementId)),
+    penetrations: overlay.penetrations.filter((penetration) => !requestedIds.has(penetration.id) && !removedIds.has(penetration.segmentId)),
+  };
+}
+
+/** Removes one network member and every dependency that can no longer exist. */
 export function deleteNetworkObject(overlay: ConduitOverlayDocument, id: string): ConduitOverlayDocument {
-  const device = overlay.devices.find((item) => item.id === id), removedCircuitIds = new Set(overlay.circuits.filter((circuit) => circuit.sourceDeviceId === id).map((circuit) => circuit.id));
-  const connectedSegmentIds = new Set([...(overlay.fittings.find((fitting) => fitting.id === id)?.segmentIds ?? []), ...(overlay.junctionBoxes.find((box) => box.id === id)?.segmentIds ?? []), ...(device?.ports.flatMap((port) => port.connectedSegmentIds) ?? []), ...overlay.segments.filter((segment) => segment.circuitId && removedCircuitIds.has(segment.circuitId)).map((segment) => segment.id)]);
-  const segments = overlay.segments.filter((segment) => segment.id !== id && !connectedSegmentIds.has(segment.id)), remainingIds = new Set(segments.map((segment) => segment.id)), removedIds = new Set(overlay.segments.filter((segment) => !remainingIds.has(segment.id)).map((segment) => segment.id));
-  const remainingFittings = overlay.fittings.filter((fitting) => fitting.id !== id && fitting.segmentIds.every((segmentId) => remainingIds.has(segmentId))), remainingElementIds = new Set([...remainingIds, ...remainingFittings.map((fitting) => fitting.id)]);
-  const devices = overlay.devices.filter((item) => item.id !== id).map((item) => ({ ...item, ports: item.ports.map((port) => ({ ...port, connectedSegmentIds: port.connectedSegmentIds.filter((segmentId) => remainingIds.has(segmentId)) })) }));
-  const indoorUnits = overlay.hvac.indoorUnits.map((unit) => unit.powerPort ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter((segmentId) => remainingIds.has(segmentId)) } } : unit);
-  return { ...overlay, segments, fittings: remainingFittings, junctionBoxes: overlay.junctionBoxes.filter((box) => box.id !== id && box.segmentIds.every((segmentId) => remainingIds.has(segmentId))), devices, hvac: { ...overlay.hvac, indoorUnits }, circuits: overlay.circuits.filter((circuit) => !removedCircuitIds.has(circuit.id)).map((circuit) => ({ ...circuit, segmentIds: circuit.segmentIds.filter((segmentId) => remainingIds.has(segmentId)), status: circuit.segmentIds.some((segmentId) => removedIds.has(segmentId)) ? "broken" : circuit.status })), lightingControlGroups: cleanLightingControlGroupsAfterDeviceDeletion(overlay, id), manualCallouts: overlay.manualCallouts.filter((callout) => callout.targetId !== id && !removedIds.has(callout.targetId)), surfaceChases: overlay.surfaceChases.filter((chase) => chase.id !== id && remainingElementIds.has(chase.routeElementId)), penetrations: overlay.penetrations.filter((penetration) => penetration.id !== id && !removedIds.has(penetration.segmentId)) };
+  return deleteNetworkObjects(overlay, [id]);
 }
 
 /** Kept as a test seam for callers from the former sequential-ID implementation. */

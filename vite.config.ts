@@ -7,6 +7,7 @@ const buildTime = new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/
 
 export default defineConfig({
   base: process.env.GITHUB_ACTIONS ? "/pascal-conduit-demo/" : "/",
+  build: { sourcemap: true },
   plugins: [react()],
   define: {
     "process.env.NEXT_PUBLIC_ASSETS_CDN_URL": JSON.stringify("https://editor.pascal.app"),

@@ -482,7 +482,7 @@ describe("conduit workspace UI contract", () => {
     expect(keydown).toContain("event.stopPropagation();");
     expect(threeDSource).toContain('window.addEventListener("keydown", onKeyDown, true)');
     expect(threeDSource).toContain('window.removeEventListener("keydown", onKeyDown, true)');
-    expect(threeDSource).toContain("selectedDeviceIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart");
+    expect(threeDSource).toContain("selectedDeviceIds, selectedSegmentIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart");
   });
 
   it("uses the selected physical port coordinate for its orthogonal arrival direction", () => {

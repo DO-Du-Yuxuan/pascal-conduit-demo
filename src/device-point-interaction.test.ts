@@ -155,7 +155,19 @@ describe("device point interaction wiring", () => {
   });
 
   it("refreshes the keyboard Delete handler when the selection changes", () => {
-    expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown, true\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*\]\);/);
+    expect(workspace).toMatch(/useEffect\(\(\) => \{[\s\S]*window\.addEventListener\("keydown", onKeyDown, true\);[\s\S]*\}, \[[^\]]*selectedId[^\]]*selectedDeviceIds[^\]]*selectedSegmentIds[^\]]*\]\);/);
+  });
+
+  it("uses the third click for circuit selection and keeps route selection on double click", () => {
+    expect(scene).toContain('tool === "select" && event.nativeEvent.detail === 3) onSelectCircuit()');
+    expect(scene).toContain('onDoubleClick={(event) => { event.stopPropagation(); if (tool === "select") onSelectRoute(); }}');
+    expect(workspace).toContain("const selectCircuit = (id: string) => {");
+    expect(workspace).toContain("circuitRouteElementIds(overlay, id)");
+  });
+
+  it("deletes every highlighted route element as one network operation", () => {
+    expect(workspace).toContain("selectedSegmentIds.length ? selectedSegmentIds");
+    expect(workspace).toContain("deleteNetworkObjects(next, ids.filter(id => !hvacIds.includes(id)))");
   });
 
   it("does not expose logical switch-to-lighting-junction-box controls", () => {
