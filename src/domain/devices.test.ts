@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { commitDeviceRoute, commitEndpointRoute, createNetworkDevice, deviceDiagnostics, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice } from "./devices";
+import { commitDeviceRoute, commitEndpointRoute, commitFireSignalRoute, commitFreeRouteToDevice, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, createNetworkDevice, createSmokeDetector, deviceDiagnostics, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeNetworkDevice, portCanStart, resetDeviceIdsForTests, resizeSmokeDetectorDepth, resizeSmokeDetectorDiameter, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, SPRINKLER_BRANCH_MIN_LENGTH_METERS, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS } from "./devices";
 import { createEmptyOverlay, DEVICE_TYPES, parseOverlay, type HostKind, type RoutePoint, type RoutingSystem } from "./overlay";
-import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, junctionBoxPortCanStart, junctionBoxStartPorts, planRoute, startRouteFromJunctionBox } from "./routing";
+import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, junctionBoxStartPorts, planRoute, startRouteFromJunctionBox } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
+import { circuitRouteElementIds } from "./route-selection";
 
 const point = (x: number, y: number, z: number, hostKind: HostKind = "wall"): RoutePoint => ({ position: [x, y, z], attachment: { hostId: `${hostKind}-a`, hostKind, surface: hostKind === "wall" ? "interior" : "top", normal: hostKind === "wall" ? [0, 0, 1] : [0, 1, 0], levelId: "L0" } });
+const subtractVector = (a: [number, number, number], b: [number, number, number]): [number, number, number] => a.map((value, axis) => value - b[axis]!) as [number, number, number];
+const addVector = (a: [number, number, number], b: [number, number, number]): [number, number, number] => a.map((value, axis) => value + b[axis]!) as [number, number, number];
+const scaleVector = (value: [number, number, number], amount: number): [number, number, number] => value.map((item) => item * amount) as [number, number, number];
+const normalizeVector = (value: [number, number, number]): [number, number, number] => scaleVector(value, 1 / Math.hypot(...value));
 function rooted(system: RoutingSystem) {
   if (system === "sprinkler") return commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("sprinkler", 50, "suspended", [point(0, 1, 0, "slab"), point(2, 1, 0, "slab")]));
   const sourceType = system === "network" ? "weak-panel" : "strong-panel";
@@ -16,6 +21,111 @@ function rooted(system: RoutingSystem) {
 }
 
 describe("network devices and rooted circuits", () => {
+  it("continues a connected sprinkler head through the same port at most once and releases the reference on deletion", () => {
+    const head = createNetworkDevice("sprinkler-head", point(2, 2.7, 1, "ceiling")), port = head.ports[0]!;
+    const incomingPlan = planRoute("sprinkler", 50, "suspended", [{ position: [0, 2.7, 1] }, port.position]);
+    const incoming = commitFreeRouteToDevice({ ...createEmptyOverlay("sprinkler.json", "sha"), devices: [head] }, incomingPlan, head.id, port.id);
+    const start = { deviceId: head.id, portId: port.id, connectedSegmentId: incomingPlan.segments[0]!.id };
+    const connectedHead = incoming.devices[0]!;
+    expect(deviceStartPorts(incoming, connectedHead, "sprinkler").map((item) => item.id)).toEqual([port.id]);
+    const outgoingPlan = planRoute("sprinkler", 50, "suspended", [port.position, { position: [2, 2.7, 3] }]);
+    const endpointChecked = withCollisionDiagnostics(incoming, outgoingPlan, undefined, new Set([head.id]), { segmentId: incomingPlan.segments[0]!.id, point: port.position.position });
+    expect(endpointChecked.canCommit).toBe(true);
+    const crossing = { ...incomingPlan.segments[0]!, id: "unrelated-crossing", start: { position: [1, 2.7, 2] as [number, number, number] }, end: { position: [3, 2.7, 2] as [number, number, number] }, startPortId: undefined, endPortId: undefined };
+    const blocked = withCollisionDiagnostics({ ...incoming, segments: [...incoming.segments, crossing] }, outgoingPlan, undefined, new Set([head.id]), { segmentId: incomingPlan.segments[0]!.id, point: port.position.position });
+    expect(blocked.canCommit).toBe(false);
+    const connected = commitSprinklerDeviceRoute(incoming, outgoingPlan, start);
+    const connectedPort = connected.devices[0]!.ports[0]!;
+    expect(connectedPort.connectedSegmentIds).toEqual([incomingPlan.segments[0]!.id, outgoingPlan.segments[0]!.id]);
+    expect(connected.segments.find((segment) => segment.id === outgoingPlan.segments[0]!.id)?.startPortId).toBe(port.id);
+    expect(deviceStartPorts(connected, connected.devices[0]!, "sprinkler")).toEqual([]);
+    expect(deviceDiagnostics(connected)).toEqual([]);
+    expect(circuitRouteElementIds(connected, incomingPlan.segments[0]!.id)).toEqual(expect.arrayContaining([incomingPlan.segments[0]!.id, outgoingPlan.segments[0]!.id]));
+    expect(parseOverlay(connected).devices[0]!.ports[0]!.connectedSegmentIds).toEqual(connectedPort.connectedSegmentIds);
+    expect(deviceStartPorts({ ...createEmptyOverlay("sprinkler.json", "sha"), devices: [head] }, head, "sprinkler")).toEqual([]);
+
+    const removedOutgoing = deleteNetworkObject(connected, outgoingPlan.segments[0]!.id);
+    expect(removedOutgoing.devices[0]!.ports[0]!.connectedSegmentIds).toEqual([incomingPlan.segments[0]!.id]);
+    expect(deviceStartPorts(removedOutgoing, removedOutgoing.devices[0]!, "sprinkler")).toHaveLength(1);
+    const removedIncoming = deleteNetworkObject(removedOutgoing, incomingPlan.segments[0]!.id);
+    expect(removedIncoming.devices[0]!.ports[0]!.connectedSegmentIds).toEqual([]);
+    expect(deviceStartPorts(removedIncoming, removedIncoming.devices[0]!, "sprinkler")).toEqual([]);
+  });
+
+  it("branches from a connected sprinkler head directly to the next head while preserving the source port link", () => {
+    const source = createNetworkDevice("sprinkler-head", point(0, 2.7, 0, "ceiling"));
+    const target = createNetworkDevice("sprinkler-head", point(1, 2.7, 1, "ceiling"));
+    const sourcePort = source.ports[0]!, targetPort = target.ports[0]!;
+    const incomingPlan = planRoute("sprinkler", 50, "suspended", [{ position: [-2, 2.7, 0] }, sourcePort.position]);
+    const incoming = commitFreeRouteToDevice({ ...createEmptyOverlay("sprinkler-branch.json", "sha"), devices: [source, target] }, incomingPlan, source.id, sourcePort.id);
+    const mainPlan = planRoute("sprinkler", 50, "suspended", [sourcePort.position, { position: [1, 2.7, 0] }]);
+    const branchPlan = planRoute("sprinkler", 50, "suspended", [{ position: [1, 2.7, SPRINKLER_TEE_SOCKET_METERS] }, targetPort.position]);
+    const stubStart = { position: [1 + SPRINKLER_TEE_SOCKET_METERS, 2.7, 0] as [number, number, number] };
+    const stubEnd = { position: [stubStart.position[0] + SPRINKLER_CONTINUATION_STUB_METERS, 2.7, 0] as [number, number, number] };
+    const continuationPlan = planRoute("sprinkler", 50, "suspended", [stubStart, stubEnd]);
+    const connected = commitFreeSprinklerRouteToDeviceBranch(incoming, mainPlan, branchPlan, continuationPlan, target.id, targetPort.id, undefined, { deviceId: source.id, portId: sourcePort.id, connectedSegmentId: incomingPlan.segments[0]!.id });
+    expect(connected.segments.find((segment) => segment.id === mainPlan.segments[0]!.id)?.startPortId).toBe(sourcePort.id);
+    expect(connected.devices.find((device) => device.id === source.id)?.ports[0]?.connectedSegmentIds).toEqual([incomingPlan.segments[0]!.id, mainPlan.segments[0]!.id]);
+    expect(connected.devices.find((device) => device.id === target.id)?.ports[0]?.connectedSegmentIds).toEqual([branchPlan.segments[0]!.id]);
+    expect(deviceDiagnostics(connected)).toEqual([]);
+  });
+
+  it("creates smoke detectors with four fire-signal ports and locks their diameter after a connection", () => {
+    const position = point(0, 2.7, 0, "ceiling"), detector = createSmokeDetector(position);
+    expect(detector).toMatchObject({ deviceType: "smoke-detector", sizeMm: [60, 60, 30], systems: ["fire-signal"] });
+    expect(detector.ports).toHaveLength(4);
+    expect(detector.ports.every((port) => port.system === "fire-signal" && port.role === "bidirectional")).toBe(true);
+    const overlay = { ...createEmptyOverlay("a.json", "sha"), devices: [detector] };
+    const resized = resizeSmokeDetectorDiameter(overlay, detector.id, 80), resizedDevice = resized.devices[0]!;
+    expect(resizedDevice.id).toBe(detector.id);
+    expect(resizedDevice.ports.map((port) => port.id)).toEqual(detector.ports.map((port) => port.id));
+    expect(resizedDevice.ports[0].position.position).toEqual([.04, 2.7, 0]);
+    expect(deviceStartPorts(overlay, detector, "fire-signal")).toHaveLength(4);
+    expect(deviceStartPorts(overlay, detector, "network")).toHaveLength(0);
+  });
+
+  it("commits signal routes to a detector, an open free endpoint, or a sealed wall without a Circuit", () => {
+    const start = createSmokeDetector(point(0, 2.7, 0, "ceiling")), end = createSmokeDetector(point(2, 2.7, 0, "ceiling"));
+    const base = { ...createEmptyOverlay("a.json", "sha"), devices: [start, end] };
+    const endPort = end.ports[1]!;
+    const betweenPlan = planRoute("fire-signal", 20, "surface", [start.ports[0]!.position, endPort.position]);
+    const between = commitFireSignalRoute(base, betweenPlan, start.id, start.ports[0]!.id, end.id, endPort.id);
+    expect(between.circuits).toHaveLength(0);
+    expect(between.devices.find((device) => device.id === start.id)?.ports[0]?.connectedSegmentIds).toHaveLength(1);
+    expect(between.devices.find((device) => device.id === end.id)?.ports[1]?.connectedSegmentIds).toHaveLength(1);
+    expect(openRouteEndpoints(between)).toHaveLength(0);
+
+    const freeEnd = point(3, 2.7, 0, "ceiling"), freePlan = planRoute("fire-signal", 20, "surface", [end.ports[2]!.position, freeEnd]);
+    const openRoute = commitFireSignalRoute(between, freePlan, end.id, end.ports[2]!.id);
+    const openSegment = openRoute.segments[openRoute.segments.length - 1]!;
+    expect(openSegment).toMatchObject({ system: "fire-signal", end: freeEnd });
+    expect(openSegment.endTermination).toBeUndefined();
+    expect(openSegment.endPortId).toBeUndefined();
+    expect(openRouteEndpoints(openRoute).some((endpoint) => endpoint.segmentId === openSegment.id)).toBe(true);
+    const freeEndpoint = openRouteEndpoints(openRoute).find((endpoint) => endpoint.segmentId === openSegment.id)!;
+    const wallContinuation = planRoute("fire-signal", 20, "surface", [freeEndpoint.point, point(4, 2.7, 0, "wall")]);
+    const continuedToWall = commitEndpointRoute(openRoute, freeEndpoint, wallContinuation, undefined, undefined, true);
+    expect(continuedToWall.segments.some((segment) => segment.endTermination === "wall")).toBe(true);
+    expect(openRouteEndpoints(continuedToWall).some((endpoint) => endpoint.segmentId === openSegment.id)).toBe(false);
+
+    const third = createSmokeDetector(point(5, 2.7, 0, "ceiling")), withThird = { ...openRoute, devices: [...openRoute.devices, third] };
+    const detectorContinuation = planRoute("fire-signal", 20, "surface", [freeEndpoint.point, third.ports[0]!.position]);
+    const continuedToDetector = commitEndpointRoute(withThird, freeEndpoint, detectorContinuation, third.id, third.ports[0]!.id);
+    expect(continuedToDetector.devices.find((device) => device.id === third.id)?.ports[0]?.connectedSegmentIds).toHaveLength(1);
+
+    const wallEnd = point(3, 2.7, 0, "wall"), wallPlan = planRoute("fire-signal", 20, "surface", [end.ports[2]!.position, wallEnd]);
+    expect(wallPlan.canCommit).toBe(true);
+    const terminated = commitFireSignalRoute(between, wallPlan, end.id, end.ports[2]!.id, undefined, undefined, true);
+    const terminalSegment = terminated.segments.find((segment) => segment.endTermination === "wall");
+    expect(terminalSegment).toMatchObject({ system: "fire-signal", end: wallEnd, endTermination: "wall" });
+    expect(terminalSegment?.endPortId).toBeUndefined();
+    expect(openRouteEndpoints(terminated).some((endpoint) => endpoint.segmentId === terminalSegment?.id)).toBe(false);
+    expect(resizeSmokeDetectorDiameter(terminated, end.id, 80)).toBe(terminated);
+    const depthEdited = resizeSmokeDetectorDepth(terminated, end.id, 45), depthDevice = depthEdited.devices.find((device) => device.id === end.id)!;
+    expect(depthDevice.sizeMm).toEqual([60, 60, 45]);
+    expect(depthDevice.ports.map((port) => port.position.position)).toEqual(terminated.devices.find((device) => device.id === end.id)?.ports.map((port) => port.position.position));
+  });
+
   it("creates a unique device and its physical ports after importing legacy sequential device IDs", () => {
     resetDeviceIdsForTests();
     const importedSocket = createNetworkDevice("socket", point(0, 1, 0));
@@ -89,6 +199,75 @@ describe("network devices and rooted circuits", () => {
     expect(overlay.segments[0]?.circuitId).toBeUndefined();
     expect(overlay.circuits).toEqual([]);
     expect(deviceDiagnostics(overlay)).toEqual([]);
+  });
+
+  it("branches a free sprinkler main through a tee and open stub, then continues to another head", () => {
+    const base = createEmptyOverlay("a.json", "sha");
+    const firstHead = createNetworkDevice("sprinkler-head", point(2, 1, 1, "ceiling"));
+    const firstPort = firstHead.ports[0]!;
+    const mainPlan = planRoute("sprinkler", 50, "suspended", [point(0, 1, 0, "slab"), point(2, 1, 0, "slab")]);
+    const tee = mainPlan.points[mainPlan.points.length - 1]!;
+    const firstBranchDirection = normalizeVector(subtractVector(firstPort.position.position, tee.position));
+    const firstBranchPort = { position: addVector(tee.position, scaleVector(firstBranchDirection, .05)) };
+    const firstBranchPlan = planRoute("sprinkler", 50, "suspended", [firstBranchPort, firstPort.position]);
+    const stubStart = { position: addVector(tee.position, [SPRINKLER_TEE_SOCKET_METERS, 0, 0]) as [number, number, number] };
+    const stubEnd = { position: addVector(stubStart.position, [SPRINKLER_CONTINUATION_STUB_METERS, 0, 0]) as [number, number, number] };
+    const firstStubPlan = planRoute("sprinkler", 50, "suspended", [stubStart, stubEnd]);
+    const firstBase = { ...base, devices: [firstHead] };
+    const firstCommit = commitFreeSprinklerRouteToDeviceBranch(firstBase, mainPlan, firstBranchPlan, firstStubPlan, firstHead.id, firstPort.id);
+
+    expect(firstCommit).not.toBe(firstBase);
+    expect(firstCommit.fittings).toHaveLength(1);
+    const firstFitting = firstCommit.fittings[0]!;
+    expect(firstFitting).toMatchObject({ fitting: "tee", system: "sprinkler" });
+    expect(firstFitting.segmentIds).toHaveLength(3);
+    expect(firstFitting.ports.every((port) => port.connectedSegmentIds.length === 1)).toBe(true);
+    expect(firstCommit.devices.find((device) => device.id === firstHead.id)?.ports[0]?.connectedSegmentIds).toEqual([firstBranchPlan.segments[firstBranchPlan.segments.length - 1]!.id]);
+    expect(firstCommit.circuits).toEqual([]);
+    const firstOpen = openRouteEndpoints(firstCommit).find((endpoint) => endpoint.segmentId === firstStubPlan.segments[0]!.id && endpoint.end === "end")!;
+    expect(firstOpen.point.position[0]).toBeCloseTo(2.2);
+    expect(firstOpen.point.position.slice(1)).toEqual([1, 0]);
+
+    const secondHead = createNetworkDevice("sprinkler-head", point(4, 1, 1, "ceiling"));
+    const secondMainPlan = planRoute("sprinkler", 50, "suspended", [firstOpen.point, point(4, 1, 0, "slab")]);
+    const secondTee = secondMainPlan.points[secondMainPlan.points.length - 1]!;
+    const secondPort = secondHead.ports[0]!;
+    const secondBranchDirection = normalizeVector(subtractVector(secondPort.position.position, secondTee.position));
+    const secondBranchPlan = planRoute("sprinkler", 50, "suspended", [{ position: addVector(secondTee.position, scaleVector(secondBranchDirection, .05)) }, secondPort.position]);
+    const secondStubStart = { position: addVector(secondTee.position, [SPRINKLER_TEE_SOCKET_METERS, 0, 0]) as [number, number, number] };
+    const secondStubEnd = { position: addVector(secondStubStart.position, [SPRINKLER_CONTINUATION_STUB_METERS, 0, 0]) as [number, number, number] };
+    const secondStubPlan = planRoute("sprinkler", 50, "suspended", [secondStubStart, secondStubEnd]);
+    const connectedMain = commitFreeSprinklerRouteToDeviceBranch({ ...firstCommit, devices: [...firstCommit.devices, secondHead] }, secondMainPlan, secondBranchPlan, secondStubPlan, secondHead.id, secondPort.id, firstOpen);
+
+    expect(connectedMain.fittings.filter((fitting) => fitting.fitting === "tee")).toHaveLength(2);
+    expect(connectedMain.devices.find((device) => device.id === secondHead.id)?.ports[0]?.connectedSegmentIds).toEqual([secondBranchPlan.segments[secondBranchPlan.segments.length - 1]!.id]);
+    expect(openRouteEndpoints(connectedMain)).toHaveLength(2);
+    expect(parseOverlay(connectedMain).fittings.map((fitting) => fitting.segmentIds)).toEqual(connectedMain.fittings.map((fitting) => fitting.segmentIds));
+
+    const removed = deleteNetworkObjects(connectedMain, [...connectedMain.fittings.map((fitting) => fitting.id), ...connectedMain.segments.map((segment) => segment.id)]);
+    expect(removed.segments).toHaveLength(0);
+    expect(removed.fittings).toHaveLength(0);
+    expect(removed.devices.every((device) => device.ports.every((port) => port.connectedSegmentIds.length === 0))).toBe(true);
+    expect(openRouteEndpoints(removed)).toHaveLength(0);
+  });
+
+  it("rejects a sprinkler branch that is too short or overlaps the main direction", () => {
+    const base = createEmptyOverlay("a.json", "sha"), head = createNetworkDevice("sprinkler-head", point(2, 1, .1, "ceiling"));
+    const main = planRoute("sprinkler", 50, "suspended", [point(0, 1, 0, "slab"), point(2, 1, 0, "slab")]);
+    const target = head.ports[0]!;
+    const tee = main.points[main.points.length - 1]!;
+    const shortBranchDirection = normalizeVector(subtractVector(target.position.position, tee.position));
+    const shortPlan = planRoute("sprinkler", 50, "suspended", [{ position: addVector(tee.position, scaleVector(shortBranchDirection, SPRINKLER_TEE_SOCKET_METERS)) }, target.position]);
+    const mainDirection: [number, number, number] = [1, 0, 0];
+    const shortStubPlan = planRoute("sprinkler", 50, "suspended", [{ position: addVector(tee.position, scaleVector(mainDirection, SPRINKLER_TEE_SOCKET_METERS)) }, { position: addVector(tee.position, scaleVector(mainDirection, SPRINKLER_TEE_SOCKET_METERS + SPRINKLER_CONTINUATION_STUB_METERS)) }]);
+    const shortBase = { ...base, devices: [head] };
+    expect(commitFreeSprinklerRouteToDeviceBranch(shortBase, main, shortPlan, shortStubPlan, head.id, target.id)).toBe(shortBase);
+
+    const inlineHead = createNetworkDevice("sprinkler-head", point(3, 1, 0, "ceiling")), inlinePort = inlineHead.ports[0]!;
+    const inlineDirection = normalizeVector(subtractVector(inlinePort.position.position, tee.position));
+    const inlinePlan = planRoute("sprinkler", 50, "suspended", [{ position: addVector(tee.position, scaleVector(inlineDirection, SPRINKLER_TEE_SOCKET_METERS)) }, inlinePort.position]);
+    const inlineBase = { ...base, devices: [inlineHead] };
+    expect(commitFreeSprinklerRouteToDeviceBranch(inlineBase, main, inlinePlan, shortStubPlan, inlineHead.id, inlinePort.id)).toBe(inlineBase);
   });
 
   it("enforces device hosts and source system capabilities", () => {
@@ -369,6 +548,19 @@ describe("network devices and rooted circuits", () => {
     expect(inserted.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "tee", system: "sprinkler" })]));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.ports[0].connectedSegmentIds).toHaveLength(1);
+  });
+
+  it("connects a free-start fire-water route to a sprinkler head without creating a circuit", () => {
+    const base = createEmptyOverlay("a.json", "sha"), head = createNetworkDevice("sprinkler-head", point(2, 2, 0, "ceiling"));
+    const overlay = { ...base, devices: [head] }, port = head.ports[0]!;
+    const plan = planRoute("sprinkler", 50, "suspended", [{ position: [0, 2, 0] }, port.position]);
+
+    const connected = commitFreeRouteToDevice(overlay, plan, head.id, port.id);
+    const end = connected.segments[connected.segments.length - 1]!;
+
+    expect(end.endPortId).toBe(port.id);
+    expect(connected.devices[0]!.ports[0]!.connectedSegmentIds).toEqual([end.id]);
+    expect(connected.circuits).toEqual([]);
   });
 
   it("inserts a sprinkler head on a floating segment after a standard elbow", () => {

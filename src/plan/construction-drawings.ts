@@ -5,13 +5,18 @@ import { deviceInstallationHeightMeters, devicePlanLabel, isFloorSocket, type Pl
 
 export type ConstructionDrawingSystem = RoutingSystem | 'sensor';
 export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean> & { sensor?: boolean };
+export type FireDrawingVisibility = Pick<ConstructionDrawingVisibility, 'sprinkler' | 'fire-signal'>;
+export const fireDrawingIsVisible = (visibility: FireDrawingVisibility): boolean => visibility.sprinkler && visibility['fire-signal'];
+export function setFireDrawingVisibility<T extends FireDrawingVisibility>(visibility: T, visible: boolean): T {
+  return { ...visibility, sprinkler: visible, 'fire-signal': visible };
+}
 export const CONSTRUCTION_DRAWING_LABELS: Record<ConstructionDrawingSystem, string> = {
   receptacle: '插座施工图', lighting: '灯位接线盒施工图', network: '弱电施工图', sprinkler: '消防施工图',
-  sensor: '传感器施工图',
+  'fire-signal': '消防信号施工图', sensor: '传感器施工图',
 };
-export const CONSTRUCTION_DRAWING_SYSTEMS: ConstructionDrawingSystem[] = ['receptacle', 'lighting', 'network', 'sprinkler', 'sensor'];
+export const CONSTRUCTION_DRAWING_SYSTEMS: ConstructionDrawingSystem[] = ['receptacle', 'lighting', 'network', 'sprinkler', 'fire-signal', 'sensor'];
 export const allConstructionDrawingsSelected = (visibility: ConstructionDrawingVisibility) => CONSTRUCTION_DRAWING_SYSTEMS.every(system => system === 'sensor' ? visibility.sensor !== false : visibility[system]);
-export const setAllConstructionDrawings = (checked: boolean): ConstructionDrawingVisibility => ({ receptacle: checked, lighting: checked, network: checked, sprinkler: checked, sensor: checked });
+export const setAllConstructionDrawings = (checked: boolean): ConstructionDrawingVisibility => ({ receptacle: checked, lighting: checked, network: checked, sprinkler: checked, 'fire-signal': checked, sensor: checked });
 
 export type InstallationScheduleRow = { variant?: string; deviceType: NetworkDevice['deviceType']; floorSocket?: boolean; name: string; mounting: string; height: string; heightMeters: number; quantity: number; sourceIds: string[]; measurementBasis: 'explicit' | 'derived'; assumptions: string[]; confidence: 'high' | 'limited' };
 export type InstallationScheduleSection = { system: ConstructionDrawingSystem; label: string; rows: InstallationScheduleRow[] };
@@ -24,7 +29,10 @@ export function buildInstallationSchedule(nodes: Record<string, NodeData>, overl
   const rows = new Map<ConstructionDrawingSystem, Map<string, InstallationScheduleRow>>();
   for (const device of overlay.devices) {
     if (!context.deviceVisible(device) || context.deviceLevel(device) !== levelId || usesExteriorHeightCallout(device)) continue;
-    const system: ConstructionDrawingSystem | undefined = device.deviceType === 'sensor' ? context.sensorVisible ? 'sensor' : undefined : device.systems.find(candidate => context.systemVisibility[candidate]);
+    const deviceSystem = device.systems.find(candidate => context.systemVisibility[candidate]);
+    // Fire water and fire-signal devices share one 2D fire construction drawing.
+    // Their independent Project/Overlay systems remain unchanged.
+    const system: ConstructionDrawingSystem | undefined = device.deviceType === 'sensor' ? context.sensorVisible ? 'sensor' : undefined : deviceSystem === 'fire-signal' ? 'sprinkler' : deviceSystem;
     if (!system) continue;
     const mounting = device.mount?.kind === 'reference-plane' ? '安装参考面' : device.position.attachment?.hostKind === 'ceiling' ? '天花' : device.position.attachment?.hostKind === 'slab' ? '楼板' : '悬空';
     const heightMeters = deviceInstallationHeightMeters(device, nodes, levelId);

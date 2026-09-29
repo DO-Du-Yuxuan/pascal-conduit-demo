@@ -25,6 +25,7 @@ const ROUTING_SYSTEM_LAYER: Record<RoutingSystem, ProjectSystemLayer> = {
   network: "ElectricalSystem",
   lighting: "LightingSystem",
   sprinkler: "FireProtectionSystem",
+  "fire-signal": "FireProtectionSystem",
 };
 
 const DEVICE_SYSTEM_LAYER: Record<NetworkDeviceType, ProjectSystemLayer> = {
@@ -35,6 +36,7 @@ const DEVICE_SYSTEM_LAYER: Record<NetworkDeviceType, ProjectSystemLayer> = {
   switch: "LightingSystem",
   luminaire: "LightingSystem",
   "sprinkler-head": "FireProtectionSystem",
+  "smoke-detector": "FireProtectionSystem",
   sensor: "HVACSystem",
   "rfid-reader": "SmartSystem",
 };

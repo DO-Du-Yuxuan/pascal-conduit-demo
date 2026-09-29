@@ -15,6 +15,7 @@ export function DeviceSymbol({ type, sprinklerDirection = 'upright', floorSocket
     case 'luminaire': return <><circle r="7"/><circle r="2" fill="currentColor"/><path d="M0-10V-7M0 7V10M-10 0H-7M7 0H10"/></>;
     case 'network-outlet': return <><rect x="-7" y="-6" width="14" height="12"/><path d="M-4-2H4V2H2V4H-2V2H-4Z"/></>;
     case 'sprinkler-head': return <><circle r="6"/><path d="M-9 0H9"/><path d={sprinklerDirection === 'pendent' ? 'M0-10V10M-3 7L0 10L3 7' : 'M0 10V-10M-3-7L0-10L3-7'}/></>;
+    case 'smoke-detector': return <><circle r="7"/><path d="M-4 3H4M-3 0Q-1-2-3-4M1 0Q3-2 1-4"/><path d="M-10 0H-7M7 0H10"/></>;
     case 'sensor': return <><circle r="7"/><circle r="2" fill="currentColor"/><path d="M-10 0H-7M7 0H10M0-10V-7M0 7V10"/></>;
     case 'rfid-reader': return <><rect x="-6" y="-9" width="12" height="18" rx="2"/><path d="M-3 -4Q3 0-3 4M1 -6Q7 0 1 6"/></>;
   }

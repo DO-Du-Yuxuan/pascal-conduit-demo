@@ -36,7 +36,7 @@ export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Rec
   if (isFloorSocket(device)) return 0;
   return device.position.position[1] - deviceVerticalHalfExtentMeters(device) - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
 }
-export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348' };
+export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348', 'fire-signal': '#ffffff' };
 export const SENSOR_PLAN_COLOR = '#7c3aed';
 export const point2 = (p: Vec3): Point => [p[0], p[2]];
 const pointDistance = (left: Point, right: Point) => Math.hypot(right[0] - left[0], right[1] - left[1]);
@@ -71,6 +71,35 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
     const resolved = levelForNode(scene, scene.nodes[a.hostId]);
     return resolved && (!a.levelId || a.levelId === resolved) ? resolved : null;
   };
+  const explicitDeviceLevel = (device: NetworkDevice): string | null => {
+    const attachment = device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
+    const hosted = hostLevel(attachment);
+    if (hosted) return hosted;
+    if (device.mount?.kind === 'reference-plane' && scene.nodes[device.mount.levelId]?.type === 'level') return device.mount.levelId;
+    if (device.mount?.kind === 'segment' && device.mount.levelId && scene.nodes[device.mount.levelId]?.type === 'level') return device.mount.levelId;
+    return null;
+  };
+  const physicallyHosted = (position: Vec3, attachment?: HostAttachment): boolean => {
+    if (!attachment || !hostLevel(attachment)) return false;
+    if (attachment.hostKind !== 'wall') return true;
+    const wall = nodes[attachment.hostId];
+    if (wall?.type !== 'wall' || !Array.isArray(wall.start) || !Array.isArray(wall.end)) return false;
+    // Curved walls use a non-linear footprint; retain their explicit host
+    // relationship until a matching curve-distance calculation is available.
+    if (wall.curveOffset !== undefined) return true;
+    const sx = Number(wall.start[0]), sz = Number(wall.start[1]), ex = Number(wall.end[0]), ez = Number(wall.end[1]);
+    const dx = ex - sx, dz = ez - sz, lengthSquared = dx * dx + dz * dz;
+    if (!Number.isFinite(lengthSquared) || lengthSquared < 1e-10) return false;
+    const t = ((position[0] - sx) * dx + (position[2] - sz) * dz) / lengthSquared;
+    const length = Math.sqrt(lengthSquared), alongTolerance = 0.03 / length;
+    if (t < -alongTolerance || t > 1 + alongTolerance) return false;
+    const projectedX = sx + Math.max(0, Math.min(1, t)) * dx, projectedZ = sz + Math.max(0, Math.min(1, t)) * dz;
+    const distance = Math.hypot(position[0] - projectedX, position[2] - projectedZ);
+    const thickness = Math.max(0, Number(wall.thickness) || DEFAULT_WALL_THICKNESS_METERS);
+    // Conduit centres may sit on the face, inside the wall, or slightly beyond
+    // it by their radius. Count the actual wall volume plus a 30 mm allowance.
+    return distance <= thickness / 2 + 0.03;
+  };
   const hostHidden = (a?: HostAttachment) => Boolean(a && (hidden.has(a.hostId) || nodes[a.hostId]?.visible === false));
   const segmentLevels = new Map(overlay.segments.map(s => [s.id, [...new Set([hostLevel(s.start.attachment), hostLevel(s.end.attachment)].filter((x): x is string => !!x))]]));
   // Resolve unhosted components against all boundary hosts at once. A first-hit
@@ -83,6 +112,18 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
       ids.filter(other => other !== id).forEach(other => neighbors.get(id)!.add(other));
       const own = hostLevel(f.position.attachment);
       if (own) { const levels = boundaryLevels.get(id) ?? new Set<string>(); levels.add(own); boundaryLevels.set(id, levels); }
+    }
+  }
+  // A free-space run may terminate directly at a mounted device port without
+  // any hosted fitting at that end. Use only the exact referenced port owner
+  // as a level boundary; circuit membership can span floors and is too broad.
+  const devicePorts = new Map(overlay.devices.flatMap(device => device.ports.map(port => [port.id, device] as const)));
+  for (const segment of overlay.segments) {
+    for (const portId of [segment.startPortId, segment.endPortId]) {
+      const owner = portId ? devicePorts.get(portId) : undefined;
+      if (!owner) continue;
+      const level = explicitDeviceLevel(owner);
+      if (level) { const levels = boundaryLevels.get(segment.id) ?? new Set<string>(); levels.add(level); boundaryLevels.set(segment.id, levels); }
     }
   }
   const visited = new Set<string>();
@@ -126,7 +167,7 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
   };
   const segmentVisible = (s: RouteSegment) => systemVisibility[s.system] && !hidden.has(s.id) && !hostHidden(s.start.attachment) && !hostHidden(s.end.attachment);
   const deviceVisible = (d: NetworkDevice) => (d.deviceType === 'sensor' ? sensorVisible : d.systems.some(s => systemVisibility[s])) && !hidden.has(d.id) && !hostHidden(d.position.attachment) && !(d.mount?.kind === 'host' && hostHidden(d.mount.attachment)) && !(d.mount?.kind === 'segment' && !d.position.attachment && !overlay.segments.some(s => s.id === (d.mount as { segmentId: string }).segmentId && segmentVisible(s)));
-  return { scene, hostLevel, hostHidden, segmentLevels, deviceLevel, linkedLevel, segmentVisible, deviceVisible, devicePlanAnchor: (device: NetworkDevice) => devicePlanAnchor(nodes, device), hidden, systemVisibility, sensorVisible };
+  return { scene, hostLevel, hostHidden, physicallyHosted, segmentLevels, deviceLevel, linkedLevel, segmentVisible, deviceVisible, devicePlanAnchor: (device: NetworkDevice) => devicePlanAnchor(nodes, device), hidden, systemVisibility, sensorVisible };
 }
 export type PlanContext = ReturnType<typeof createPlanContext>;
 export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context = createPlanContext(nodes, overlay), includeHvac = true) {

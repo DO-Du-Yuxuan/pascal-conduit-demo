@@ -73,8 +73,10 @@ export const BUILDER_CARDS: Readonly<Record<BuilderSystemId, ReadonlyArray<Build
   water: [],
   bath: [],
   fire: [
+    { label: "烟感", icon: "◉", section: "place", tool: "point", system: "fire-signal", deviceType: "smoke-detector" },
     { label: "喷淋头", icon: "✳", section: "place", tool: "point", system: "sprinkler", deviceType: "sprinkler-head" },
     { label: "绘制消防管", icon: "⌁", section: "draw", tool: "draw", system: "sprinkler" },
+    { label: "绘制消防信号线", icon: "⌁", section: "draw", tool: "draw", system: "fire-signal" },
     { label: "创建管线分支", icon: "⑂", section: "edit", tool: "branch", system: "sprinkler" },
   ],
   irrigation: [],

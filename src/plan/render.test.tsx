@@ -6,6 +6,7 @@ import type {NodeData} from '../types';
 import {createEmptyOverlay,type ConduitOverlayDocument,type NetworkDevice} from '../domain/overlay';
 import {createHvacDuct,placeIndoorUnit} from '../domain/hvac';
 import {createPlanContext} from './model';
+import {createReferencePlaneDevice} from '../domain/devices';
 import {ConduitPlanOverlay,devicePlanRotation} from './ConduitPlan';
 import {ConstructionAnnotations,ConstructionNotices,missingConstructionDrawingLayout,useConstructionPlan} from './ConstructionAnnotations';
 import {buildHvacPositionDimensions} from './HvacConstruction';
@@ -71,14 +72,55 @@ describe('construction plan rendering integration',()=>{
  it('draws network conduits with a bright teal outline and a white core',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha');overlay.segments=[{id:'network-pipe',type:'conduit-segment',system:'network',diameterMm:20,start:{position:[0,.3,0],attachment:device.position.attachment},end:{position:[2,.3,0],attachment:device.position.attachment},createdAt:''},{id:'lighting-pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,.3,.2],attachment:device.position.attachment},end:{position:[2,.3,.2],attachment:device.position.attachment},createdAt:''}];
-  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:true,sprinkler:false});
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:true,sprinkler:false, 'fire-signal': false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const pipe=div.querySelector('[data-conduit-segment="network-pipe"]')!;
   expect(pipe.querySelector('[data-conduit-stroke="outline"]')?.getAttribute('stroke')).toBe('#00a6a0');
   expect(pipe.querySelector('[data-conduit-stroke="core"]')?.getAttribute('stroke')).toBe('#ffffff');
+  expect(Number(pipe.querySelector('[data-conduit-stroke="core"]')?.getAttribute('stroke-width'))).toBeCloseTo(.01);
+  expect(Number(pipe.querySelector('[data-conduit-stroke="outline"]')?.getAttribute('stroke-width'))).toBeCloseTo(.024);
   const lighting=div.querySelector('[data-conduit-segment="lighting-pipe"]')!;
   expect(lighting.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke')).toBe('#2563c7');
+  expect(Number(lighting.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke-width'))).toBeCloseTo(.036);
   expect(lighting.querySelector('[data-conduit-stroke="core"]')).toBeNull();
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0}/></svg>));
+  expect(Number(div.querySelector('[data-conduit-segment="lighting-pipe"] [data-conduit-stroke="color"]')?.getAttribute('stroke-width'))).toBeCloseTo(.02);
+  expect(Number(div.querySelector('[data-conduit-segment="network-pipe"] [data-conduit-stroke="outline"]')?.getAttribute('stroke-width'))).toBeCloseTo(.02);
+  expect(Number(div.querySelector('[data-conduit-segment="network-pipe"] [data-conduit-stroke="core"]')?.getAttribute('stroke-width'))).toBeCloseTo(.012);
+ });
+ it('draws water and white signal routes plus sprinkler and smoke symbols on the shared fire drawing',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),attachment=device.position.attachment!;
+  overlay.devices=[
+   {...device,id:'smoke',deviceType:'smoke-detector',name:'烟感',position:{position:[0,2.8,0]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2800},sizeMm:[60,60,30],systems:['fire-signal'],ports:[]},
+   {...device,id:'sprinkler',deviceType:'sprinkler-head',name:'喷淋头',position:{position:[2,2.8,0]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2800},systems:['sprinkler'],ports:[]},
+  ];
+  overlay.segments=[
+   {id:'signal-run',type:'conduit-segment',system:'fire-signal',diameterMm:20,start:{position:[0,2.8,0]},end:{position:[1,2.8,0],attachment},createdAt:''},
+   {id:'water-run',type:'conduit-segment',system:'sprinkler',diameterMm:50,start:{position:[2,2.8,0]},end:{position:[3,2.8,0],attachment},createdAt:''},
+  ];
+  const fireVisibility={receptacle:false,lighting:false,network:false,sprinkler:true,'fire-signal':true};
+  const context=createPlanContext(nodes,overlay,new Set(),fireVisibility);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0}/></svg>));
+  const signal=div.querySelector('[data-conduit-segment="signal-run"] [data-conduit-stroke="outline"]');
+  const signalCore=div.querySelector('[data-conduit-segment="signal-run"] [data-conduit-stroke="core"]');
+  expect(signal?.getAttribute('stroke')).toBe('#334155');
+  expect(signalCore?.getAttribute('stroke')).toBe('#ffffff');
+  expect(signal?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(signalCore?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(Number(signal?.getAttribute('stroke-width'))).toBeCloseTo(.024);
+  const smoke=div.querySelector('[data-device-symbol="smoke-detector"]');
+  expect(smoke?.getAttribute('stroke')).toBe('#334155');
+  expect(smoke?.getAttribute('fill')).toBe('#fff');
+  expect(div.querySelector('[data-device-symbol="sprinkler-head"]')?.getAttribute('stroke')).toBe('#208348');
+  expect(div.querySelector('[data-conduit-segment="water-run"] [data-conduit-stroke="color"]')?.getAttribute('stroke')).toBe('#208348');
+  expect(Number(div.querySelector('[data-conduit-segment="water-run"] [data-conduit-stroke="color"]')?.getAttribute('stroke-width'))).toBeCloseTo(.05);
+  const hiddenContext=createPlanContext(nodes,overlay,new Set(),{...fireVisibility,sprinkler:false,'fire-signal':false});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={hiddenContext} scale={100} rotation={0}/></svg>));
+  expect(div.querySelector('[data-conduit-segment="signal-run"]')).toBeNull();
+  expect(div.querySelector('[data-conduit-segment="water-run"]')).toBeNull();
+  expect(div.querySelector('[data-device-symbol="smoke-detector"]')).toBeNull();
+  expect(div.querySelector('[data-device-symbol="sprinkler-head"]')).toBeNull();
  });
  it('uses dashed strokes for elevated free-space and ceiling-back conduit while keeping floor and wall runs solid',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
@@ -86,23 +128,72 @@ describe('construction plan rendering integration',()=>{
   overlay.segments=[
    {id:'floor-open',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,.05,0]},end:{position:[1,.05,0],attachment:wallAttachment},createdAt:''},
    {id:'high-free',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,2.74,1]},end:{position:[1,2.74,1],attachment:wallAttachment},createdAt:''},
+   {id:'high-receptacle',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,2.74,.1],attachment:wallAttachment},end:{position:[1,2.74,.1]},createdAt:''},
+   {id:'high-network',type:'conduit-segment',system:'network',diameterMm:20,start:{position:[0,2.74,.1],attachment:wallAttachment},end:{position:[1,2.74,.1]},createdAt:''},
+   {id:'high-sprinkler',type:'sprinkler-segment',system:'sprinkler',diameterMm:50,start:{position:[0,2.74,.1],attachment:wallAttachment},end:{position:[1,2.74,.1]},createdAt:''},
    {id:'ceiling-back',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,2.74,2],attachment:{...wallAttachment,hostKind:'ceiling',surface:'ceiling-back'}},end:{position:[1,2.74,2],attachment:{...wallAttachment,hostKind:'ceiling',surface:'ceiling-back'}},createdAt:''},
-   {id:'wall-mounted',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,2.74,0],attachment:wallAttachment},end:{position:[1,2.74,0],attachment:wallAttachment},createdAt:''},
+   {id:'wall-mounted',type:'conduit-segment',system:'receptacle',diameterMm:20,start:{position:[0,2.74,.1],attachment:wallAttachment},end:{position:[1,2.74,.1],attachment:wallAttachment},createdAt:''},
   ];
+  overlay.fittings=[{id:'high-sprinkler-elbow',type:'sprinkler-fitting',fitting:'elbow',bendStyle:'standard',system:'sprinkler',diameterMm:50,position:{position:[.5,2.74,.1]},segmentIds:['high-sprinkler'],arc:{start:[.5,2.74,0],end:[.6,2.74,.1],center:[.6,2.74,0],normal:[0,1,0],sweepRadians:Math.PI/2},ports:[]},{id:'high-sprinkler-bridge',type:'sprinkler-fitting',fitting:'bridge-bend',system:'sprinkler',diameterMm:50,position:{position:[.5,2.74,.1]},segmentIds:['high-sprinkler'],bridge:{obstacleSegmentId:'obstacle',entry:[.3,2.74,.1],crestStart:[.4,2.85,.1],crestEnd:[.6,2.85,.1],exit:[.7,2.74,.1],riseMm:110,clearanceMm:10},ports:[]}];
   const context=createPlanContext(nodes,overlay);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const stroke=(id:string)=>div.querySelector(`[data-conduit-segment="${id}"] [data-conduit-stroke="color"]`);
   expect(stroke('floor-open')?.getAttribute('stroke-dasharray')).toBeNull();
   expect(stroke('high-free')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
   expect(stroke('ceiling-back')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(stroke('high-receptacle')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(div.querySelector('[data-conduit-segment="high-network"] [data-conduit-stroke="outline"]')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(stroke('high-sprinkler')?.getAttribute('stroke-dasharray')).toBeNull();
+  expect(Number(stroke('high-sprinkler')?.getAttribute('stroke-width'))).toBeCloseTo(.05);
+  expect(Number(stroke('high-receptacle')?.getAttribute('stroke-width'))).toBeCloseTo(.036);
+  expect(Number(stroke('high-sprinkler')?.getAttribute('stroke-width'))).toBeGreaterThan(Number(div.querySelector('[data-conduit-segment="high-network"] [data-conduit-stroke="outline"]')?.getAttribute('stroke-width')));
+  expect(div.querySelector('[data-conduit-fitting="high-sprinkler-elbow"] [data-conduit-stroke="color"]')?.getAttribute('stroke-dasharray')).toBeNull();
+  expect(Number(div.querySelector('[data-conduit-fitting="high-sprinkler-elbow"] [data-conduit-stroke="color"]')?.getAttribute('stroke-width'))).toBeCloseTo(.05);
+  expect(Number(div.querySelector('[data-conduit-fitting="high-sprinkler-bridge"] [data-conduit-stroke="color"]')?.getAttribute('stroke-width'))).toBeCloseTo(.05);
   expect(stroke('wall-mounted')?.getAttribute('stroke-dasharray')).toBeNull();
+ });
+ it('renders elevated free-space segments connected through fittings to reference-plane lighting boxes',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');
+  const left=createReferencePlaneDevice('luminaire',[0,2.8,0],'l',2800),right=createReferencePlaneDevice('luminaire',[2,2.8,0],'l',2800);
+  left.ports[0]!.connectedSegmentIds=['floating-a'];right.ports[0]!.connectedSegmentIds=['floating-b'];
+  overlay.devices=[left,right];
+  overlay.segments=[
+   {id:'floating-a',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[0,2.8,0]},end:{position:[1,2.8,0]},startPortId:left.ports[0]!.id,endPortId:'elbow:port:0',createdAt:''},
+   {id:'floating-b',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[1,2.8,0]},end:{position:[2,2.8,0]},startPortId:'elbow:port:1',endPortId:right.ports[0]!.id,createdAt:''},
+  ];
+  overlay.fittings=[{id:'elbow',type:'conduit-fitting',fitting:'elbow',bendStyle:'sweep',system:'lighting',diameterMm:20,position:{position:[1,2.8,0]},segmentIds:['floating-a','floating-b'],arc:{start:[1,2.8,-.1],end:[1.1,2.8,0],center:[1.1,2.8,-.1],normal:[0,1,0],sweepRadians:Math.PI/2},ports:[]} as unknown as ConduitOverlayDocument['fittings'][number]];
+  const context=createPlanContext(nodes,overlay);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  for(const id of ['floating-a','floating-b']){
+   const segment=div.querySelector(`[data-conduit-segment="${id}"]`);
+   expect(segment).not.toBeNull();
+   expect(segment?.getAttribute('data-suspended')).toBe('true');
+   expect(segment?.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  }
+  const elbow=div.querySelector('[data-conduit-fitting="elbow"]');
+  expect(elbow?.getAttribute('data-suspended')).toBe('true');
+  expect(elbow?.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+ });
+ it('dashes an elevated conduit whose persisted wall attachments miss the wall geometry',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const modelNodes={l:{id:'l',type:'level',level:0},w:{id:'w',type:'wall',parentId:'l',start:[3.5777821517392283,-.5977600998749288],end:[5.845113700040272,-.5977174912801821],thickness:.1}} as unknown as Record<string,NodeData>;
+  const attachment={hostId:'w',hostKind:'wall' as const,surface:'exterior',normal:[0,0,-1] as [number,number,number],levelId:'l'};
+  const overlay=createEmptyOverlay('a','sha');
+  overlay.segments=[{id:'stale-wall-host',type:'conduit-segment',system:'lighting',diameterMm:20,start:{position:[4.924590862183028,2.8,-.7476716041022494],attachment},end:{position:[4.99492334129862,2.8,-2.724150693038257],attachment},createdAt:''}];
+  const context=createPlanContext(modelNodes,overlay);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  const segment=div.querySelector('[data-conduit-segment="stale-wall-host"]');
+  expect(segment).not.toBeNull();
+  expect(segment?.getAttribute('data-suspended')).toBe('true');
+  expect(segment?.querySelector('[data-conduit-stroke="color"]')?.getAttribute('stroke-dasharray')).toBe('.12 .08');
  });
  it('does not draw legacy switch control relations when the conduit layer is hidden',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]},light={...device,id:'light',deviceType:'luminaire' as const,name:'灯具',systems:['lighting' as const],position:{position:[3,2.7,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};
   overlay.devices=[wallSwitch,light];overlay.lightingControlGroups=[{id:'control',switchDeviceId:'switch',luminaireDeviceIds:['light'],createdAt:''}];
   overlay.segments=[{id:'pipe',type:'conduit-segment',system:'lighting',diameterMm:20,start:wallSwitch.position,end:light.position,createdAt:''}];
-  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false, 'fire-signal': false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0} conduitsVisible={false}/></svg>));
   expect(div.querySelector('[data-lighting-control-line]')).toBeNull();
   expect(div.querySelector('[data-conduit-segment]')).toBeNull();
@@ -111,14 +202,14 @@ describe('construction plan rendering integration',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),wallSwitch={...device,id:'switch',deviceType:'switch' as const,name:'开关',systems:['lighting' as const]};overlay.devices=[wallSwitch];
   overlay.lightingControlGroups=[{id:'a',switchDeviceId:'switch',luminaireDeviceIds:['light-a'],createdAt:''},{id:'b',switchDeviceId:'switch',luminaireDeviceIds:['light-b'],createdAt:''}];
-  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false});
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:true,network:false,sprinkler:false, 'fire-signal': false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const symbol=div.querySelector('[data-device-symbol="switch"]');expect(symbol?.getAttribute('data-switch-gangs')).toBeNull();expect(symbol?.querySelectorAll('path')).toHaveLength(1);
  });
  it('renders an explicit pendent sprinkler symbol in the 2D plan',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),sprinkler={...device,id:'sprinkler',deviceType:'sprinkler-head' as const,name:'喷淋头',systems:['sprinkler' as const],sprinklerDirection:'pendent' as const,position:{position:[2,2.7,1] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};overlay.devices=[sprinkler];
-  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:true});
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:true, 'fire-signal': false});
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const symbol=div.querySelector('[data-device-symbol="sprinkler-head"]');
   expect(symbol?.getAttribute('data-sprinkler-direction')).toBe('pendent');
@@ -127,10 +218,10 @@ describe('construction plan rendering integration',()=>{
  it('renders a sensor only while the dedicated sensor layer is visible',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
   const overlay=createEmptyOverlay('a','sha'),sensor={...device,id:'sensor',deviceType:'sensor' as const,name:'传感器',systems:[] as [],ports:[],position:{position:[2,2.7,1] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l',elevationMm:2700}};overlay.devices=[sensor];
-  const visible=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false},true);
+  const visible=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false, 'fire-signal': false},true);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={visible} scale={50} rotation={0}/></svg>));
   expect(div.querySelector('[data-device-symbol="sensor"]')).not.toBeNull();
-  const hidden=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false},false);
+  const hidden=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:false, 'fire-signal': false},false);
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={hidden} scale={50} rotation={0}/></svg>));
   expect(div.querySelector('[data-device-symbol="sensor"]')).toBeNull();
  });
@@ -160,6 +251,20 @@ describe('construction plan rendering integration',()=>{
   expect(div.querySelectorAll('[data-annotation]')).toHaveLength(0);
   act(()=>useOverlayStore.setState({preview:{...useOverlayStore.getState().preview!,sourceSha:'other'}}));
   expect(div.querySelector('.conduit-plan-preview')).toBeNull();
+ });
+ it('keeps temporary smoke symbols and fire-signal endpoints visible on a white sheet',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha'),position:[number,number,number]=[1,2.8,1];
+  const context=createPlanContext(nodes,overlay,new Set(),{receptacle:false,lighting:false,network:false,sprinkler:true,'fire-signal':true});
+  useOverlayStore.setState({preview:{sourceSha:'sha',levelId:'l',system:'fire-signal',diameterMm:20,points:[{position}],plan:null,branchNode:null,deviceNode:{deviceType:'smoke-detector',valid:true,position:{position}}} as never});
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0}/></svg>));
+  const smoke=div.querySelector('[data-device-preview-symbol="smoke-detector"]');
+  expect(smoke?.getAttribute('stroke')).toBe('#334155');
+  expect(smoke?.getAttribute('fill')).toBe('#fff');
+  const endpoint=div.querySelector('.conduit-plan-preview circle');
+  expect(endpoint?.getAttribute('fill')).toBe('#ffffff');
+  expect(endpoint?.getAttribute('stroke')).toBe('#334155');
+  expect(Number(endpoint?.getAttribute('stroke-width'))).toBeCloseTo(.024);
  });
  it('keeps device blocks in model space and applies the manual annotation scale',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
@@ -196,6 +301,40 @@ describe('construction plan rendering integration',()=>{
   expect(div.querySelector('[data-hvac-plan-port="supply"]')?.textContent).toBe('送');
   expect(div.querySelector('[data-hvac-outlet="outlet"]')).not.toBeNull();
   expect(div.querySelector('[data-hvac-thermostat="thermostat"] rect')?.getAttribute('width')).toBe('0.086');
+ });
+ it('shows overhead HVAC control segments and elbows as dashed on their uniquely owned level',()=>{
+  const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);
+  const overlay=createEmptyOverlay('a','sha');
+  overlay.hvac.thermostats=[{id:'thermostat',type:'thermostat',name:'控温器',position:{position:[0,2.8,0]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2800},sizeMm:[86,86,50],createdAt:''}];
+  overlay.hvac.indoorUnits=[{id:'unit',type:'indoor-air-handling-unit',name:'FCU',position:{position:[2,2.8,0]},mount:{kind:'reference-plane',levelId:'l',elevationMm:2800},sizeMm:[1000,600,300],sectionMm:[500,200],rotationYDegrees:0,createdAt:''}];
+  overlay.hvac.controlConduits=[{id:'control-route',type:'hvac-control-conduit',system:'control',thermostatId:'thermostat',thermostatPortId:'t-port',indoorUnitId:'unit',indoorUnitPortId:'unit-port',segmentIds:['control-a','control-b'],fittingIds:['control-elbow'],diameterMm:20,createdAt:''}];
+  overlay.hvac.controlSegments=[{id:'control-a',start:{position:[0,2.8,0]},end:{position:[1,2.8,0]}},{id:'control-b',start:{position:[1,2.8,0]},end:{position:[2,2.8,0]}}];
+  overlay.hvac.controlFittings=[{id:'control-elbow',type:'hvac-control-fitting',system:'control',fitting:'elbow',diameterMm:20,position:{position:[1,2.8,0]},segmentIds:['control-a','control-b'],arc:{start:[1,2.8,-.1],end:[1.1,2.8,0],center:[1.1,2.8,-.1],normal:[0,1,0],sweepRadians:Math.PI/2}}];
+  const context=createPlanContext(nodes,overlay);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
+  for(const id of ['control-a','control-b']){
+   const segment=div.querySelector(`[data-hvac-control-conduit="${id}"]`);
+   const outline=segment?.querySelector('[data-hvac-control-stroke="outline"]'),core=segment?.querySelector('[data-hvac-control-stroke="core"]');
+   expect(segment).not.toBeNull();expect(segment?.getAttribute('data-suspended')).toBe('true');
+   expect(outline?.getAttribute('stroke')).toBe('#64748b');expect(core?.getAttribute('stroke')).toBe('#ffffff');
+   expect(outline?.getAttribute('stroke-dasharray')).toBe('.12 .08');expect(core?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+   expect(Number(outline?.getAttribute('stroke-width'))).toBeCloseTo(.04);expect(Number(core?.getAttribute('stroke-width'))).toBeCloseTo(.024);
+  }
+  const elbow=div.querySelector('[data-hvac-control-fitting="control-elbow"]');
+  const elbowOutline=elbow?.querySelector('[data-hvac-control-stroke="outline"]'),elbowCore=elbow?.querySelector('[data-hvac-control-stroke="core"]');
+  expect(elbow?.getAttribute('data-suspended')).toBe('true');
+  expect(elbowOutline?.getAttribute('stroke-dasharray')).toBe('.12 .08');expect(elbowCore?.getAttribute('stroke-dasharray')).toBe('.12 .08');
+  expect(Number(elbowOutline?.getAttribute('stroke-width'))).toBeCloseTo(.04);expect(Number(elbowCore?.getAttribute('stroke-width'))).toBeCloseTo(.024);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={100} rotation={0}/></svg>));
+  expect(Number(div.querySelector('[data-hvac-control-conduit="control-a"] [data-hvac-control-stroke="outline"]')?.getAttribute('stroke-width'))).toBeCloseTo(.02);
+  expect(Number(div.querySelector('[data-hvac-control-conduit="control-a"] [data-hvac-control-stroke="core"]')?.getAttribute('stroke-width'))).toBeCloseTo(.012);
+  expect(Number(div.querySelector('[data-hvac-control-fitting="control-elbow"] [data-hvac-control-stroke="outline"]')?.getAttribute('stroke-width'))).toBeCloseTo(.02);
+  expect(Number(div.querySelector('[data-hvac-control-fitting="control-elbow"] [data-hvac-control-stroke="core"]')?.getAttribute('stroke-width'))).toBeCloseTo(.012);
+  const crossFloor={...overlay,hvac:{...overlay.hvac,indoorUnits:overlay.hvac.indoorUnits.map(unit=>({...unit,mount:{kind:'reference-plane' as const,levelId:'l1',elevationMm:6000}}))}};
+  const splitContext=createPlanContext({...nodes,l1:{id:'l1',type:'level',level:1}} as unknown as Record<string,NodeData>,crossFloor);
+  act(()=>root.render(<svg><ConduitPlanOverlay overlay={crossFloor} levelId="l" selectedId={null} onSelect={()=>{}} context={splitContext} scale={50} rotation={0}/></svg>));
+  expect(div.querySelector('[data-hvac-control-conduit]')).toBeNull();
+  expect(div.querySelector('[data-hvac-control-fitting]')).toBeNull();
  });
  it('opens a screen-space editor only when the device description is double-clicked',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);

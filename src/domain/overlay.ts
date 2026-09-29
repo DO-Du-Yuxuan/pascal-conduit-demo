@@ -3,7 +3,7 @@ import { boxFrame, eightBoxPorts } from "./box-ports";
 
 export type Vec3 = [number, number, number];
 
-export const SYSTEMS = ["receptacle", "lighting", "network", "sprinkler"] as const;
+export const SYSTEMS = ["receptacle", "lighting", "network", "sprinkler", "fire-signal"] as const;
 export type RoutingSystem = typeof SYSTEMS[number];
 export const LEGACY_SYSTEMS = ["power", "low-voltage", "signal", "sprinkler"] as const;
 export type LegacyRoutingSystem = typeof LEGACY_SYSTEMS[number];
@@ -35,11 +35,11 @@ export type NetworkOwnerKind = "device" | "fitting" | "junction-box";
 export type NetworkPortRole = "source" | "bidirectional" | "sink" | "branch";
 export type NetworkPort = { id: string; owner: { kind: NetworkOwnerKind; id: string }; position: RoutePoint; direction: Vec3; role: NetworkPortRole; system: RoutingSystem; connectedSegmentIds: string[]; segmentId?: string; connectedPortId?: string; face?: "top" | "bottom" | "left" | "right"; slot?: 0 | 1; flow?: "in" | "out" | "unknown" };
 export type BendArc = { start: Vec3; end: Vec3; center: Vec3; normal: Vec3; sweepRadians: number };
-export type RouteSegment = { id: string; type: "conduit-segment" | "sprinkler-segment"; system: RoutingSystem; diameterMm: number; start: RoutePoint; end: RoutePoint; startPortId?: string; endPortId?: string; circuitId?: string; legacyUnrooted?: boolean; createdAt: string };
+export type RouteSegment = { id: string; type: "conduit-segment" | "sprinkler-segment"; system: RoutingSystem; diameterMm: number; start: RoutePoint; end: RoutePoint; startPortId?: string; endPortId?: string; circuitId?: string; legacyUnrooted?: boolean; endTermination?: "wall"; createdAt: string };
 export type BridgeBend = { obstacleSegmentId: string; obstacleSegmentIds?: string[]; obstacleFittingIds?: string[]; entry: Vec3; crestStart: Vec3; crestEnd: Vec3; exit: Vec3; riseMm: number; clearanceMm: number };
 export type RouteFitting = { id: string; type: "conduit-fitting" | "sprinkler-fitting"; fitting: "elbow" | "tee" | "coupling" | "bridge-bend"; bendStyle?: "sweep" | "right-angle" | "standard"; radiusMm?: number; arc?: BendArc; bridge?: BridgeBend; system: RoutingSystem; diameterMm: number; position: RoutePoint; segmentIds: string[]; ports: NetworkPort[] };
 export type JunctionBox = { id: string; type: "junction-box"; system: Exclude<RoutingSystem, "sprinkler">; position: RoutePoint; sizeMm: [number, number, number]; frame?: DeviceFrame; segmentIds: string[]; ports: NetworkPort[] };
-export const DEVICE_TYPES = ["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "sensor", "rfid-reader"] as const;
+export const DEVICE_TYPES = ["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "smoke-detector", "sensor", "rfid-reader"] as const;
 export type NetworkDeviceType = typeof DEVICE_TYPES[number];
 export const SPRINKLER_DIRECTIONS = ["upright", "pendent"] as const;
 export type SprinklerDirection = typeof SPRINKLER_DIRECTIONS[number];
@@ -49,7 +49,7 @@ export type LayoutReferencePlane = { levelId: string; visible: boolean; elevatio
 export type Circuit = { id: string; system: RoutingSystem; sourceDeviceId: string | null; rootPortId: string | null; segmentIds: string[]; status: "rooted" | "legacy-unrooted" | "broken"; createdAt: string };
 export type LightingControlGroup = { id: string; switchDeviceId: string; luminaireDeviceIds: string[]; createdAt: string };
 export type HvacSystem = "supply" | "return";
-export type HvacPortSystem = RoutingSystem | "hvac-control";
+export type HvacPortSystem = Exclude<RoutingSystem, "fire-signal"> | "hvac-control";
 export type HvacDevicePort = { id: string; ownerId: string; position: RoutePoint; direction: Vec3; role: "source" | "sink"; system: HvacPortSystem; connectedSegmentIds: string[] };
 export type HvacIndoorUnit = { id: string; type: "indoor-air-handling-unit"; name: string; position: RoutePoint; mount?: DeviceMount; sizeMm: [number, number, number]; sectionMm: [number, number]; rotationYDegrees: number; powerPort?: HvacDevicePort; controlPort?: HvacDevicePort; createdAt: string };
 export type HvacDuctSegment = { id: string; start: RoutePoint; end: RoutePoint };
@@ -108,10 +108,11 @@ export const SYSTEM_DEFAULTS: Record<RoutingSystem, { label: string; color: stri
   lighting: { label: "照明线路", color: "#3b82f6", diameterMm: 20, mode: "surface" },
   network: { label: "网络线路", color: "#ffffff", diameterMm: 20, mode: "surface" },
   sprinkler: { label: "消防喷淋", color: "#22c55e", diameterMm: 50, mode: "suspended" },
+  "fire-signal": { label: "消防信号线", color: "#ffffff", diameterMm: 20, mode: "surface" },
 };
 export const DEFAULT_BEND_RADIUS_MM = 150;
 
-export const migrateSystem = (system: RoutingSystem | LegacyRoutingSystem): RoutingSystem => ({ power: "receptacle", "low-voltage": "lighting", signal: "network", sprinkler: "sprinkler", receptacle: "receptacle", lighting: "lighting", network: "network" } as const)[system];
+export const migrateSystem = (system: RoutingSystem | LegacyRoutingSystem): RoutingSystem => ({ power: "receptacle", "low-voltage": "lighting", signal: "network", sprinkler: "sprinkler", receptacle: "receptacle", lighting: "lighting", network: "network", "fire-signal": "fire-signal" } as const)[system];
 
 const normalizeVec = (value: Vec3): Vec3 => {
   const length = Math.hypot(...value);
@@ -131,7 +132,7 @@ const positioningSchema = z.object({ horizontal: z.object({ kind: z.enum(["devic
 const deviceFrameSchema = z.object({ front: vec3Schema, up: vec3Schema, right: vec3Schema });
 const portSchema = z.object({ id: z.string(), owner: z.object({ kind: z.enum(["device", "fitting", "junction-box"]), id: z.string() }).optional(), position: pointSchema, direction: vec3Schema, role: z.enum(["source", "bidirectional", "sink", "branch"]).optional(), system: inputSystemSchema.optional(), connectedSegmentIds: z.array(z.string()).optional(), segmentId: z.string().optional(), connectedPortId: z.string().optional(), face: z.enum(["top", "bottom", "left", "right"]).optional(), slot: z.union([z.literal(0), z.literal(1)]).optional(), flow: z.enum(["in", "out", "unknown"]).optional() });
 const arcSchema = z.object({ start: vec3Schema, end: vec3Schema, center: vec3Schema, normal: vec3Schema, sweepRadians: z.number() });
-const segmentSchema = z.object({ id: z.string(), type: z.enum(["conduit-segment", "sprinkler-segment"]), system: inputSystemSchema, diameterMm: z.number().positive(), start: pointSchema, end: pointSchema, startPortId: z.string().optional(), endPortId: z.string().optional(), circuitId: z.string().optional(), legacyUnrooted: z.boolean().optional(), createdAt: z.string() });
+const segmentSchema = z.object({ id: z.string(), type: z.enum(["conduit-segment", "sprinkler-segment"]), system: inputSystemSchema, diameterMm: z.number().positive(), start: pointSchema, end: pointSchema, startPortId: z.string().optional(), endPortId: z.string().optional(), circuitId: z.string().optional(), legacyUnrooted: z.boolean().optional(), endTermination: z.enum(["wall"]).optional(), createdAt: z.string() });
 const bridgeSchema = z.object({ obstacleSegmentId: z.string(), obstacleSegmentIds: z.array(z.string()).optional(), obstacleFittingIds: z.array(z.string()).optional(), entry: vec3Schema, crestStart: vec3Schema, crestEnd: vec3Schema, exit: vec3Schema, riseMm: z.number().positive(), clearanceMm: z.number().positive() });
 const fittingSchema = z.object({ id: z.string(), type: z.enum(["conduit-fitting", "sprinkler-fitting"]), fitting: z.enum(["elbow", "tee", "coupling", "bridge-bend"]), bendStyle: z.enum(["sweep", "right-angle", "standard"]).optional(), radiusMm: z.number().positive().optional(), arc: arcSchema.optional(), bridge: bridgeSchema.optional(), system: inputSystemSchema, diameterMm: z.number().positive(), position: pointSchema, segmentIds: z.array(z.string()), ports: z.array(portSchema).optional() });
 const junctionBoxSchema = z.object({ id: z.string(), type: z.literal("junction-box"), system: inputSystemSchema, position: pointSchema, sizeMm: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]), frame: deviceFrameSchema.optional(), segmentIds: z.array(z.string()), ports: z.array(portSchema) });
@@ -187,6 +188,7 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
   const parsed = overlaySchema.parse(raw);
   const legacy = parsed.schemaVersion !== "2.0" && parsed.schemaVersion !== "2.1" && parsed.schemaVersion !== "2.2" && parsed.schemaVersion !== "2.3";
   const segments: RouteSegment[] = parsed.segments.map((segment) => ({ ...segment, system: migrateSystem(segment.system as RoutingSystem | LegacyRoutingSystem), circuitId: segment.circuitId, legacyUnrooted: segment.legacyUnrooted ?? legacy }));
+  for (const segment of segments) if (segment.endTermination && (segment.system !== "fire-signal" || segment.endPortId || segment.end.attachment?.hostKind !== "wall")) throw new Error(`管段 ${segment.id} 的墙面终止只能用于没有端口的消防信号线墙端。`);
   const normalizePort = (value: z.infer<typeof portSchema>, owner: NetworkPort["owner"], system: RoutingSystem, segmentId?: string): NetworkPort => ({
     ...value,
     owner: value.owner ?? owner,
@@ -239,6 +241,8 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
     const ports = migrateBoxPorts(device, { front, up, right }, normalizedPorts, parsed.schemaVersion);
     return { ...device, systems, frame: { front, up, right }, mount: device.mount ?? (device.position.attachment ? { kind: "host", attachment: device.position.attachment } : undefined), ...(device.deviceType === "sprinkler-head" ? { sprinklerDirection: device.sprinklerDirection ?? "upright" } : {}), ports };
   });
+  for (const segment of segments) if (segment.system === "fire-signal" && (segment.circuitId || segment.legacyUnrooted)) throw new Error(`消防信号管段 ${segment.id} 不使用 Circuit。`);
+  for (const device of devices) if (device.deviceType === "smoke-detector" && (device.systems.length !== 1 || device.systems[0] !== "fire-signal" || device.ports.length !== 4 || device.ports.some((port) => port.system !== "fire-signal" || port.role !== "bidirectional"))) throw new Error(`烟雾传感器 ${device.id} 必须有四个消防信号双向端口。`);
   // These IDs are the shared selection and reference namespace for the
   // Overlay.  Refuse an ambiguous imported document instead of silently
   // selecting, moving, or reconnecting whichever duplicate is encountered
@@ -315,8 +319,8 @@ export function parseOverlay(raw: unknown): ConduitOverlayDocument {
     const size = Math.hypot(...delta), fallback = entry.attachment?.normal ?? [0, 0, 1] as Vec3;
     return { id: feature.id, type: "penetration", hostId: feature.hostId, hostKind: feature.hostKind, segmentId: feature.segmentId, entry, exit, direction: feature.direction ?? (size > 1e-9 ? delta.map((value) => value / size) as Vec3 : fallback), diameterMm: feature.diameterMm, derived: feature.derived ?? !feature.entry };
   });
-  const colors = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.colors[system] ?? parsed.settings.colors[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>;
-  const visibleSystems = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.visibleSystems?.[system] ?? parsed.settings.visibleSystems?.[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]] ?? true])) as Record<RoutingSystem, boolean>;
+  const colors = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.colors[system] ?? (system === "fire-signal" ? SYSTEM_DEFAULTS[system].color : parsed.settings.colors[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]]) ?? SYSTEM_DEFAULTS[system].color])) as Record<RoutingSystem, string>;
+  const visibleSystems = Object.fromEntries(SYSTEMS.map((system) => [system, parsed.settings.visibleSystems?.[system] ?? (system === "fire-signal" ? true : parsed.settings.visibleSystems?.[({ receptacle: "power", lighting: "low-voltage", network: "signal", sprinkler: "sprinkler" } as const)[system]]) ?? true])) as Record<RoutingSystem, boolean>;
   const hvac = parsed.hvac ? { visible: parsed.hvac.visible ?? true, indoorUnits: parsed.hvac.indoorUnits ?? [], ducts: parsed.hvac.ducts ?? [], segments: parsed.hvac.segments ?? [], outlets: parsed.hvac.outlets ?? [], thermostats: parsed.hvac.thermostats ?? [], controls: [], controlConduits: (parsed.hvac.controlConduits ?? []).map(item => ({ ...item, fittingIds: item.fittingIds ?? [] })), controlSegments: parsed.hvac.controlSegments ?? [], controlFittings: parsed.hvac.controlFittings ?? [], wallPenetrations: parsed.hvac.wallPenetrations ?? [] } : { visible: true, indoorUnits: [], ducts: [], segments: [], outlets: [], thermostats: [], controls: [], controlConduits: [], controlSegments: [], controlFittings: [], wallPenetrations: [] };
   const segmentIds = new Set(segments.map((segment) => segment.id)), controlSegmentIds = new Set(hvac.controlSegments.map((segment) => segment.id)), controlFittingIds = new Set(hvac.controlFittings.map((fitting) => fitting.id));
   const controlOwners = new Set<string>();

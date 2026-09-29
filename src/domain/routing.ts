@@ -229,7 +229,7 @@ export function branchAtSegment(overlay: ConduitOverlayDocument, segmentId: stri
 /** Plans the continuation from a physical branch-node port, rather than through its body. */
 export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], options?: { bendRadiusMm?: number; stockLengthMm?: number }): PlannedRoute | null {
   const target = overlay.segments.find((segment) => segment.id === segmentId);
-  if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return null;
+  if (!target || target.system === "network" || target.system === "fire-signal" || target.legacyUnrooted || branchPoints.length < 2) return null;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
   const previewPorts = electrical ? eightBoxPorts("junction-box", "branch-preview", center, boxFrame(center, mainDirection), overlay.settings.junctionBoxSizeMm, target.system, "branch") : [];
   const branchPortPoint = electrical ? copyPoint(selectPortDirection(previewPorts, branchDirection)?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(branchDirection, target.diameterMm / 1000)) };
@@ -238,7 +238,7 @@ export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentI
 
 export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], plannedRoute?: PlannedRoute): ConduitOverlayDocument {
   const target = overlay.segments.find((segment) => segment.id === segmentId);
-  if (!target || target.system === "network" || target.legacyUnrooted || branchPoints.length < 2) return overlay;
+  if (!target || target.system === "network" || target.system === "fire-signal" || target.legacyUnrooted || branchPoints.length < 2) return overlay;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
   const halfSize = electrical ? overlay.settings.junctionBoxSizeMm[0] / 2000 : target.diameterMm / 1000;
   const nodeId = nextId(electrical ? "box86" : "tee"), ownerKind = electrical ? "junction-box" as const : "fitting" as const;

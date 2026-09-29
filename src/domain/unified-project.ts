@@ -15,6 +15,7 @@ const DEVICE_TYPES: Record<string, string> = {
   Spotlight: "luminaire",
   LightingJunctionBox: "luminaire",
   SprinklerHead: "sprinkler-head",
+  SmokeDetector: "smoke-detector",
   TemperatureHumiditySensor: "sensor",
   RFIDReader: "rfid-reader",
 };
@@ -26,15 +27,19 @@ const FITTING_TYPES: Record<string, string> = {
   FireWaterPipeConnector: "coupling",
   FireWaterPipeTee: "tee",
   FireWaterPipeElbow: "elbow",
+  FireSignalConduitConnector: "coupling",
+  FireSignalConduitElbow: "elbow",
 };
 const ELECTRICAL_OR_LIGHTING_SYSTEMS = new Set(["ElectricalSystem", "LightingSystem"]);
 const ELECTRICAL_OR_LIGHTING_ROUTE_TYPES = new Set(["Conduit", "JunctionBox", "ConduitConnector", "ConduitTee", "ConduitElbow"]);
 const CONDUIT_FITTING_TYPES = new Set(["ConduitConnector", "ConduitTee", "ConduitElbow"]);
 const FIRE_WATER_FITTING_TYPES = new Set(["FireWaterPipeConnector", "FireWaterPipeTee", "FireWaterPipeElbow"]);
+const FIRE_SIGNAL_FITTING_TYPES = new Set(["FireSignalConduitConnector", "FireSignalConduitElbow"]);
+const FIRE_SIGNAL_TYPES = new Set(["FireSignalConduit", ...FIRE_SIGNAL_FITTING_TYPES]);
 const ROUTING_SYSTEMS_BY_PARENT: Record<string, string[]> = {
   ElectricalSystem: ["receptacle", "network"],
   LightingSystem: ["lighting"],
-  FireProtectionSystem: ["sprinkler"],
+  FireProtectionSystem: ["sprinkler", "fire-signal"],
 };
 const AUTHORING_TYPE_PARENTS: Record<string, string> = {
   StrongCurrentBox: "ElectricalSystem",
@@ -45,10 +50,14 @@ const AUTHORING_TYPE_PARENTS: Record<string, string> = {
   Spotlight: "LightingSystem",
   LightingJunctionBox: "LightingSystem",
   SprinklerHead: "FireProtectionSystem",
+  SmokeDetector: "FireProtectionSystem",
   FireWaterPipe: "FireProtectionSystem",
   FireWaterPipeConnector: "FireProtectionSystem",
   FireWaterPipeTee: "FireProtectionSystem",
   FireWaterPipeElbow: "FireProtectionSystem",
+  FireSignalConduit: "FireProtectionSystem",
+  FireSignalConduitConnector: "FireProtectionSystem",
+  FireSignalConduitElbow: "FireProtectionSystem",
   FanCoilUnit: "HVACSystem",
   FCUThermostat: "HVACSystem",
   HVACControlConduit: "HVACSystem",
@@ -75,8 +84,8 @@ const mergeFields = (oldValue: any, nextValue: any): any => {
   }
   return copy(nextValue);
 };
-const systemFor = (system: string) => system === "lighting" ? "LightingSystem" : system === "sprinkler" ? "FireProtectionSystem" : "ElectricalSystem";
-const routingSystem = (node: Node, parentType: string): RoutingSystem => node.system === "lighting" || node.system === "network" || node.system === "sprinkler" ? node.system : parentType === "LightingSystem" ? "lighting" : parentType === "FireProtectionSystem" ? "sprinkler" : "receptacle";
+const systemFor = (system: string) => system === "lighting" ? "LightingSystem" : system === "sprinkler" || system === "fire-signal" ? "FireProtectionSystem" : "ElectricalSystem";
+const routingSystem = (node: Node, parentType: string): RoutingSystem => node.system === "lighting" || node.system === "network" || node.system === "sprinkler" || node.system === "fire-signal" ? node.system : parentType === "LightingSystem" ? "lighting" : parentType === "FireProtectionSystem" ? "sprinkler" : "receptacle";
 const hasAllowedSystem = (node: Node, parentType: string) => !("system" in node) || ROUTING_SYSTEMS_BY_PARENT[parentType]?.includes(node.system);
 const rfidAttachment = (node: Node) => record(node.position?.attachment)
   ? node.position.attachment
@@ -123,15 +132,31 @@ export function validateUnifiedProject(raw: unknown): asserts raw is Project {
       const attachment = rfidAttachment(node);
       if (!attachment || attachment.hostKind !== "wall" && (attachment.hostKind !== "beam" || !attachment.surface || ["top", "bottom"].includes(attachment.surface))) throw new Error(`RFIDReader ${node.id} 只允许安装在墙面或梁侧面。`);
     }
-    if ((node.type === "Conduit" || node.type === "FireWaterPipe" || node.type === "JunctionBox" || FITTING_TYPES[node.type]) && !hasAllowedSystem(node, parentType ?? "")) throw new Error(`${node.type} ${node.id} 的 system 与 ${parentType} 不一致。`);
+    if ((node.type === "Conduit" || node.type === "FireWaterPipe" || FIRE_SIGNAL_TYPES.has(node.type) || node.type === "JunctionBox" || FITTING_TYPES[node.type]) && !hasAllowedSystem(node, parentType ?? "")) throw new Error(`${node.type} ${node.id} 的 system 与 ${parentType} 不一致。`);
+    if (FIRE_SIGNAL_TYPES.has(node.type) && node.system !== "fire-signal") throw new Error(`${node.type} ${node.id} 的 system 必须为 fire-signal。`);
     if (FITTING_TYPES[node.type] && "fitting" in node && node.fitting !== FITTING_TYPES[node.type]) throw new Error(`${node.type} ${node.id} 的 fitting 必须为 ${FITTING_TYPES[node.type]}。`);
     if (node.type === "FireProtectionSystem" && Array.isArray(node.circuits) && node.circuits.length) throw new Error("FireProtectionSystem 不支持 Circuit；消防管从自由起点或开放管端绘制。");
     if (node.type === "FireWaterPipe" && "circuitId" in node) throw new Error(`FireWaterPipe ${node.id} 不支持 circuitId；消防管不使用 Circuit。`);
     if (node.type === "FireWaterPipe" && "legacyUnrooted" in node) throw new Error(`FireWaterPipe ${node.id} 不支持 legacyUnrooted；消防管不使用 Circuit。`);
+    if (node.type === "FireSignalConduit" && ("circuitId" in node || "legacyUnrooted" in node)) throw new Error(`FireSignalConduit ${node.id} 不支持 Circuit 字段。`);
+    if (node.type === "FireSignalConduit" && node.endTermination !== undefined && (node.endTermination !== "wall" || node.endPortId || node.end?.attachment?.hostKind !== "wall")) throw new Error(`FireSignalConduit ${node.id} 的墙面终止必须位于无端口的墙面末端。`);
     if (node.type === "HVACControlConduit") {
       if (parentType !== "HVACSystem" || node.system !== "control" || typeof node.thermostatId !== "string" || typeof node.thermostatPortId !== "string" || typeof node.indoorUnitId !== "string" || typeof node.indoorUnitPortId !== "string" || !Array.isArray(node.segmentIds) || !node.segmentIds.length || !Array.isArray(node.segments) || node.segments.length !== node.segmentIds.length || !Array.isArray(node.fittingIds) || !Array.isArray(node.fittings) || node.fittings.length !== node.fittingIds.length || !Number.isFinite(node.diameterMm) || node.diameterMm <= 0) throw new Error(`HVACControlConduit ${node.id} 缺少有效系统、端口或管段数据。`);
       if (node.segments.some((segment: any, index: number) => !record(segment) || typeof segment.id !== "string" || segment.id !== node.segmentIds[index] || !record(segment.start) || !Array.isArray(segment.start.position) || !record(segment.end) || !Array.isArray(segment.end.position))) throw new Error(`HVACControlConduit ${node.id} 的 segmentIds 与嵌套管段不一致。`);
       if (node.fittings.some((fitting: any, index: number) => !record(fitting) || typeof fitting.id !== "string" || fitting.id !== node.fittingIds[index] || fitting.type !== "hvac-control-fitting" || fitting.system !== "control" || !Array.isArray(fitting.segmentIds) || fitting.segmentIds.some((id: string) => !node.segmentIds.includes(id)))) throw new Error(`HVACControlConduit ${node.id} 的 fittingIds 与弯头数据不一致。`);
+    }
+  }
+  const publicPorts = new Map<string, { port: Record<string, any>; ownerNode: Node }>();
+  for (const ownerNode of Object.values(nodes)) for (const port of ownerNode.ports ?? []) if (record(port) && typeof port.id === "string") publicPorts.set(port.id, { port, ownerNode });
+  for (const node of Object.values(nodes).filter((item) => item.type === "SmokeDetector")) {
+    if (node.systems?.length !== 1 || node.systems[0] !== "fire-signal" || !Array.isArray(node.ports) || node.ports.length !== 4 || node.ports.some((port: any) => port.system !== "fire-signal" || port.role !== "bidirectional")) throw new Error(`SmokeDetector ${node.id} 必须有四个消防信号双向端口。`);
+  }
+  for (const node of Object.values(nodes).filter((item) => item.type === "FireSignalConduit")) {
+    for (const field of ["startPortId", "endPortId"] as const) {
+      const id = node[field];
+      if (!id) continue;
+      const reference = publicPorts.get(id), port = reference?.port;
+      if (!reference || !port || port.system !== "fire-signal" || !port.connectedSegmentIds?.includes(node.id) || port.owner?.kind === "device" && reference.ownerNode.type !== "SmokeDetector") throw new Error(`FireSignalConduit ${node.id} 的 ${field} 必须引用已连接的消防信号端口。`);
     }
   }
   const referencedIds = new Set(Object.keys(nodes));
@@ -225,9 +250,10 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
     const parent = containerById[node.parentId ?? ""];
     if (!parent) continue;
     if (DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "SmartSystem", "FireProtectionSystem"].includes(parent.type)) overlay.devices.push({ ...asInternal(node, "network-device"), deviceType: DEVICE_TYPES[node.type] } as any);
-    else if ((node.type === "Conduit" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) || (node.type === "FireWaterPipe" && parent.type === "FireProtectionSystem")) overlay.segments.push({ ...asInternal(node, node.type === "FireWaterPipe" ? "sprinkler-segment" : "conduit-segment"), system: routingSystem(node, parent.type) } as any);
+    else if ((node.type === "Conduit" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) || (node.type === "FireWaterPipe" && parent.type === "FireProtectionSystem") || (node.type === "FireSignalConduit" && parent.type === "FireProtectionSystem")) overlay.segments.push({ ...asInternal(node, node.type === "FireWaterPipe" ? "sprinkler-segment" : "conduit-segment"), system: routingSystem(node, parent.type) } as any);
     else if (CONDUIT_FITTING_TYPES.has(node.type) && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.fittings.push({ ...asInternal(node, "conduit-fitting"), system: routingSystem(node, parent.type), fitting: node.type === "ConduitElbow" && record(node.bridge) ? "bridge-bend" : FITTING_TYPES[node.type] } as any);
     else if (FIRE_WATER_FITTING_TYPES.has(node.type) && parent.type === "FireProtectionSystem") overlay.fittings.push({ ...asInternal(node, "sprinkler-fitting"), system: "sprinkler", fitting: FITTING_TYPES[node.type] } as any);
+    else if (FIRE_SIGNAL_FITTING_TYPES.has(node.type) && parent.type === "FireProtectionSystem") overlay.fittings.push({ ...asInternal(node, "conduit-fitting"), system: "fire-signal", fitting: FITTING_TYPES[node.type] } as any);
     else if (node.type === "JunctionBox" && ELECTRICAL_OR_LIGHTING_SYSTEMS.has(parent.type)) overlay.junctionBoxes.push({ ...asInternal(node, "junction-box"), system: routingSystem(node, parent.type) } as any);
     else if (node.type === "FanCoilUnit" && parent.type === "HVACSystem") {
       const unit = asInternal(node, "indoor-air-handling-unit") as any, ports = Array.isArray(node.ports) ? node.ports : [];
@@ -310,17 +336,20 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
     const parent = nodes[node.parentId ?? ""];
     if (!parent) continue;
     const t = parent.type;
-    if ((DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "FireProtectionSystem", "SmartSystem"].includes(t)) || (["Conduit", "ConduitConnector", "ConduitTee", "ConduitElbow", "JunctionBox"].includes(node.type) && ["ElectricalSystem", "LightingSystem"].includes(t)) || (["FireWaterPipe", "FireWaterPipeConnector", "FireWaterPipeTee", "FireWaterPipeElbow"].includes(node.type) && t === "FireProtectionSystem") || (["FanCoilUnit", "GalvanizedSheetMetalDuct", "AirOutlet", "FCUThermostat", "HVACControlConduit"].includes(node.type) && t === "HVACSystem")) removeEdited.add(id);
+    if ((DEVICE_TYPES[node.type] && ["ElectricalSystem", "LightingSystem", "HVACSystem", "FireProtectionSystem", "SmartSystem"].includes(t)) || (["Conduit", "ConduitConnector", "ConduitTee", "ConduitElbow", "JunctionBox"].includes(node.type) && ["ElectricalSystem", "LightingSystem"].includes(t)) || (["FireWaterPipe", "FireWaterPipeConnector", "FireWaterPipeTee", "FireWaterPipeElbow", ...FIRE_SIGNAL_TYPES].includes(node.type) && t === "FireProtectionSystem") || (["FanCoilUnit", "GalvanizedSheetMetalDuct", "AirOutlet", "FCUThermostat", "HVACControlConduit"].includes(node.type) && t === "HVACSystem")) removeEdited.add(id);
   }
   for (const id of removeEdited) { const parent = nodes[original[id].parentId!]; parent.children = (parent.children ?? []).filter((child) => child !== id); delete nodes[id]; }
-  for (const item of overlay.devices) put(item, item.deviceType === "switch" || item.deviceType === "luminaire" ? "LightingSystem" : item.deviceType === "sprinkler-head" ? "FireProtectionSystem" : item.deviceType === "sensor" ? "HVACSystem" : item.deviceType === "rfid-reader" ? "SmartSystem" : "ElectricalSystem", DEVICE_EXTERNAL[item.deviceType]);
+  for (const item of overlay.devices) put(item, item.deviceType === "switch" || item.deviceType === "luminaire" ? "LightingSystem" : item.deviceType === "sprinkler-head" || item.deviceType === "smoke-detector" ? "FireProtectionSystem" : item.deviceType === "sensor" ? "HVACSystem" : item.deviceType === "rfid-reader" ? "SmartSystem" : "ElectricalSystem", DEVICE_EXTERNAL[item.deviceType]);
   for (const item of overlay.segments) {
     if (item.system === "sprinkler") {
       const { circuitId: _circuitId, legacyUnrooted: _legacyUnrooted, ...fireWaterPipe } = item;
       put(fireWaterPipe, "FireProtectionSystem", "FireWaterPipe");
+    } else if (item.system === "fire-signal") {
+      const { circuitId: _circuitId, legacyUnrooted: _legacyUnrooted, ...signalConduit } = item;
+      put(signalConduit, "FireProtectionSystem", "FireSignalConduit");
     } else put(item, systemFor(item.system), "Conduit");
   }
-  for (const item of overlay.fittings) put(item, systemFor(item.system), item.system === "sprinkler" ? item.fitting === "coupling" ? "FireWaterPipeConnector" : item.fitting === "tee" ? "FireWaterPipeTee" : "FireWaterPipeElbow" : item.fitting === "coupling" ? "ConduitConnector" : item.fitting === "tee" ? "ConduitTee" : "ConduitElbow", item.fitting === "bridge-bend" ? { fitting: "elbow" } : {});
+  for (const item of overlay.fittings) put(item, systemFor(item.system), item.system === "sprinkler" ? item.fitting === "coupling" ? "FireWaterPipeConnector" : item.fitting === "tee" ? "FireWaterPipeTee" : "FireWaterPipeElbow" : item.system === "fire-signal" ? item.fitting === "coupling" ? "FireSignalConduitConnector" : "FireSignalConduitElbow" : item.fitting === "coupling" ? "ConduitConnector" : item.fitting === "tee" ? "ConduitTee" : "ConduitElbow", item.fitting === "bridge-bend" ? { fitting: "elbow" } : {});
   for (const item of overlay.junctionBoxes) put(item, systemFor(item.system), "JunctionBox");
   for (const item of overlay.hvac.indoorUnits) put(item, "HVACSystem", "FanCoilUnit", { ports: [item.powerPort, item.controlPort].filter(Boolean) });
   const hvacSegmentsById = new Map(overlay.hvac.segments.map((segment) => [segment.id, segment]));

@@ -19,8 +19,10 @@ describe("Builder system workbench", () => {
     expect(BUILDER_CARDS.hvac).toContainEqual(expect.objectContaining({ tool: "point", deviceType: "sensor" }));
     expect(BUILDER_CARDS.smart).toEqual([expect.objectContaining({ tool: "point", deviceType: "rfid-reader" })]);
     expect(BUILDER_CARDS.fire).toEqual([
+      expect.objectContaining({ label: "烟感", tool: "point", deviceType: "smoke-detector", system: "fire-signal" }),
       expect.objectContaining({ label: "喷淋头", tool: "point", deviceType: "sprinkler-head" }),
       expect.objectContaining({ label: "绘制消防管", tool: "draw", system: "sprinkler" }),
+      expect.objectContaining({ label: "绘制消防信号线", tool: "draw", system: "fire-signal" }),
       expect.objectContaining({ label: "创建管线分支", tool: "branch", system: "sprinkler" }),
     ]);
   });
@@ -35,7 +37,9 @@ describe("Builder system workbench", () => {
     expect(BUILDER_CARDS.hvac.filter((card) => card.section === "edit").map((card) => card.label)).toEqual(["添加风口"]);
     expect(BUILDER_CARDS.hvac.some((card) => card.tool === "hvac-control")).toBe(true);
     expect(BUILDER_CARDS.smart.map((card) => card.label)).toEqual(["RFID 读写器"]);
-    expect(BUILDER_CARDS.fire.map((card) => card.section)).toEqual(["place", "draw", "edit"]);
+    expect(BUILDER_CARDS.fire.map((card) => card.section)).toEqual(["place", "place", "draw", "draw", "edit"]);
+    expect(BUILDER_CARDS.fire.filter((card) => card.section === "place").map((card) => card.label)).toContain("烟感");
+    expect(BUILDER_CARDS.fire.filter((card) => card.section === "draw").map((card) => card.system)).toEqual(["sprinkler", "fire-signal"]);
   });
 
   it("keeps a Builder card inside its own allowed system or device catalogue", () => {

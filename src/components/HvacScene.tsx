@@ -1,13 +1,14 @@
 import { Html } from '@react-three/drei';
 import type { ThreeEvent } from '@react-three/fiber';
 import { useMemo } from 'react';
-import { CatmullRomCurve3, Matrix4, Quaternion, TubeGeometry, Vector3 } from 'three';
-import { HVAC_COLORS, HVAC_CONTROL_CONDUIT_DIAMETER_MM, hvacThermostatPortCandidates, indoorUnitCasingSizeMeters, indoorUnitPort, type HvacAxisPlanarReference, type HvacThermostatPortCandidate } from '../domain/hvac';
+import { Matrix4, Quaternion, Vector3 } from 'three';
+import { HVAC_COLORS, HVAC_CONTROL_CONDUIT_DIAMETER_MM, ensureHvacUnitPorts, hvacThermostatPortCandidates, indoorUnitCasingSizeMeters, indoorUnitPort, planHvacControlDraft, type HvacAxisPlanarReference, type HvacThermostatPortCandidate } from '../domain/hvac';
 import { deviceFrame } from '../domain/devices';
 import type { ConduitOverlayDocument, HvacControlFitting, HvacDuctOutlet, HvacDuctSegment, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, RoutePoint, Vec3 } from '../domain/overlay';
 import { HVAC_DEFAULT_OUTLET_MM } from '../domain/hvac';
 import type { DevicePositionDescription } from '../domain/device-positioning';
 import { PositionDimensionGuides, type PositionDimensionGuide } from './PositionDimensionGuides';
+import { RouteFittingGeometry, RoutePipeGeometry, RoutePlanPreview } from './ConduitScene';
 
 const vector = (point: Vec3) => new Vector3(...point);
 function ductTransform(segment: HvacDuctSegment) { const start = vector(segment.start.position), end = vector(segment.end.position), delta = end.clone().sub(start); return { center: start.clone().add(end).multiplyScalar(.5), length: delta.length(), rotation: new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), delta.normalize()) }; }
@@ -54,19 +55,11 @@ function outletVisualTransform(segment: HvacDuctSegment, unit: HvacIndoorUnit, o
   return { transform, localPosition: [localX, localY, localZ] as Vec3, geometry: topBottom ? [outlet.sizeMm[1] / 1000, outlet.sizeMm[0] / 1000, .015] as [number, number, number] : [.015, outlet.sizeMm[0] / 1000, outlet.sizeMm[1] / 1000] as [number, number, number] };
 }
 function HvacControlFittingVisual({ fitting, segments, selected, deleteMode, onSelect, onDelete }: { fitting: HvacControlFitting; segments: HvacDuctSegment[]; selected: boolean; deleteMode: boolean; onSelect: (id: string) => void; onDelete?: (id: string) => void }) {
-  const geometry = useMemo(() => {
-    if (!fitting.arc) return null;
-    const center = vector(fitting.arc.center), start = vector(fitting.arc.start), normal = vector(fitting.arc.normal).normalize(), radius = start.distanceTo(center), radial = start.clone().sub(center).normalize(), tangent = new Vector3().crossVectors(normal, radial).normalize();
-    const points = Array.from({ length: 13 }, (_, index) => { const angle = fitting.arc!.sweepRadians * index / 12; return center.clone().addScaledVector(radial, Math.cos(angle) * radius).addScaledVector(tangent, Math.sin(angle) * radius); });
-    return new TubeGeometry(new CatmullRomCurve3(points), 24, fitting.diameterMm / 2000, 8, false);
-  }, [fitting]);
   const adjacent = segments.find(segment => fitting.segmentIds.includes(segment.id));
-  const direction = adjacent ? vector(adjacent.end.position).sub(vector(adjacent.start.position)).normalize() : new Vector3(0, 0, 1);
-  const rotation = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), direction);
+  const delta = adjacent ? vector(adjacent.end.position).sub(vector(adjacent.start.position)).normalize() : null;
+  const couplingDirection: Vec3 | undefined = delta ? [delta.x, delta.y, delta.z] : undefined;
   const onClick = (event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (deleteMode) onDelete?.(fitting.id); else onSelect(fitting.id); };
-  if (geometry) return <mesh name={fitting.id} geometry={geometry} onClick={onClick}><meshStandardMaterial color={selected ? '#f59e0b' : '#ffffff'} roughness={.6} /></mesh>;
-  if (fitting.fitting === 'coupling') return <mesh name={fitting.id} position={fitting.position.position} quaternion={rotation} onClick={onClick}><cylinderGeometry args={[fitting.diameterMm * .65 / 1000, fitting.diameterMm * .65 / 1000, .04, 12]} /><meshStandardMaterial color={selected ? '#f59e0b' : '#d1d5db'} roughness={.55} /></mesh>;
-  return <mesh name={fitting.id} position={fitting.position.position} onClick={onClick}><sphereGeometry args={[fitting.diameterMm / 2000, 12, 10]} /><meshStandardMaterial color={selected ? '#f59e0b' : '#ffffff'} roughness={.6} /></mesh>;
+  return <group name={fitting.id} onClick={onClick}><RouteFittingGeometry fitting={fitting} couplingDirection={couplingDirection} color={selected ? '#f59e0b' : '#ffffff'} /></group>;
 }
 function outletPreviewAtPointer(segment: HvacDuctSegment, unit: HvacIndoorUnit, event: ThreeEvent<PointerEvent>): HvacOutletPreview | null {
   const normal = event.face?.normal;
@@ -90,7 +83,14 @@ function OutletVisual({ segment, unit, outlet, preview = false, onSelect }: { se
   const visual = outletVisualTransform(segment, unit, outlet);
   return <group position={visual.transform.center} quaternion={visual.transform.rotation}><mesh name={preview ? "hvac-outlet-preview" : "hvac-outlet"} position={visual.localPosition} raycast={preview ? () => null : undefined} onClick={onSelect}><boxGeometry args={visual.geometry} /><meshBasicMaterial color="#ffffff" transparent={preview} opacity={preview ? .96 : 1} depthTest={false} /></mesh></group>;
 }
-export function HvacScene({ overlay, selectedId, onSelect, onStartDuct, ductStartActive = false, onDuctOutletPreview, onPlaceDuctOutlet, outletPreview, selectedIndoorUnitDimensions, selectedThermostatDimensions, previewPosition, draftDuct, routeStartChooser = false, controlRouteActive = false, powerRouteActive = false, deleteMode = false, draftControlRoute, targetAssist, onStartControlRoute, onTargetControlPort, onTargetPowerPort, onHoverTargetPort, onDelete, systemVisible }: { overlay: ConduitOverlayDocument; selectedId: string | null; onSelect: (id: string) => void; onStartDuct?: (unitId: string, system: HvacSystem) => void; ductStartActive?: boolean; onDuctOutletPreview?: (preview: HvacOutletPreview | null) => void; onPlaceDuctOutlet?: (preview: HvacOutletPreview) => void; outletPreview?: HvacOutletPreview | null; selectedIndoorUnitDimensions?: IndoorUnitDimensionState; selectedThermostatDimensions?: DevicePositionDescription; previewPosition?: Vec3 | null; draftDuct?: { unitId: string; system: HvacSystem; end: Vec3 } | null; routeStartChooser?: boolean; controlRouteActive?: boolean; powerRouteActive?: boolean; deleteMode?: boolean; draftControlRoute?: { thermostatId: string; points: RoutePoint[]; cursor?: Vec3 | null } | null; targetAssist?: { point: Vec3; mode: 'alignment' | 'connect' } | null; onStartControlRoute?: (thermostatId: string, candidate: HvacThermostatPortCandidate) => void; onTargetControlPort?: (unitId: string) => void; onTargetPowerPort?: (unitId: string, portId: string, position: RoutePoint) => void; onHoverTargetPort?: (unitId: string, portId: string, kind: 'power' | 'control', hovered: boolean) => void; onDelete?: (id: string) => void; systemVisible?: boolean }) {
+export function HvacScene({ overlay, selectedId, onSelect, onStartDuct, ductStartActive = false, onDuctOutletPreview, onPlaceDuctOutlet, outletPreview, selectedIndoorUnitDimensions, selectedThermostatDimensions, previewPosition, draftDuct, routeStartChooser = false, controlRouteActive = false, powerRouteActive = false, deleteMode = false, draftControlRoute, targetAssist, onStartControlRoute, onTargetControlPort, onTargetPowerPort, onHoverTargetPort, onDelete, systemVisible }: { overlay: ConduitOverlayDocument; selectedId: string | null; onSelect: (id: string) => void; onStartDuct?: (unitId: string, system: HvacSystem) => void; ductStartActive?: boolean; onDuctOutletPreview?: (preview: HvacOutletPreview | null) => void; onPlaceDuctOutlet?: (preview: HvacOutletPreview) => void; outletPreview?: HvacOutletPreview | null; selectedIndoorUnitDimensions?: IndoorUnitDimensionState; selectedThermostatDimensions?: DevicePositionDescription; previewPosition?: Vec3 | null; draftDuct?: { unitId: string; system: HvacSystem; end: Vec3 } | null; routeStartChooser?: boolean; controlRouteActive?: boolean; powerRouteActive?: boolean; deleteMode?: boolean; draftControlRoute?: { thermostatId: string; points: RoutePoint[]; cursor?: Vec3 | null; targetUnitId?: string; bendRadiusMm?: number } | null; targetAssist?: { point: Vec3; mode: 'alignment' | 'connect' } | null; onStartControlRoute?: (thermostatId: string, candidate: HvacThermostatPortCandidate) => void; onTargetControlPort?: (unitId: string) => void; onTargetPowerPort?: (unitId: string, portId: string, position: RoutePoint) => void; onHoverTargetPort?: (unitId: string, portId: string, kind: 'power' | 'control', hovered: boolean) => void; onDelete?: (id: string) => void; systemVisible?: boolean }) {
+  const controlPreviewPlan = useMemo(() => {
+    if (!draftControlRoute) return null;
+    const target = draftControlRoute.targetUnitId && overlay.hvac.indoorUnits.find(unit => unit.id === draftControlRoute.targetUnitId);
+    const targetPort = target && ensureHvacUnitPorts(target).controlPort?.position;
+    const points = [...draftControlRoute.points, ...(targetPort ? [targetPort] : draftControlRoute.cursor ? [{ position: draftControlRoute.cursor }] : [])];
+    return planHvacControlDraft(overlay, draftControlRoute.thermostatId, points, { bendRadiusMm: draftControlRoute.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
+  }, [overlay, draftControlRoute]);
   if (!(systemVisible ?? overlay.hvac.visible)) return null;
   const ductFor = (segmentId: string) => overlay.hvac.ducts.find(duct => duct.segmentIds.includes(segmentId));
   const unitFor = (segmentId: string) => { const duct = ductFor(segmentId); return duct ? overlay.hvac.indoorUnits.find(unit => unit.id === duct.indoorUnitId) : undefined; };
@@ -120,13 +120,8 @@ export function HvacScene({ overlay, selectedId, onSelect, onStartDuct, ductStar
       const candidates = canChooseHole ? hvacThermostatPortCandidates(item.position, item.sizeMm) : item.controlPort ? [{ key: 'selected', position: item.controlPort.position, direction: item.controlPort.direction }] : [];
       return candidates.map(candidate => <mesh key={`${item.id}:${candidate.key}`} name={`${item.id}:control-port:${candidate.key}`} position={candidate.position.position} renderOrder={20} onClick={(event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (canChooseHole) onStartControlRoute?.(item.id, candidate); else onSelect(item.id); }}><sphereGeometry args={[canChooseHole ? .018 : .016, 12, 10]} /><meshBasicMaterial color={canChooseHole ? '#22c55e' : '#a78bfa'} depthTest={false} /></mesh>);
     })}
-    {overlay.hvac.controlSegments.map(segment => { const transform = ductTransform(segment); return transform.length < .001 ? null : <mesh key={segment.id} name={segment.id} position={transform.center} quaternion={transform.rotation} onClick={(event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (deleteMode) onDelete?.(segment.id); else onSelect(segment.id); }}><cylinderGeometry args={[HVAC_CONTROL_CONDUIT_DIAMETER_MM / 2000, HVAC_CONTROL_CONDUIT_DIAMETER_MM / 2000, transform.length, 10]} /><meshStandardMaterial color={selectedId === segment.id ? '#f59e0b' : '#ffffff'} roughness={.6} /></mesh>; })}
+    {overlay.hvac.controlSegments.map(segment => { const transform = ductTransform(segment); if (transform.length < .001) return null; const routeSegment = { ...segment, type: 'conduit-segment' as const, system: 'network' as const, diameterMm: HVAC_CONTROL_CONDUIT_DIAMETER_MM, createdAt: '' }; return <group key={segment.id} name={segment.id} onClick={(event: ThreeEvent<MouseEvent>) => { event.stopPropagation(); if (deleteMode) onDelete?.(segment.id); else onSelect(segment.id); }}><RoutePipeGeometry segment={routeSegment} color={selectedId === segment.id ? '#f59e0b' : '#ffffff'} /></group>; })}
     {overlay.hvac.controlFittings.map(fitting => <HvacControlFittingVisual key={fitting.id} fitting={fitting} segments={overlay.hvac.controlSegments.filter(segment => fitting.segmentIds.includes(segment.id))} selected={selectedId === fitting.id} deleteMode={deleteMode} onSelect={onSelect} onDelete={onDelete} />)}
-    {draftControlRoute && (() => {
-      const thermostat = overlay.hvac.thermostats.find(item => item.id === draftControlRoute.thermostatId);
-      if (!thermostat?.controlPort) return null;
-      const points = [thermostat.controlPort.position, ...draftControlRoute.points, ...(draftControlRoute.cursor ? [{ position: draftControlRoute.cursor }] : [])];
-      return points.slice(0, -1).map((start, index) => { const end = points[index + 1]!; const transform = ductTransform({ id: `draft-control-${index}`, start, end }); return transform.length < .001 ? null : <mesh key={index} name="hvac-control-draft" position={transform.center} quaternion={transform.rotation} raycast={() => null}><cylinderGeometry args={[HVAC_CONTROL_CONDUIT_DIAMETER_MM / 2000, HVAC_CONTROL_CONDUIT_DIAMETER_MM / 2000, transform.length, 10]} /><meshStandardMaterial color="#ffffff" transparent opacity={.55} /></mesh>; });
-    })()}
+    {controlPreviewPlan && <RoutePlanPreview plan={controlPreviewPlan} color={controlPreviewPlan.canCommit ? '#ffffff' : '#ef4444'} opacity={.62} />}
   </group>;
 }

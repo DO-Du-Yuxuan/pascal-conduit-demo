@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBeam, validateBeam } from "./beams";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./unified-project";
+import { commitFireSignalRoute, commitFreeRouteToDevice, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, createNetworkDevice, createSmokeDetector, openRouteEndpoints, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS } from "./devices";
 import { commitPlannedRoute, planRoute } from "./routing";
 import { commitWorkspaceTransaction, createWorkspace, projectDocument } from "./workspace";
 import { parseProject } from "../parser/parse";
@@ -24,6 +25,74 @@ function project() {
 }
 
 describe("unified project file", () => {
+  it("round-trips FireProtectionSystem smoke detectors, white signal conduit, and sealed wall ends", () => {
+    const raw = project();
+    raw.nodes.level.children.push("ceiling");
+    raw.nodes.ceiling = { id: "ceiling", type: "Ceiling", parentId: "level", polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] };
+    const loaded = decodeUnifiedProject(raw, "fire-signal.json", "sha");
+    const ceilingPoint = (x: number) => ({ position: [x, 2.7, 1] as [number, number, number], attachment: { hostId: "ceiling", hostKind: "ceiling" as const, surface: "bottom", normal: [0, -1, 0] as [number, number, number], levelId: "level" } });
+    const first = createSmokeDetector(ceilingPoint(0)), second = createSmokeDetector(ceilingPoint(2));
+    const startPort = first.ports[0]!, targetPort = second.ports[1]!;
+    const pipePlan = planRoute("fire-signal", 20, "surface", [startPort.position, targetPort.position]);
+    const connected = commitFireSignalRoute({ ...loaded.overlay, devices: [first, second] }, pipePlan, first.id, startPort.id, second.id, targetPort.id);
+    const wallPoint = { position: [3, 2.7, 1] as [number, number, number], attachment: { hostId: "wall", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "level" } };
+    const wallPlan = planRoute("fire-signal", 20, "surface", [second.ports[2]!.position, wallPoint]);
+    const terminated = commitFireSignalRoute(connected, wallPlan, second.id, second.ports[2]!.id, undefined, undefined, true);
+    const saved = encodeUnifiedProject(loaded.projectRaw, terminated);
+    const smokeNodes = Object.values(saved.nodes).filter((node: any) => node.type === "SmokeDetector");
+    const fireSignalNodes = Object.values(saved.nodes).filter((node: any) => node.type === "FireSignalConduit");
+    expect(smokeNodes).toHaveLength(2);
+    expect(fireSignalNodes).toHaveLength(2);
+    const wallTerminalNode = fireSignalNodes.find((node: any) => node.endTermination === "wall") as any;
+    expect(wallTerminalNode).toMatchObject({ system: "fire-signal", endTermination: "wall" });
+    expect(wallTerminalNode).not.toHaveProperty("endPortId");
+    expect(saved.nodes.FireProtectionSystem.children).toEqual(expect.arrayContaining([...smokeNodes.map((node: any) => node.id), ...fireSignalNodes.map((node: any) => node.id)]));
+    const reopened = decodeUnifiedProject(saved, "fire-signal-saved.json", "sha2");
+    expect(reopened.overlay.devices.filter((device) => device.deviceType === "smoke-detector")).toHaveLength(2);
+    expect(reopened.overlay.segments.filter((segment) => segment.system === "fire-signal")).toHaveLength(2);
+    expect(reopened.overlay.segments.find((segment) => segment.endTermination === "wall")?.end.attachment?.hostKind).toBe("wall");
+  });
+
+  it("round-trips a continuous sprinkler tee branch and its open continuation stub", () => {
+    const loaded = decodeUnifiedProject(project(), "sprinkler-branch.json", "sha");
+    const head = createNetworkDevice("sprinkler-head", { position: [2, 2.7, 1], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "level" } });
+    const headPort = head.ports[0]!;
+    const mainPlan = planRoute("sprinkler", 50, "suspended", [{ position: [0, 2.7, 0] }, { position: [2, 2.7, 0] }]);
+    const branchPort = { position: [2, 2.7, SPRINKLER_TEE_SOCKET_METERS] as [number, number, number] };
+    const branchPlan = planRoute("sprinkler", 50, "suspended", [branchPort, headPort.position]);
+    const stubStart = { position: [2 + SPRINKLER_TEE_SOCKET_METERS, 2.7, 0] as [number, number, number] };
+    const stubEnd = { position: [stubStart.position[0] + SPRINKLER_CONTINUATION_STUB_METERS, 2.7, 0] as [number, number, number] };
+    const continuationPlan = planRoute("sprinkler", 50, "suspended", [stubStart, stubEnd]);
+    const branched = commitFreeSprinklerRouteToDeviceBranch({ ...loaded.overlay, devices: [head] }, mainPlan, branchPlan, continuationPlan, head.id, headPort.id);
+    const tee = branched.fittings.find((fitting) => fitting.fitting === "tee")!;
+    const encoded = encodeUnifiedProject(loaded.projectRaw, branched) as any;
+    expect(encoded.nodes[tee.id]).toMatchObject({ type: "FireWaterPipeTee", segmentIds: tee.segmentIds });
+    expect(tee.ports.every((port) => port.connectedSegmentIds.length === 1 && tee.segmentIds.includes(port.segmentId!))).toBe(true);
+    const reopened = decodeUnifiedProject(encoded, "sprinkler-branch-saved.json", "sha2");
+    const restoredTee = reopened.overlay.fittings.find((fitting) => fitting.id === tee.id)!;
+    expect(restoredTee.segmentIds).toEqual(tee.segmentIds);
+    expect(restoredTee.ports.map((port) => port.connectedSegmentIds)).toEqual(tee.ports.map((port) => port.connectedSegmentIds));
+    expect(openRouteEndpoints(reopened.overlay).some((endpoint) => endpoint.segmentId === continuationPlan.segments[0]!.id && endpoint.end === "end")).toBe(true);
+  });
+
+  it("round-trips a second fire-water pipe from an already connected sprinkler head", () => {
+    const loaded = decodeUnifiedProject(project(), "sprinkler-pass-through.json", "sha");
+    const head = createNetworkDevice("sprinkler-head", { position: [2, 2.7, 1], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "level" } });
+    const port = head.ports[0]!;
+    const incomingPlan = planRoute("sprinkler", 50, "suspended", [{ position: [0, 2.7, 1] }, port.position]);
+    const incoming = commitFreeRouteToDevice({ ...loaded.overlay, devices: [head] }, incomingPlan, head.id, port.id);
+    const outgoingPlan = planRoute("sprinkler", 50, "suspended", [port.position, { position: [2, 2.7, 3] }]);
+    const connected = commitSprinklerDeviceRoute(incoming, outgoingPlan, { deviceId: head.id, portId: port.id, connectedSegmentId: incomingPlan.segments[0]!.id });
+    const saved = encodeUnifiedProject(loaded.projectRaw, connected) as any;
+    const headNode = saved.nodes[head.id];
+    expect(headNode.ports[0].connectedSegmentIds).toEqual([incomingPlan.segments[0]!.id, outgoingPlan.segments[0]!.id]);
+    expect(saved.nodes[incomingPlan.segments[0]!.id].endPortId).toBe(port.id);
+    expect(saved.nodes[outgoingPlan.segments[0]!.id].startPortId).toBe(port.id);
+    const reopened = decodeUnifiedProject(saved, "sprinkler-pass-through-saved.json", "sha2");
+    expect(reopened.overlay.devices.find((device) => device.id === head.id)?.ports[0]?.connectedSegmentIds).toEqual(headNode.ports[0].connectedSegmentIds);
+    expect(reopened.overlay.segments.filter((segment) => segment.startPortId === port.id || segment.endPortId === port.id)).toHaveLength(2);
+  });
+
   it("opens and saves one file with the building, electrical content, and unknown future data intact", () => {
     const raw = project();
     const loaded = decodeUnifiedProject(raw, "project.json", "sha");
@@ -258,6 +327,8 @@ it("rejects route and fitting discriminators that conflict with their public own
     { node: route("Conduit", "ElectricalSystem", "lighting"), parent: "ElectricalSystem", error: /Conduit route 的 system 与 ElectricalSystem 不一致/ },
     { node: route("Conduit", "LightingSystem", "network"), parent: "LightingSystem", error: /Conduit route 的 system 与 LightingSystem 不一致/ },
     { node: route("FireWaterPipe", "FireProtectionSystem", "network"), parent: "FireProtectionSystem", error: /FireWaterPipe route 的 system 与 FireProtectionSystem 不一致/ },
+    { node: route("FireSignalConduit", "FireProtectionSystem", "sprinkler"), parent: "FireProtectionSystem", error: /FireSignalConduit route 的 system 必须为 fire-signal/ },
+    { node: route("FireSignalConduitElbow", "FireProtectionSystem", "sprinkler", { fitting: "elbow" }), parent: "FireProtectionSystem", error: /FireSignalConduitElbow route 的 system 必须为 fire-signal/ },
     { node: route("ConduitConnector", "ElectricalSystem", "receptacle", { fitting: "tee" }), parent: "ElectricalSystem", error: /ConduitConnector route 的 fitting 必须为 coupling/ },
     { node: route("FireWaterPipeElbow", "FireProtectionSystem", "sprinkler", { fitting: "tee" }), parent: "FireProtectionSystem", error: /FireWaterPipeElbow route 的 fitting 必须为 elbow/ },
     { node: route("JunctionBox", "LightingSystem", "network"), parent: "LightingSystem", error: /JunctionBox route 的 system 与 LightingSystem 不一致/ },
@@ -268,6 +339,13 @@ it("rejects route and fitting discriminators that conflict with their public own
     raw.nodes[parent].children.push("route");
     expect(() => decodeUnifiedProject(raw, "bad-route.json", "sha"), node.type).toThrow(error);
   }
+});
+
+it("rejects SmokeDetector ports that belong to a different subsystem", () => {
+  const raw = project();
+  raw.nodes.smoke = { id: "smoke", type: "SmokeDetector", parentId: "FireProtectionSystem", deviceType: "smoke-detector", name: "烟雾传感器", position: { position: [0, 2.7, 0] }, sizeMm: [60, 60, 30], orientation: [0, -1, 0], systems: ["sprinkler"], ports: [], createdAt: "now" };
+  raw.nodes.FireProtectionSystem.children.push("smoke");
+  expect(() => decodeUnifiedProject(raw, "bad-smoke.json", "sha")).toThrow(/SmokeDetector smoke 必须有四个消防信号双向端口/);
 });
 
 it("accepts route authoring only under ElectricalSystem or LightingSystem", () => {

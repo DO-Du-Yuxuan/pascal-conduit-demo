@@ -5,9 +5,10 @@ type DeviceEnvelope = { deviceType: string; sizeMm: readonly number[]; frame?: {
 /** Half of a placed device's physical envelope projected onto world vertical. */
 export function deviceVerticalHalfExtentMeters(device: DeviceEnvelope): number {
   const [width = 0, height = 0, depth = 0] = device.sizeMm.map(value => Number.isFinite(value) ? value / 1000 : 0);
+  const diskDevice = device.deviceType === "luminaire" || device.deviceType === "smoke-detector" || device.deviceType === "sensor";
   const frame = device.frame;
-  if (!frame) return (device.deviceType === "luminaire" || device.deviceType === "sensor") ? depth / 2 : height / 2;
-  if (device.deviceType === "luminaire" || device.deviceType === "sensor") {
+  if (!frame) return diskDevice ? depth / 2 : height / 2;
+  if (diskDevice) {
     const radialVertical = Math.hypot(frame.right[1] ?? 0, frame.up[1] ?? 0) * width / 2;
     return radialVertical + Math.abs(frame.front[1] ?? 0) * depth / 2;
   }

@@ -223,6 +223,20 @@ describe("device point positioning transaction", () => {
     expect(moved.overlay.devices[0]!.position.position[1] - deviceVerticalHalfExtentMeters(moved.overlay.devices[0]!) - .05).toBeCloseTo(2.1);
   });
 
+  it("uses the smoke detector's 30 mm disk thickness for lower-edge elevation and radial ray hits", () => {
+    const smoke = createReferencePlaneDevice("smoke-detector", [0, 1.5, 0], "L0", 1500);
+    const selected = createReferencePlaneDevice("luminaire", [.026, 2, .026], "L0", 2000);
+    const floor = quad("floor", "slab", [-2, 0, -2], [2, 0, -2], [2, 0, 2], [-2, 0, 2]);
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: floor };
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [selected, smoke] };
+    const description = describeDevicePosition(overlay, selected.id, context);
+    const moved = editDevicePosition({ ...createEmptyOverlay("a", "sha"), devices: [smoke] }, { deviceIds: [smoke.id], finishedFloorElevationMm: 2000 }, context, "preview");
+
+    expect(deviceVerticalHalfExtentMeters(smoke)).toBeCloseTo(.015);
+    expect(moved.overlay.devices[0]?.position.position[1]).toBeCloseTo(2.015);
+    expect(description.vertical).toMatchObject({ millimeters: 2000, witness: { objectId: "floor" } });
+  });
+
   it("ignores furniture as a dimension target even when furniture surfaces are present", () => {
     const selected = createNetworkDevice("socket", { position: [0, .05, 0], attachment: { hostId: "slab-a", hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: "L0", basis: { u: [1, 0, 0], v: [0, 0, 1] } } });
     const overlay = { ...createEmptyOverlay("a", "sha"), devices: [selected] };

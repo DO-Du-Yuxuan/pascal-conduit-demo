@@ -1,14 +1,25 @@
 import React from 'react';
-import type { ConduitOverlayDocument, HvacDuctOutlet, HvacIndoorUnit, HvacSystem, Vec3 } from '../domain/overlay';
+import type { BendArc, ConduitOverlayDocument, DeviceMount, HvacDuctOutlet, HvacIndoorUnit, HvacSystem, RoutePoint, Vec3 } from '../domain/overlay';
 import { HVAC_COLORS, indoorUnitFootprint, indoorUnitPort } from '../domain/hvac';
+import type { PlanContext } from './model';
+import { planOutlinedConduitStrokeWidths } from './line-width';
 
 type Point = readonly [number, number];
+const HVAC_CONTROL_OUTLINE = '#64748b';
+const HVAC_CONTROL_CORE = '#ffffff';
+function hvacControlStrokeLayers(diameterMm: number, scale: number) {
+  const { outerWidth, innerWidth } = planOutlinedConduitStrokeWidths(diameterMm, scale, 2);
+  return [{ role: 'outline', stroke: HVAC_CONTROL_OUTLINE, strokeWidth: outerWidth }, { role: 'core', stroke: HVAC_CONTROL_CORE, strokeWidth: innerWidth }] as const;
+}
 const planPoint = (point: Vec3): Point => [point[0], point[2]];
 const distance = (start: Point, end: Point) => Math.hypot(end[0] - start[0], end[1] - start[1]);
 const points = (items: readonly Point[]) => items.map(point => point.join(',')).join(' ');
 
-function levelFor(item: { position: { attachment?: { levelId: string | null } }; mount?: { kind: string; levelId?: string } }) {
-  return item.position.attachment?.levelId ?? (item.mount?.kind === 'reference-plane' ? item.mount.levelId ?? null : null);
+function levelFor(item: { position: RoutePoint; mount?: DeviceMount }, context: PlanContext) {
+  const attachment = item.position.attachment ?? (item.mount?.kind === 'host' ? item.mount.attachment : undefined);
+  const missingHostLevel = attachment && !context.scene.nodes[attachment.hostId] ? attachment.levelId : null;
+  const mountedLevel = item.mount?.kind === 'reference-plane' ? item.mount.levelId : null;
+  return context.hostLevel(attachment) ?? mountedLevel ?? missingHostLevel;
 }
 
 function ductOutline(start: Point, end: Point, width: number): readonly [Point, Point, Point, Point] | null {
@@ -16,6 +27,14 @@ function ductOutline(start: Point, end: Point, width: number): readonly [Point, 
   if (length < 1e-6) return null;
   const normal: Point = [-(end[1] - start[1]) / length * width / 2, (end[0] - start[0]) / length * width / 2];
   return [[start[0] + normal[0], start[1] + normal[1]], [end[0] + normal[0], end[1] + normal[1]], [end[0] - normal[0], end[1] - normal[1]], [start[0] - normal[0], start[1] - normal[1]]];
+}
+
+function arcPlanPoints(arc: BendArc): Vec3[] {
+  const start: Vec3 = [arc.start[0] - arc.center[0], arc.start[1] - arc.center[1], arc.start[2] - arc.center[2]];
+  const radius = Math.hypot(...start), normalLength = Math.max(1e-9, Math.hypot(...arc.normal));
+  const normal = arc.normal.map(value => value / normalLength) as Vec3;
+  const tangent: Vec3 = [(normal[1] * start[2] - normal[2] * start[1]) / Math.max(1e-9, radius), (normal[2] * start[0] - normal[0] * start[2]) / Math.max(1e-9, radius), (normal[0] * start[1] - normal[1] * start[0]) / Math.max(1e-9, radius)];
+  return Array.from({length: 17}, (_, index) => { const angle = arc.sweepRadians * index / 16; return [arc.center[0] + start[0] * Math.cos(angle) + tangent[0] * radius * Math.sin(angle), arc.center[1] + start[1] * Math.cos(angle) + tangent[1] * radius * Math.sin(angle), arc.center[2] + start[2] * Math.cos(angle) + tangent[2] * radius * Math.sin(angle)]; });
 }
 
 function HvacOutletSymbol({ outlet, start, end, width, color, scale, selected, onSelect }: { outlet: HvacDuctOutlet; start: Point; end: Point; width: number; color: string; scale: number; selected: boolean; onSelect: () => void }) {
@@ -64,8 +83,8 @@ function IndoorUnitSymbol({ unit, selected, scale, rotation, onSelect }: { unit:
   return <g className="hvac-plan-unit" data-hvac-indoor-unit={unit.id} onClick={onSelect}><polygon points={points(footprint.map(planPoint))} fill="#f8fafc" stroke={selected ? '#f36b00' : '#475569'} strokeWidth={1.5 / scale} />{port(supply, 'supply')}{port(returning, 'return')}<path d={`M${center[0] - right[0] * unit.sizeMm[1] / 5000} ${center[1] - right[1] * unit.sizeMm[1] / 5000}L${center[0] + right[0] * unit.sizeMm[1] / 5000} ${center[1] + right[1] * unit.sizeMm[1] / 5000}`} stroke="#94a3b8" strokeWidth={1 / scale} /><text x={center[0]} y={center[1]} transform={`rotate(${-rotation} ${center[0]} ${center[1]})`} textAnchor="middle" dominantBaseline="middle" fontSize=".15" fill="#334155" stroke="none">内机</text></g>;
 }
 
-export function HvacPlan({ overlay, levelId, selectedId, onSelect, scale, rotation, floorElevation = 0 }: { overlay: ConduitOverlayDocument; levelId: string; selectedId: string | null; onSelect: (id: string) => void; scale: number; rotation: number; floorElevation?: number }) {
-  const units = overlay.hvac.indoorUnits.filter(unit => levelFor(unit) === levelId);
+export function HvacPlan({ overlay, levelId, selectedId, onSelect, scale, rotation, floorElevation = 0, context }: { overlay: ConduitOverlayDocument; levelId: string; selectedId: string | null; onSelect: (id: string) => void; scale: number; rotation: number; floorElevation?: number; context: PlanContext }) {
+  const units = overlay.hvac.indoorUnits.filter(unit => levelFor(unit, context) === levelId);
   const unitIds = new Set(units.map(unit => unit.id));
   const ducts = overlay.hvac.ducts.filter(duct => unitIds.has(duct.indoorUnitId));
   const ductsBySegment = new Map(ducts.flatMap(duct => duct.segmentIds.map(segmentId => [segmentId, duct] as const)));
@@ -88,10 +107,52 @@ export function HvacPlan({ overlay, levelId, selectedId, onSelect, scale, rotati
       return <HvacOutletSymbol key={outlet.id} outlet={outlet} start={planPoint(segment.start.position)} end={planPoint(segment.end.position)} width={unit.sectionMm[0] / 1000} color={HVAC_COLORS[duct.system]} scale={scale} selected={selectedId === outlet.id} onSelect={() => onSelect(outlet.id)} />;
     })}
     {units.map(unit => <IndoorUnitSymbol key={unit.id} unit={unit} selected={selectedId === unit.id} scale={scale} rotation={rotation} onSelect={() => onSelect(unit.id)} />)}
-    {overlay.hvac.thermostats.filter(item => levelFor(item) === levelId).map(item => {
+    {overlay.hvac.thermostats.filter(item => levelFor(item, context) === levelId).map(item => {
       const size = item.sizeMm[0] / 1000;
       return <g key={item.id} data-hvac-thermostat={item.id} transform={`translate(${item.position.position[0]} ${item.position.position[2]}) rotate(${-rotation})`} onClick={event => { event.stopPropagation(); onSelect(item.id); }}><rect x={-size / 2} y={-size / 2} width={size} height={size} fill="#fff" stroke={selectedId === item.id ? '#f36b00' : '#7c3aed'} strokeWidth={1.5 / scale}/><circle r={size * .19} fill="none" stroke="#7c3aed" strokeWidth={1 / scale}/></g>;
     })}
-    {overlay.hvac.controlSegments.filter(segment => levelFor({ position: segment.start }) === levelId || levelFor({ position: segment.end }) === levelId).map(segment => { const attachments=[segment.start.attachment,segment.end.attachment].filter(Boolean), midpointY=(segment.start.position[1]+segment.end.position[1])/2, suspended=attachments.some(attachment=>attachment?.hostKind==='ceiling'&&/back/i.test(attachment.surface)) || midpointY-floorElevation>=1.8&&attachments.length<2; return <line key={segment.id} data-hvac-control-conduit={segment.id} data-suspended={suspended||undefined} x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke="#ffffff" strokeWidth={2 / scale} strokeOpacity=".95" strokeDasharray={suspended?'.12 .08':undefined} pointerEvents="none" />; })}
+    {(() => {
+      const routeForSegment = new Map(overlay.hvac.controlConduits.flatMap(route => route.segmentIds.map(id => [id, route] as const)));
+      const routeForFitting = new Map(overlay.hvac.controlConduits.flatMap(route => route.fittingIds.map(id => [id, route] as const)));
+      const routeLevels = (route: typeof overlay.hvac.controlConduits[number]) => {
+        const thermostat = overlay.hvac.thermostats.find(item => item.id === route.thermostatId), unit = overlay.hvac.indoorUnits.find(item => item.id === route.indoorUnitId);
+        return new Set([thermostat ? levelFor(thermostat, context) : null, unit ? levelFor(unit, context) : null].filter((id): id is string => Boolean(id)));
+      };
+      const pointLevel = (point: RoutePoint) => context.hostLevel(point.attachment);
+      const segmentLevels = (segment: typeof overlay.hvac.controlSegments[number]) => {
+        const endpointLevels = new Set([pointLevel(segment.start), pointLevel(segment.end)].filter((id): id is string => Boolean(id)));
+        if (endpointLevels.size) return endpointLevels;
+        const route = routeForSegment.get(segment.id), levels = route ? routeLevels(route) : new Set<string>();
+        return levels.size === 1 ? levels : new Set<string>();
+      };
+      const isSuspended = (position: RoutePoint, path: readonly Vec3[]) => {
+        if (position.attachment?.hostKind === 'ceiling' && /back/i.test(position.attachment.surface)) return true;
+        const meanY = path.reduce((sum, point) => sum + point[1], 0) / Math.max(1, path.length);
+        return meanY - floorElevation >= 1.8 && !context.physicallyHosted(position.position, position.attachment);
+      };
+      return <>
+        {overlay.hvac.controlSegments.filter(segment => segmentLevels(segment).has(levelId)).map(segment => {
+          const suspended = [segment.start, segment.end].some(point => point.attachment?.hostKind === 'ceiling' && /back/i.test(point.attachment.surface)) || (segment.start.position[1] + segment.end.position[1]) / 2 - floorElevation >= 1.8 && [segment.start, segment.end].filter(point => context.physicallyHosted(point.position, point.attachment)).length < 2;
+          const diameterMm=routeForSegment.get(segment.id)?.diameterMm ?? 20;
+          const layers=hvacControlStrokeLayers(diameterMm,scale);
+          return <g key={segment.id} data-hvac-control-conduit={segment.id} data-suspended={suspended || undefined} pointerEvents="none">{layers.map(layer=><line key={layer.role} data-hvac-control-stroke={layer.role} x1={segment.start.position[0]} y1={segment.start.position[2]} x2={segment.end.position[0]} y2={segment.end.position[2]} stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeOpacity=".95" strokeDasharray={suspended ? '.12 .08' : undefined} />)}</g>;
+        })}
+        {overlay.hvac.controlFittings.filter(fitting => {
+          const ownLevel = context.hostLevel(fitting.position.attachment);
+          if (ownLevel) return ownLevel === levelId;
+          const route = routeForFitting.get(fitting.id);
+          const adjacentLevels = new Set(fitting.segmentIds.flatMap(id => { const segment = overlay.hvac.controlSegments.find(item => item.id === id); return segment ? [...segmentLevels(segment)] : []; }));
+          if (adjacentLevels.size) return adjacentLevels.size === 1 && adjacentLevels.has(levelId);
+          const levels = route ? routeLevels(route) : new Set<string>();
+          return levels.size === 1 && levels.has(levelId);
+        }).map(fitting => {
+          const path = fitting.arc ? arcPlanPoints(fitting.arc) : fitting.bridge ? [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit] : [];
+          if (!path.length) return null;
+          const suspended = isSuspended(fitting.position, path);
+          const layers=hvacControlStrokeLayers(fitting.diameterMm,scale);
+          return <g key={fitting.id} data-hvac-control-fitting={fitting.id} data-suspended={suspended || undefined} pointerEvents="none">{layers.map(layer=><polyline key={layer.role} data-hvac-control-stroke={layer.role} points={points(path.map(planPoint))} fill="none" stroke={layer.stroke} strokeWidth={layer.strokeWidth} strokeLinecap="round" strokeLinejoin="round" strokeDasharray={fitting.fitting === 'bridge-bend' ? `${4 / scale} ${3 / scale}` : suspended ? '.12 .08' : undefined} />)}</g>;
+        })}
+      </>;
+    })()}
   </g>;
 }

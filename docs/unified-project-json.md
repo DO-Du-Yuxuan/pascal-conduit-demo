@@ -58,7 +58,7 @@
 | `LightingSystem` | `SwitchPanel`, `LightingJunctionBox`, `Conduit`, `JunctionBox`, `ConduitConnector`, `ConduitTee`, `ConduitElbow` |
 | `HVACSystem` | `FanCoilUnit`, `FCUThermostat`, `TemperatureHumiditySensor`, `GalvanizedSheetMetalDuct`, `AirOutlet`, `HVACControlConduit` |
 | `SmartSystem` | `RFIDReader` |
-| `FireProtectionSystem` | `SprinklerHead`, `FireWaterPipe`, `FireWaterPipeElbow`, `FireWaterPipeTee`, `FireWaterPipeConnector` |
+| `FireProtectionSystem` | `SprinklerHead`, `SmokeDetector`, `FireWaterPipe`, `FireWaterPipeElbow`, `FireWaterPipeTee`, `FireWaterPipeConnector`, `FireSignalConduit`, `FireSignalConduitElbow`, `FireSignalConduitConnector` |
 | `PlumbingSystem` | 当前无 Demo 作者类型；容器保留为空 |
 | `WaterPurificationSystem` | 当前无 Demo 作者类型；容器保留为空 |
 | `BathroomSystem` | 当前无 Demo 作者类型；容器保留为空 |
@@ -66,7 +66,9 @@
 | `GasSystem` | 当前无 Demo 作者类型；容器保留为空 |
 | `Drawing` | `PointDimension`, `ConstructionAnnotation`, `ManualLeader` |
 
-`FireWaterPipe` 可从用户确认的首点自由起画，也可从兼容开放管端继续；不需要入户点，不创建或引用 Circuit。消防转弯、分支和直接连接件分别用 `FireWaterPipeElbow`、`FireWaterPipeTee`、`FireWaterPipeConnector` 表达。FireProtectionSystem 不接受 `circuits` 数据。消防管件不能用通用 `FireWaterFitting` 表示。
+`FireWaterPipe` 可从用户确认的首点自由起画，也可从兼容开放管端继续；不需要入户点，不创建或引用 Circuit。绘制主管时点击喷淋头会用 `FireWaterPipeTee` 分出喷淋支管并把喷淋头作为支路终点；三通第三个物理端口连接一段 150 mm 的主管短管，其远端保持开放以供续画。消防转弯、分支和直接连接件分别用 `FireWaterPipeElbow`、`FireWaterPipeTee`、`FireWaterPipeConnector` 表达。FireProtectionSystem 不接受 `circuits` 数据。消防管件不能用通用 `FireWaterFitting` 表示。
+
+`SmokeDetector` 是独立消防设备类型，归属 `FireProtectionSystem`，与 HVAC `TemperatureHumiditySensor` 不同。其新建尺寸默认为直径 60 mm、深度 30 mm，允许 ceiling 或 Beam 面宿主，使用四个独立水平双向物理端口；未接管时直径调整会按圆盘半径移动端口并保留节点/端口 ID，接入任一端口后直径锁定。消防信号线管默认外径 20 mm、白色，公开类型为 `FireSignalConduit` 及 `FireSignalConduitElbow`、`FireSignalConduitConnector`，均归属 FireProtectionSystem 且带 `system: "fire-signal"`，不使用 Circuit。它可在 SmokeDetector 之间连接，也可从烟感端口敷设到墙面结束；墙面末端以 `endTermination: "wall"` 标识，必须没有 `endPortId`，不会作为开放管端供续接。消防信号端口只兼容 `fire-signal`，不得与 ElectricalSystem 网络白管或 HVAC `HVACControlConduit` 互接。既有 4.0 项目无需迁移，原有消防节点照常导入。
 
 地面过桥弯沿用已发布的 `ConduitElbow` 类型和 `fitting: "elbow"` 值；`bridge` 字段保存跨越几何。单根障碍保持双 45° 短桥；当多个同楼板非平行障碍各自所需桥段的占用区间重叠、管线无法在其间落回楼板时，计划器将它们合成一个桥段，入口/出口跨过整组，桥顶覆盖全部障碍，并按最粗障碍确定桥高。保持 10 mm 净空；有足够楼板距离的障碍会形成独立桥段。新桥的 `bridge.obstacleSegmentIds` 记录实际穿越的直管段，`bridge.obstacleFittingIds` 记录实际穿越的楼板大弯（弧形管件）；两者可以同时出现。兼容字段 `bridge.obstacleSegmentId` 保留首个直管障碍；若只穿过大弯，则引用该弯相邻的一条真实管段作为旧版兼容锚点，精确障碍由 `obstacleFittingIds` 指明。旧数据只有单数 ID 时仍可导入。`entry`、`crestStart`、`crestEnd`、`exit`、`riseMm` 和 `clearanceMm` 保存实际桥形。导入时依据该字段恢复内部过桥弯模型，保存时保留相同几何，不新增 Project 4.0 公开类型。
 
@@ -82,6 +84,7 @@
 | --- | --- |
 | 设备及管件物理端口 | 嵌入所有者节点的 `ports`；保留端口 ID、位置、方向、连接引用及系统身份。新建强/弱电箱的管线中心位置于安装宿主表面，箱体孔位的高低与横向位置不变。 |
 | `circuits` | 仅对应 `ElectricalSystem` 或 `LightingSystem` 容器；成员以实体和端口 ID 引用。消防水管不属于 Circuit。 |
+| 消防信号线管 | `FireProtectionSystem` 下的独立 `FireSignalConduit` 管段及具体弯头/接头类型，使用 `system: "fire-signal"`，不属于 Circuit。墙面封闭终点由末段 `endTermination: "wall"` 保存，不生成可续接开放端。 |
 | 旧 `lightingControlGroups` | 为兼容导入而忽略，导入时不进入 Overlay，导出时从 `LightingSystem` 删除；开关不再与灯位接线盒建立逻辑控制关系。 |
 | HVAC `controls` | 旧逻辑关联仅作为兼容输入读取并丢弃；导入不创建线路。当前控制关系由 `HVACControlConduit` 实体和端口/管段 ID 表达。 |
 | `HVACControlConduit` | `HVACSystem` 子节点，拥有 `thermostatId`、`thermostatPortId`、`indoorUnitId`、`indoorUnitPortId`、`segmentIds`、`fittingIds`、`diameterMm`，并在节点内嵌 `segments` 与弯头几何。端口 ID 与所有路线、管段、弯头 ID 全局稳定且唯一。 |

@@ -28,7 +28,7 @@ describe("device point interaction wiring", () => {
     expect(routeEntrances[1]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
     expect(routeEntrances[2]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
     expect(routeEntrances[3]).toContain("canUseCatalogSystem(catalogLock, candidateSystem)");
-    expect(routeEntrances[0].indexOf("canUseCatalogSystem(catalogLock, availableSystem)")).toBeLessThan(routeEntrances[0].search(/selectSystem\(|setDraft\(/));
+    expect(routeEntrances[0].indexOf("canUseCatalogSystem(catalogLock, routeSystem)")).toBeLessThan(routeEntrances[0].search(/selectSystem\(|setDraft\(/));
     for (const entrance of routeEntrances.slice(1)) {
       expect(entrance.indexOf("canUseCatalogSystem(catalogLock, candidateSystem)")).toBeLessThan(entrance.search(/selectSystem\(|setDraft\(|set(?:Device|Junction|Endpoint)RouteStart\(/));
     }
@@ -54,7 +54,7 @@ describe("device point interaction wiring", () => {
   });
 
   it("clears point selection from empty space or Escape", () => {
-    expect(workspace).toContain('if (!canDrawWithoutSource) { selectWhileBrowsing(null); return; }');
+    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }');
     expect(workspace).toContain("onEmptyClick={onEmptyCanvasClick}");
     expect(workspace).toContain('if (tool === "select") { selectWhileBrowsing(null); return; }');
   });
@@ -64,6 +64,75 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain('setStatus("已确认设备端口辅助对齐点；管道尚未连接设备，请继续逐点绘制。")');
     expect(workspace).toContain('if (targetResolution.kind !== "connect") return null;');
     expect(workspace).not.toContain('[targetResolution.point, target]');
+  });
+
+  it("branches a free-start fire main to sprinkler heads and keeps the tee main open", () => {
+    const handler = workspace.slice(workspace.indexOf("const onStartDeviceRoute ="), workspace.indexOf("const onStartEndpoint ="));
+    expect(handler).toContain('if (canDrawWithoutSource && system === "sprinkler" && draft.length && device.deviceType === "sprinkler-head")');
+    expect(handler).toContain("routePointsToTarget(endPort.position, endPort.id");
+    expect(handler).toContain("commitSprinklerHeadBranch(device, endPort)");
+    expect(handler.indexOf('if (canDrawWithoutSource && system === "sprinkler" && draft.length && device.deviceType === "sprinkler-head")')).toBeLessThan(handler.indexOf("startRouteFromDevice(overlay, device.id"));
+    const commitBranch = workspace.slice(workspace.indexOf("const commitSprinklerHeadBranch ="), workspace.indexOf("const rejectDiagnostics ="));
+    expect(commitBranch).toContain("commitFreeSprinklerRouteToDeviceBranch(overlay, mainPlan, branchPlan, continuationPlan, device.id, endPort.id");
+    expect(commitBranch).toContain("setEndpointRouteStart(continuation)");
+    expect(commitBranch).toContain("setDraft([structuredClone(continuation.point)])");
+    expect(commitBranch).toContain("openRouteEndpoints(next).find");
+    expect(commitBranch).toContain("SPRINKLER_BRANCH_MIN_LENGTH_METERS");
+    expect(commitBranch).toContain("SPRINKLER_CONTINUATION_STUB_METERS");
+  });
+
+  it("offers a single connected sprinkler-head port as a bounded source and commits from the same stable port", () => {
+    const handler = workspace.slice(workspace.indexOf("const onStartDeviceRoute ="), workspace.indexOf("const onStartEndpoint ="));
+    expect(handler).toContain('if (device.deviceType === "sprinkler-head" && availableSystem === "sprinkler")');
+    expect(handler).toContain("deviceStartPorts(overlay, device, \"sprinkler\")");
+    expect(handler).toContain("setSprinklerRouteStart({ deviceId: device.id, portId: startedPort.id, connectedSegmentId })");
+    expect(workspace).toContain("commitSprinklerDeviceRoute(overlay, plan, sprinklerRouteStart)");
+    expect(workspace).toContain("sprinklerRouteStart ?? undefined");
+    expect(scene).toContain("deviceStartPorts(overlay, device, candidate)");
+  });
+
+  it("starts fire-signal routes from smoke-detector ports and commits a clicked endpoint", () => {
+    const handler = workspace.slice(workspace.indexOf("const onStartDeviceRoute ="), workspace.indexOf("const onStartEndpoint ="));
+    expect(handler).toContain('if (fireSignalStart && system === "fire-signal" && draft.length)');
+    expect(handler).toContain("commitFireSignalRoute(overlay, plan, fireSignalStart.deviceId, fireSignalStart.portId, device.id, endPort.id)");
+    expect(handler).toContain('if (device.deviceType === "smoke-detector" && availableSystem === "fire-signal")');
+    expect(handler).toContain("setFireSignalStart({ deviceId: device.id, portId: startedPort.id })");
+    expect(scene).toContain('device.deviceType === "smoke-detector" ? .032');
+  });
+
+  it("allows fire-signal routes to confirm free-space waypoints and finish open or sealed", () => {
+    expect(workspace).toContain('fireSignalStart && system === "fire-signal"');
+    expect(workspace).toContain('if ((canDrawWithoutSource || fireSignalStart) && !surfaceHit)');
+    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }');
+    expect(workspace).toContain('const wallTerminal = points[points.length - 1]?.attachment?.hostKind === "wall"');
+    expect(workspace).toContain('endpointRouteStart.system !== "fire-signal"');
+    expect(workspace).toContain("commitEndpointRoute(overlay, endpointRouteStart, plan, undefined, undefined, wallTerminal)");
+    expect(workspace).toContain('onEmptyDoubleClick={() => finishCurrentRoute("include-preview")}');
+    expect(workspace).toContain("commitFireSignalRoute(overlay, plan, fireSignalStart.deviceId, fireSignalStart.portId, undefined, undefined, wallTerminal)");
+    expect(workspace).toContain('末端保持开放，可从该管端继续绘制。');
+    expect(workspace).toContain('末端封闭且不能续接。');
+    expect(workspace).toContain("fireSignalStart || sprinklerRouteStart || deviceRouteStart");
+  });
+
+  it("preserves wall attachment when an orthogonal fire-signal route snaps and finishes", () => {
+    expect(workspace).toContain('if (fireSignalRouteActive && raw.attachment?.hostKind === "wall") return raw;');
+    expect(workspace).toContain('if (fireSignalRouteActive && hit.attachment.hostKind === "wall") { scheduleCursor(routePoint(hit)); return; }');
+    expect(workspace).toContain('const fireSignalWallHit = fireSignalRouteActive && hit.attachment.hostKind === "wall"');
+    expect(workspace).toContain('fireSignalWallHit ? clickedPoint : resolveEffectiveCursor');
+    expect(workspace).toContain('finishCurrentRoute(fireSignalRouteActive && latestCursor.current?.attachment?.hostKind === "wall" ? "include-preview" : "confirmed-only")');
+  });
+
+  it("uses smoke-detector placement and locks diameter only after a port is connected", () => {
+    expect(workspace).toContain("placeSmokeDetector(overlay, position)");
+    expect(workspace).toContain("resizeSmokeDetectorDiameter(next, device.id, value)");
+    expect(workspace).toContain("resizeSmokeDetectorDepth(next, device.id, value)");
+    expect(workspace).toContain('selectedDevice.deviceType === "smoke-detector"');
+    expect(scene).toContain('device.deviceType === "smoke-detector"');
+    expect(workspace).toContain('lightingJunctionBox || smokeDetector ? axis === 0 ? "直径" : "深度"');
+  });
+
+  it("keeps smoke-detector previews valid on reference planes", () => {
+    expect(workspace).toMatch(/deviceType === "luminaire"\s*\|\|\s*deviceType === "smoke-detector"\s*\|\|\s*deviceType === "sprinkler-head"/);
   });
 
   it("uses the physical click position to choose the target device port", () => {

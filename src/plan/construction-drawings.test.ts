@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { NodeData } from '../types';
 import { createEmptyOverlay, type HostAttachment, type NetworkDevice } from '../domain/overlay';
-import { buildInstallationSchedule, installationVariantByDeviceId, setAllConstructionDrawings, type ConstructionDrawingVisibility } from './construction-drawings';
+import { buildInstallationSchedule, fireDrawingIsVisible, installationVariantByDeviceId, setAllConstructionDrawings, setFireDrawingVisibility, type ConstructionDrawingVisibility } from './construction-drawings';
 import { createPlanContext } from './model';
 
 const nodes = {
@@ -17,10 +17,19 @@ const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: Ne
 
 describe('construction drawing visibility and installation schedule', () => {
   it('turns all five construction drawings on and off as one global selection', () => {
-    const partial: ConstructionDrawingVisibility = { receptacle: true, lighting: false, network: true, sprinkler: false };
+    const partial: ConstructionDrawingVisibility = { receptacle: true, lighting: false, network: true, sprinkler: false, 'fire-signal': false };
     expect(partial.receptacle).toBe(true);
-    expect(setAllConstructionDrawings(true)).toEqual({ receptacle: true, lighting: true, network: true, sprinkler: true, sensor: true });
-    expect(setAllConstructionDrawings(false)).toEqual({ receptacle: false, lighting: false, network: false, sprinkler: false, sensor: false });
+    expect(setAllConstructionDrawings(true)).toEqual({ receptacle: true, lighting: true, network: true, sprinkler: true, 'fire-signal': true, sensor: true });
+    expect(setAllConstructionDrawings(false)).toEqual({ receptacle: false, lighting: false, network: false, sprinkler: false, 'fire-signal': false, sensor: false });
+  });
+
+  it('treats sprinkler and fire-signal visibility as one fire drawing while retaining both system flags', () => {
+    const legacyState = { sprinkler: true, 'fire-signal': false };
+    expect(fireDrawingIsVisible(legacyState)).toBe(false);
+    const enabled = setFireDrawingVisibility(legacyState, true);
+    expect(enabled).toEqual({ sprinkler: true, 'fire-signal': true });
+    expect(fireDrawingIsVisible(enabled)).toBe(true);
+    expect(setFireDrawingVisibility(enabled, false)).toEqual({ sprinkler: false, 'fire-signal': false });
   });
 
   it('lists only visible ceiling or suspended devices and groups equal rows by quantity', () => {
@@ -32,7 +41,7 @@ describe('construction drawing visibility and installation schedule', () => {
       { ...device('light-c', 'luminaire', ['lighting'], 1.2), mount: { kind: 'reference-plane', levelId: 'level', elevationMm: 1200 } },
       { ...device('sprinkler', 'sprinkler-head', ['sprinkler'], 2.7), mount: { kind: 'reference-plane', levelId: 'level', elevationMm: 2700 } },
     ];
-    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false };
+    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false, 'fire-signal': false };
     const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay, new Set(), visible));
     expect(sections).toHaveLength(1);
     expect(sections[0]).toMatchObject({ system: 'lighting', label: '灯位接线盒施工图' });
@@ -46,10 +55,18 @@ describe('construction drawing visibility and installation schedule', () => {
   it('does not add a variant when one point type has only one installation height', () => {
     const overlay = createEmptyOverlay('a', 'sha');
     overlay.devices = [{ ...device('light', 'luminaire', ['lighting'], 1.5), mount: { kind: 'reference-plane', levelId: 'level', elevationMm: 1500 } }];
-    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false };
+    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false, 'fire-signal': false };
     const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay, new Set(), visible));
     expect(sections[0].rows[0].variant).toBeUndefined();
     expect(installationVariantByDeviceId(sections)).toEqual({});
+  });
+
+  it('includes visible smoke detectors in the fire-signal construction drawing', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    overlay.devices = [{ ...device('smoke', 'smoke-detector', ['fire-signal'], 2.8), name: '烟雾传感器', sizeMm: [60, 60, 30], mount: { kind: 'reference-plane', levelId: 'level', elevationMm: 2800 } }];
+    const visibility = { receptacle: false, lighting: false, network: false, sprinkler: false, 'fire-signal': true };
+    const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay, new Set(), visibility));
+    expect(sections).toEqual([expect.objectContaining({ system: 'sprinkler', label: '消防施工图', rows: [expect.objectContaining({ deviceType: 'smoke-detector', name: '烟雾传感器', quantity: 1, sourceIds: ['smoke'], measurementBasis: 'explicit' })] })]);
   });
 
   it('does not split edited names when the symbol and installation height are the same', () => {
@@ -57,7 +74,7 @@ describe('construction drawing visibility and installation schedule', () => {
     const first = { ...device('first', 'luminaire', ['lighting'], 1.5), mount: { kind: 'reference-plane' as const, levelId: 'level', elevationMm: 1500 } };
     const second = { ...device('second', 'luminaire', ['lighting'], 1.5), name: '装饰筒灯', mount: { kind: 'reference-plane' as const, levelId: 'level', elevationMm: 1500 } };
     overlay.devices = [first, second];
-    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false };
+    const visible = { receptacle: false, lighting: true, network: false, sprinkler: false, 'fire-signal': false };
     const sections = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay, new Set(), visible));
     expect(sections[0].rows).toHaveLength(2);
     expect(sections[0].rows.every(row => row.variant === undefined)).toBe(true);

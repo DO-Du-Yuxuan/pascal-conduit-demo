@@ -9,7 +9,7 @@ import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, create
 import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, type OpenRouteEndpoint } from "../domain/devices";
+import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, commitFireSignalRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeSmokeDetector, resizeSmokeDetectorDepth, resizeSmokeDetectorDiameter, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, SPRINKLER_BRANCH_MIN_LENGTH_METERS, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS, type OpenRouteEndpoint, type SprinklerRouteStart } from "../domain/devices";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
@@ -154,9 +154,9 @@ function Navigation({ bounds, preset, presetRevision, projection, onCameraRight 
   return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryFriction={0} boundaryEnclosesCamera colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={cameraMouseButtons(projection)} onChange={reportCameraRight} />;
 }
 
-function PointerCapture({ bounds, onRay, onEmptyClick }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number], shiftKey: boolean, ctrlKey: boolean) => void; onEmptyClick: (shiftKey: boolean, ctrlKey: boolean) => void }) {
+function PointerCapture({ bounds, onRay, onEmptyClick, onEmptyDoubleClick }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number], shiftKey: boolean, ctrlKey: boolean) => void; onEmptyClick: (shiftKey: boolean, ctrlKey: boolean) => void; onEmptyDoubleClick: () => void }) {
   const radius = Math.max(10, bounds.span * 4);
-  return <mesh position={bounds.center} onPointerMove={(event: ThreeEvent<PointerEvent>) => onRay([event.ray.origin.x, event.ray.origin.y, event.ray.origin.z], [event.ray.direction.x, event.ray.direction.y, event.ray.direction.z], event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey)} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onEmptyClick(event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }}>
+  return <mesh position={bounds.center} onPointerMove={(event: ThreeEvent<PointerEvent>) => onRay([event.ray.origin.x, event.ray.origin.y, event.ray.origin.z], [event.ray.direction.x, event.ray.direction.y, event.ray.direction.z], event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey)} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onEmptyClick(event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }} onDoubleClick={(event) => { event.stopPropagation(); onEmptyDoubleClick(); }}>
     <sphereGeometry args={[radius, 12, 8]} /><meshBasicMaterial transparent opacity={0} side={BackSide} depthWrite={false} />
   </mesh>;
 }
@@ -314,9 +314,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setSystemLayerVisibility((current) => ({ ...current, [key]: !current[key] }));
   const allowedSystems = catalogLock?.systems;
   const allowedDeviceTypes = catalogLock?.deviceTypes;
-  const availableDeviceTypes = allowedDeviceTypes ?? (["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "sensor", "rfid-reader"] satisfies NetworkDeviceType[]);
+  const availableDeviceTypes = allowedDeviceTypes ?? (["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "smoke-detector", "sensor", "rfid-reader"] satisfies NetworkDeviceType[]);
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
-  const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
+  const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [sprinklerRouteStart, setSprinklerRouteStart] = useState<SprinklerRouteStart | null>(null), [fireSignalStart, setFireSignalStart] = useState<{ deviceId: string; portId: string } | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [thermostatPositionDraft, setThermostatPositionDraft] = useState<{ horizontal?: number; vertical?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
   const [activeTargetPortId, setActiveTargetPortId] = useState<string | null>(null);
   const [hoveredHvacTarget, setHoveredHvacTarget] = useState<{ unitId: string; portId: string; kind: "power" | "control" } | null>(null);
@@ -380,9 +380,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (selectedBeam) return "建筑";
     if (selectedHvacUnit || selectedHvacSegment || selectedHvacControlSegment || selectedHvacControlFitting || selectedHvacOutlet || selectedThermostat || selectedDevice?.deviceType === "sensor") return "空调";
     if (selectedDevice?.deviceType === "rfid-reader") return "智能";
+    if (selectedDevice?.deviceType === "smoke-detector" || selectedDevice?.deviceType === "sprinkler-head") return "消防";
     const routeSystem = selectedSegment?.system ?? selectedFitting?.system ?? selectedBox?.system ?? selectedDevice?.systems[0] ?? selectedDevices[0]?.systems[0];
     if (routeSystem === "lighting") return "照明";
-    if (routeSystem === "sprinkler") return "消防";
+    if (routeSystem === "sprinkler" || routeSystem === "fire-signal") return "消防";
     if (selectedId && !selectedSegment && !selectedFitting && !selectedBox && !selectedDevice && !selectedDevices.length) return "建筑";
     return "电气";
   })();
@@ -450,7 +451,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
 
   useEffect(() => {
     const stored = useOverlayStore.getState(), restored = overlayForProject(stored.overlay, sourceSha, projectId);
-    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setActiveHvacDuctId(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
+    setOverlay(normalizeOverlay(restored, sourceFile, sourceSha, projectId)); setOverlayDirty(Boolean(restored && stored.dirty)); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setOrthogonal(true); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setInlineDevicePreview(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setActiveTargetPortId(null); setActiveHvacDuctId(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setPositionDraft({}); setDepartingSegments([]); setAppliedConstruction({ surfaceChases: [], penetrations: [] });
   }, [scene?.sceneKey, sourceFile, sourceSha, projectId]);
   useEffect(() => {
     setOverlay(current => {
@@ -484,15 +485,15 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         : tool === "hvac-supply" || tool === "hvac-return"
           ? { tool: "hvac-duct", segmentCount: activeDuct?.segmentIds.length ?? 0, hasStart: Boolean(hvacRouteStart || activeHvacDuctId) }
           : tool === "draw" || tool === "branch"
-            ? { tool, draftPointCount: draft.length, hasFixedStart: tool === "branch" ? Boolean(branchStart) : Boolean(deviceRouteStart || junctionRouteStart || endpointRouteStart), penetrationActive: Boolean(penetrationSession) }
+            ? { tool, draftPointCount: draft.length, hasFixedStart: tool === "branch" ? Boolean(branchStart) : Boolean(fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart), penetrationActive: Boolean(penetrationSession) }
             : { tool: "other" });
       if (shouldIgnoreEditableKeydown(event.key, editable, escapeAction !== "none")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) redoSharedWorkspace(); else undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } return; }
-      if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
+      if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") {
         setUniversalRouteMode(true);
         setRouteStartChooser(true);
-        setTool("draw"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); resetRouteConstraints(); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setActiveHvacDuctId(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); onSelect(null);
+        setTool("draw"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setPenetrationSession(null); setExplicitPenetrations([]); resetRouteConstraints(); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setActiveHvacDuctId(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); onSelect(null);
         setStatus("已进入通用画管起点选择；可点击任一系统的绿色端口开始对应线路。"); return;
       }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "d") { chooseTool("point"); setStatus("已切换到点位模式。"); return; }
@@ -515,7 +516,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           setStatus("已撤回最后一个已确认路线点。"); return;
         }
         if (escapeAction === "cancel-fixed-start") {
-          setDraft([]); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setCursor(null); setWorldAxis(null); orthogonalDirection.current = null;
+          setDraft([]); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setCursor(null); setWorldAxis(null); orthogonalDirection.current = null;
           setStatus("已取消当前管线起点。"); return;
         }
         if (escapeAction === "pop-hvac-control-waypoint") { setHvacControlWaypoints((points) => points.slice(0, -1)); setCursor(null); orthogonalDirection.current = null; setStatus("已撤回最后一个 HVAC 控制管途经点。"); return; }
@@ -532,7 +533,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         if (escapeAction === "cancel-hvac-duct-start") { setHvacRouteStart(null); setActiveHvacDuctId(null); setCursor(null); setWorldAxis(null); setTool("select"); setStatus("HVAC 风管起点已取消。"); return; }
       }
       if (tool === "beam" && event.key === "Enter") { event.preventDefault(); confirmBeamEndpoint(); return; }
-      if (event.key === "Enter") { event.preventDefault(); if (tool === 'hvac-supply' || tool === 'hvac-return') { finishHvacDuct(); return; } if (tool === 'hvac-control' && hvacControlThermostatId) { setStatus("点击 FCU 的绿色控制端口完成控制管。"); return; } finishCurrentRoute("confirmed-only"); }
+      if (event.key === "Enter") { event.preventDefault(); if (tool === 'hvac-supply' || tool === 'hvac-return') { finishHvacDuct(); return; } if (tool === 'hvac-control' && hvacControlThermostatId) { setStatus("点击 FCU 的绿色控制端口完成控制管。"); return; } finishCurrentRoute(fireSignalRouteActive && latestCursor.current?.attachment?.hostKind === "wall" ? "include-preview" : "confirmed-only"); }
       if (event.key === "Tab" && (tool === "draw" || tool === "branch" && branchStart) && latestCursor.current?.attachment && draft.length) {
         event.preventDefault();
         const liveCursor = latestCursor.current, displayedPoints = previewRoutePoints(draft, liveCursor, orthogonal ? "orthogonal" : "free"), displayed = displayedPoints[displayedPoints.length - 1] ?? liveCursor, session = beginPenetration(draft, displayed, orthogonal);
@@ -542,7 +543,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     // A focused canvas control may stop keydown bubbling. Route undo must still
     // receive Escape after the pointer confirms a point on that control.
     window.addEventListener("keydown", onKeyDown, true); return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, selectedSegmentIds, deviceRouteStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
+  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, selectedSegmentIds, deviceRouteStart, sprinklerRouteStart, fireSignalStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
 
   const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const deleteSelectedObjects = () => {
@@ -585,8 +586,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!selectedDevice || !Number.isFinite(value) || value <= 0) return;
     if (!sizeSelectionHasSameType) { setStatus("尺寸批量修改仅支持多选相同类型点位。"); return; }
     const lightingJunctionBox = selectedDevice.deviceType === "luminaire";
-    if (sizeSelectionHasConnections && (!lightingJunctionBox || axis !== 2)) {
-      setStatus(lightingJunctionBox ? "所选灯位接线盒中有端口已接管，直径不能批量修改；深度仍可修改。" : "所选点位中有端口已接管，尺寸不能批量修改。");
+    const smokeDetector = selectedDevice.deviceType === "smoke-detector";
+    const safeDepthEdit = axis === 2 && (lightingJunctionBox || smokeDetector);
+    if (sizeSelectionHasConnections && !safeDepthEdit) {
+      setStatus(lightingJunctionBox ? "所选灯位接线盒中有端口已接管，直径不能批量修改；深度仍可修改。" : smokeDetector ? "所选烟感中有端口已接管，直径不能修改；深度仍可修改。" : "所选点位中有端口已接管，尺寸不能批量修改。");
       return;
     }
     let next = overlay;
@@ -595,6 +598,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         const diameter = axis === 0 ? value : device.sizeMm[0];
         const depth = axis === 2 ? value : device.sizeMm[2];
         next = resizeSpotlight(next, device.id, diameter, depth);
+      } else if (smokeDetector) {
+        if (axis === 0) next = resizeSmokeDetectorDiameter(next, device.id, value);
+        else if (axis === 2) next = resizeSmokeDetectorDepth(next, device.id, value);
       } else {
         const size = [...device.sizeMm] as [number, number, number];
         size[axis] = value;
@@ -603,7 +609,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     if (next !== overlay) {
       commit(next);
-      setStatus(`已将${lightingJunctionBox ? axis === 0 ? "直径" : "深度" : ["宽度", "高度", "深度"][axis]}应用到 ${selectedSizeDevices.length} 个同类型点位。`);
+      setStatus(`已将${lightingJunctionBox || smokeDetector ? axis === 0 ? "直径" : "深度" : ["宽度", "高度", "深度"][axis]}应用到 ${selectedSizeDevices.length} 个同类型点位。`);
     }
   };
   const applyThermostatPosition = (change: { horizontalClearanceMm?: number; bottomHeightMm?: number; planarClearanceMm?: Record<string, number> }) => {
@@ -645,23 +651,28 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     return true;
   };
   const notifyAuthoringSystem = (next: RoutingSystem | "hvac") => {
-    const category: BuilderSystemId = next === "hvac" ? "hvac" : next === "lighting" ? "lighting" : next === "sprinkler" ? "fire" : next === "network" || next === "receptacle" ? "electrical" : "electrical";
+    const category: BuilderSystemId = next === "hvac" ? "hvac" : next === "lighting" ? "lighting" : next === "sprinkler" || next === "fire-signal" ? "fire" : next === "network" || next === "receptacle" ? "electrical" : "electrical";
     onAuthoringSystemChange?.(category);
   };
   const selectSystem = (next: RoutingSystem) => { if (rejectLockedSystem(next)) return; const nextDiameter = SYSTEM_DEFAULTS[next].diameterMm; setSystem(next); setDiameterMm(nextDiameter); setSurfaceMode(SYSTEM_DEFAULTS[next].mode); setConstructionParameters({ chaseWidthMm: nextDiameter + 10, chaseDepthMm: nextDiameter + 5, penetrationDiameterMm: nextDiameter + 10 }); setDraft([]); setBranchStart(null); notifyAuthoringSystem(next); };
   const canDrawWithoutSource = tool === "draw" && (system === "network" || system === "sprinkler");
+  const fireSignalRouteActive = system === "fire-signal" && Boolean(fireSignalStart || endpointRouteStart?.system === "fire-signal");
   const validatedPlan = (points: RoutePoint[], ignoredSegmentId?: string, ignoredDeviceId?: string): PlannedRoute => {
     const plan = ignoredSegmentId
       ? planBranchContinuation(overlay, ignoredSegmentId, points, constructionParameters, explicitPenetrations, { bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm })
       : planRoute(system, diameterMm, surfaceMode, points, constructionParameters, explicitPenetrations, { bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
     if (!plan) throw new Error("目标分支管段不存在。");
-    const ignoredDeviceIds = new Set([deviceRouteStart?.port.owner.id, junctionRouteStart?.box.id, ignoredDeviceId].filter((id): id is string => Boolean(id)));
-    const collisionChecked = withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : undefined, bridgeSlabContext);
+    const ignoredDeviceIds = new Set([fireSignalStart?.deviceId, sprinklerRouteStart?.deviceId, deviceRouteStart?.port.owner.id, junctionRouteStart?.box.id, ignoredDeviceId].filter((id): id is string => Boolean(id)));
+    const sprinklerStartDevice = sprinklerRouteStart && overlay.devices.find((device) => device.id === sprinklerRouteStart.deviceId);
+    const sprinklerStartPort = sprinklerStartDevice?.ports.find((port) => port.id === sprinklerRouteStart?.portId);
+    const allowedEndpoint = endpointRouteStart ? { segmentId: endpointRouteStart.segmentId, point: endpointRouteStart.point.position } : sprinklerRouteStart && sprinklerStartPort ? { segmentId: sprinklerRouteStart.connectedSegmentId, point: sprinklerStartPort.position.position } : undefined;
+    const collisionChecked = withCollisionDiagnostics(overlay, plan, ignoredSegmentId, ignoredDeviceIds, allowedEndpoint, bridgeSlabContext);
     const diagnostics = [...collisionChecked.diagnostics, ...beamRouteDiagnostics(scene?.nodes ?? {}, collisionChecked, penetrationSession?.host.hostId)];
     return { ...collisionChecked, diagnostics, canCommit: diagnostics.length === 0 };
   };
   const resolveEffectiveCursor = (raw: RoutePoint | null): RoutePoint | null => {
     if (!raw || !draft.length) return raw;
+    if (fireSignalRouteActive && raw.attachment?.hostKind === "wall") return raw;
     const candidates: SnapCandidate[] = [];
     if (branchPreview?.valid && branchPreview.system === system) candidates.push({ kind: "branch", point: { position: branchPreview.point, attachment: branchPreview.attachment }, targetId: branchPreview.segmentId, label: "合法分支位置", distancePixels: 0, compatible: true });
     if (hoverId?.startsWith("open-end:")) {
@@ -711,7 +722,48 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (targetResolution.kind !== "connect") return null;
     return [...draft, targetResolution.point].filter((point, index, points) => index === 0 || !sameRoutePoint(points[index - 1], point));
   };
-  const clearCompletedDraft = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setPenetrationSession(null); setWorldAxis(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setActiveTargetPortId(null); orthogonalDirection.current = null; };
+  const clearCompletedDraft = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setExplicitPenetrations([]); setPenetrationSession(null); setWorldAxis(null); setFireSignalStart(null); setSprinklerRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setActiveTargetPortId(null); orthogonalDirection.current = null; };
+  const commitFireSignalRouteEndpoint = (points: RoutePoint[], plan: PlannedRoute) => {
+    if (!fireSignalStart || system !== "fire-signal") return false;
+    const wallTerminal = points[points.length - 1]?.attachment?.hostKind === "wall";
+    const next = commitFireSignalRoute(overlay, plan, fireSignalStart.deviceId, fireSignalStart.portId, undefined, undefined, wallTerminal);
+    if (next === overlay) { setStatus("消防信号线无法在当前位置完成。"); return true; }
+    commit(next); clearCompletedDraft(); setStatus(wallTerminal ? "消防信号线已终止在墙面，末端封闭且不能续接。" : "消防信号线已完成，末端保持开放，可从该管端继续绘制。"); return true;
+  };
+  const commitFireSignalEndpointContinuation = (points: RoutePoint[], plan: PlannedRoute) => {
+    if (!endpointRouteStart || endpointRouteStart.system !== "fire-signal") return false;
+    const wallTerminal = points[points.length - 1]?.attachment?.hostKind === "wall";
+    const next = commitEndpointRoute(overlay, endpointRouteStart, plan, undefined, undefined, wallTerminal);
+    if (next === overlay) { setStatus("消防信号线无法在当前位置完成。"); return true; }
+    commit(next); clearCompletedDraft(); setStatus(wallTerminal ? "消防信号线已终止在墙面，末端封闭且不能续接。" : "消防信号线已完成，末端保持开放，可从该管端继续绘制。"); return true;
+  };
+  const commitSprinklerHeadBranch = (device: NetworkDevice, endPort: NetworkPort) => {
+    if (draft.length < 2) { setStatus("请先确认一个主管点，再点击喷淋头生成三通支管。"); return; }
+    const previous = draft[draft.length - 2]!.position, centerPoint = draft[draft.length - 1]!, center = centerPoint.position;
+    const mainVector: Vec3 = center.map((value, axis) => value - previous[axis]!) as Vec3, mainLength = Math.hypot(...mainVector);
+    if (mainLength < .001) { setStatus("主管点间距不足，无法放置消防三通；请先确认更远的主管点。"); return; }
+    const mainDirection = mainVector.map((value) => value / mainLength) as Vec3;
+    const branchVector: Vec3 = endPort.position.position.map((value, axis) => value - center[axis]!) as Vec3, branchLength = Math.hypot(...branchVector);
+    if (branchLength < SPRINKLER_TEE_SOCKET_METERS + SPRINKLER_BRANCH_MIN_LENGTH_METERS) { setStatus("喷淋头离三通太近，支管长度不足 120 mm；请重新确认主管点后再连接。"); return; }
+    const branchDirection = branchVector.map((value) => value / branchLength) as Vec3, alignment = branchDirection.reduce((sum, value, axis) => sum + value * mainDirection[axis]!, 0);
+    if (alignment < -1e-6 || Math.abs(alignment) > .92) { setStatus("喷淋头支管与主管方向过于接近或指向主管来向，无法形成有效三通；请重选主管点。"); return; }
+    const teePortPoint = { position: center.map((value, axis) => value + branchDirection[axis]! * SPRINKLER_TEE_SOCKET_METERS) as Vec3 };
+    const continuationStart = { position: center.map((value, axis) => value + mainDirection[axis]! * SPRINKLER_TEE_SOCKET_METERS) as Vec3 };
+    const continuationEnd = { position: continuationStart.position.map((value, axis) => value + mainDirection[axis]! * SPRINKLER_CONTINUATION_STUB_METERS) as Vec3 };
+    const mainPlan = validatedPlan(draft);
+    if (!mainPlan.canCommit) { rejectDiagnostics(mainPlan); return; }
+    const branchPlan = validatedPlan([teePortPoint, endPort.position], undefined, device.id);
+    if (!branchPlan.canCommit) { rejectDiagnostics(branchPlan); return; }
+    const continuationPlan = validatedPlan([continuationStart, continuationEnd]);
+    if (!continuationPlan.canCommit) { rejectDiagnostics(continuationPlan); return; }
+    const next = commitFreeSprinklerRouteToDeviceBranch(overlay, mainPlan, branchPlan, continuationPlan, device.id, endPort.id, endpointRouteStart?.system === "sprinkler" ? endpointRouteStart : undefined, sprinklerRouteStart ?? undefined);
+    if (next === overlay) { setStatus("消防三通、喷淋头支管或主管开放端未能提交，请调整主管点后重试。"); return; }
+    const continuation = openRouteEndpoints(next).find((item) => item.segmentId === continuationPlan.segments[continuationPlan.segments.length - 1]!.id && item.end === "end");
+    commit(next);
+    if (!continuation) { clearCompletedDraft(); setStatus("喷淋头支管已接入，但主管开放端无法恢复，请检查该三通。"); return; }
+    setEndpointRouteStart(continuation); setDraft([structuredClone(continuation.point)]); setCursor(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setJunctionRouteStart(null); setActiveTargetPortId(null); setExplicitPenetrations([]); setWorldAxis(null); orthogonalDirection.current = null;
+    setStatus("喷淋头已通过消防三通支管接入；从主管开放端继续画管，可连接下一只喷淋头。");
+  };
   const rejectDiagnostics = (plan: PlannedRoute) => { const first = plan.diagnostics[0]; setStatus(first?.message ?? "当前路径无效，不能生成。"); };
   const finishCurrentRoute = (completionMode: RouteCompletionMode = "include-preview") => {
     if (tool === "point") {
@@ -728,14 +780,16 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     if (tool !== "draw" && tool !== "branch") return;
     if (rejectLockedSystem(system)) return;
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
+    if (tool === "draw" && !fireSignalStart && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (penetrationSession) return;
     const preview = completionMode === "include-preview" ? resolveEffectiveCursor(latestCursor.current) : null;
     const points = routePointsForCompletion(draft, preview, completionMode);
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan));
+    if (commitFireSignalRouteEndpoint(points, plan)) return;
+    if (commitFireSignalEndpointContinuation(points, plan)) return;
+    if (sprinklerRouteStart) { const next = commitSprinklerDeviceRoute(overlay, plan, sprinklerRouteStart); if (next === overlay) { setStatus("消防管无法从该喷淋头端口继续连接。"); return; } commit(next); } else if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan));
     clearCompletedDraft(); setDeviceRouteStart(null); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const finishHvacDuct = () => {
@@ -754,7 +808,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (points.length < 2) return;
     const plan = validatedPlan(points, branchStart?.segmentId);
     if (!plan.canCommit) { rejectDiagnostics(plan); return; }
-    if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan)); else return;
+    if (commitFireSignalRouteEndpoint(points, plan)) return;
+    if (commitFireSignalEndpointContinuation(points, plan)) return;
+    if (sprinklerRouteStart) { const next = commitSprinklerDeviceRoute(overlay, plan, sprinklerRouteStart); if (next === overlay) { setStatus("消防管无法从该喷淋头端口继续连接。"); return; } commit(next); } else if (tool === "branch" && branchStart) { const next = commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan); if (next === overlay) { setStatus("分支转角或节点空间不足，不能生成。"); return; } commit(next); } else if (deviceRouteStart) commit(commitDeviceRoute(deviceRouteStart.overlay, plan, deviceRouteStart.circuit, deviceRouteStart.port)); else if (junctionRouteStart) commit(commitJunctionBoxRoute(junctionRouteStart.overlay, junctionRouteStart, plan)); else if (endpointRouteStart) commit(commitEndpointRoute(overlay, endpointRouteStart, plan)); else if (canDrawWithoutSource) commit(commitPlannedRoute(overlay, plan)); else return;
     clearCompletedDraft(); setDeviceRouteStart(null); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const effectiveCursor = resolveEffectiveCursor(cursor);
@@ -771,8 +827,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     ? resolveTargetClick(hoveredHvacAnchor, { kind: "device-port", point: hoveredHvacPort.position, targetId: hoveredHvacPort.id, label: "FCU 端口", distancePixels: 0, compatible: true }, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: hoveredHvacDirection })
     : null;
   const hoveredHvacControlCheck = useMemo(() => hoveredHvacTarget?.kind === "control" && hoveredHvacResolution?.kind === "connect" && hvacControlThermostatId
-    ? inspectHvacControlConnection(overlay, hvacControlThermostatId, hoveredHvacTarget.unitId, hvacControlWaypoints)
-    : null, [overlay, hoveredHvacTarget, hoveredHvacResolution?.kind, hvacControlThermostatId, hvacControlWaypoints]);
+    ? inspectHvacControlConnection(overlay, hvacControlThermostatId, hoveredHvacTarget.unitId, hvacControlWaypoints, { bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm })
+    : null, [overlay, hoveredHvacTarget, hoveredHvacResolution?.kind, hvacControlThermostatId, hvacControlWaypoints, bendRadiusInput]);
   const hoveredHvacAssist = hoveredHvacResolution?.kind === "connect" || hoveredHvacResolution?.kind === "confirm-alignment" ? { point: hoveredHvacResolution.point.position, mode: hoveredHvacResolution.kind === "connect" ? "connect" as const : "alignment" as const } : null;
   const activeBeamSnap = beamSnapTarget;
   const snapStatus = hoveredHvacAssist && hoveredHvacTarget
@@ -847,6 +903,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (!hit) { rawSurfaceHit.current = null; surfaceOccluded.current = true; if (!worldAxis) scheduleCursor(null); return; }
     surfaceOccluded.current = false;
     rawSurfaceHit.current = hit;
+    if (fireSignalRouteActive && hit.attachment.hostKind === "wall") { scheduleCursor(routePoint(hit)); return; }
     if (tool === "hvac-control") {
       const anchor = hvacControlRouteAnchor(), candidate = routePoint(hit);
       if (!hvacControlThermostatId || !anchor) { scheduleCursor(candidate); return; }
@@ -877,7 +934,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       scheduleCursor(routePoint(hit)); return;
     }
     if (tool === "point" || tool === "hvac-unit" || tool === "hvac-thermostat") { scheduleCursor(routePoint(hit)); return; }
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
+    if (tool === "draw" && !fireSignalStart && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
     if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
     if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) scheduleCursor(routePoint(hit));
@@ -904,7 +961,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!beamStart) { if (hit.attachment.hostKind !== "ceiling" || !hit.attachment.levelId) { setStatus("Beam 必须从 Ceiling 下表面开始。 "); return; } setBeamStart(hit); setBeamPointer(hit); setStatus("已确定梁起点；移动鼠标预览，第二次单击创建。Shift 约束水平正交。 "); return; }
       confirmBeamEndpoint({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
     }
-    if (tool === "point") { try { commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, routePoint(hit))] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
+    if (tool === "point") { try { const position = routePoint(hit); if (deviceType === "smoke-detector") { const next = placeSmokeDetector(overlay, position); commit(next); onSelect(next.devices[next.devices.length - 1]!.id); setStatus("已放置烟感，可从绿色消防信号端口起画。"); } else commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, position)] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
     if (tool === "hvac-unit") {
       if (!['ceiling', 'beam'].includes(hit.attachment.hostKind)) { setStatus('空调内机需安装到 Ceiling、梁面或辅助平面。'); return; }
       const result = placeIndoorUnit(overlay, routePoint(hit)); commit(result.overlay); onSelect(result.unit.id); setStatus('已放置空调内机；选择画送风或画回风后，直接点击对应颜色端口开始。'); return;
@@ -936,11 +993,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       }
       commit(result.overlay); setStatus('已添加风管段；继续单击确认点，双击或 Enter 完成。'); return;
     }
-    if (tool === "draw" && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
+    if (tool === "draw" && !fireSignalStart && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) return;
     if (tool !== "draw" && !(tool === "branch" && branchStart)) return;
     if (rejectLockedSystem(system)) return;
     const clickedPoint = routePoint(hit);
-    const point = resolveConfirmedRoutePoint(resolveEffectiveCursor(hit.attachment.hostKind === "beam" ? clickedPoint : latestCursor.current), hit.attachment.hostKind === "beam" && orthogonal && !worldAxis ? null : clickedPoint);
+    const fireSignalWallHit = fireSignalRouteActive && hit.attachment.hostKind === "wall";
+    const point = resolveConfirmedRoutePoint(fireSignalWallHit ? clickedPoint : resolveEffectiveCursor(hit.attachment.hostKind === "beam" ? clickedPoint : latestCursor.current), hit.attachment.hostKind === "beam" && orthogonal && !worldAxis && !fireSignalWallHit ? null : clickedPoint);
     if (!point) return;
     if (penetrationSession) { const exit = penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
     const constrained = point, candidate = [...draft, constrained];
@@ -965,6 +1023,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       }
       return port;
     };
+    if (canDrawWithoutSource && system === "sprinkler" && draft.length && device.deviceType === "sprinkler-head") {
+      const endPort = targetPort();
+      if (!endPort) { setStatus("目标喷淋头没有开放的消防端口。"); return; }
+      const points = routePointsToTarget(endPort.position, endPort.id, `${device.name || DEVICE_DEFAULTS[device.deviceType].label}端口`, device.id);
+      if (!points) return;
+      commitSprinklerHeadBranch(device, endPort); return;
+    }
     if (endpointRouteStart && draft.length) {
       const endPort = targetPort();
       if (!endPort) { setStatus("目标设备没有兼容的开放端口。"); return; }
@@ -973,6 +1038,17 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const plan = validatedPlan(points, undefined, device.id);
       if (!plan.canCommit) { rejectDiagnostics(plan); return; }
       commit(commitEndpointRoute(overlay, endpointRouteStart, plan, device.id, endPort.id)); clearCompletedDraft(); setStatus("已从开放管端重新连接设备点位。"); return;
+    }
+    if (fireSignalStart && system === "fire-signal" && draft.length) {
+      const endPort = targetPort();
+      if (!endPort || device.deviceType !== "smoke-detector") { setStatus("消防信号线只能连接另一只烟感的开放端口。"); return; }
+      const points = routePointsToTarget(endPort.position, endPort.id, `${device.name || DEVICE_DEFAULTS[device.deviceType].label}端口`, device.id);
+      if (!points) return;
+      const plan = validatedPlan(points, undefined, device.id);
+      if (!plan.canCommit) { rejectDiagnostics(plan); return; }
+      const next = commitFireSignalRoute(overlay, plan, fireSignalStart.deviceId, fireSignalStart.portId, device.id, endPort.id);
+      if (next === overlay) { setStatus("消防信号线无法接入该烟感端口。"); return; }
+      commit(next); clearCompletedDraft(); setStatus("消防信号线已连接另一只烟感。"); return;
     }
     if (deviceRouteStart && draft.length) {
       const endPort = targetPort();
@@ -995,11 +1071,22 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       commit(next); clearCompletedDraft(); setStatus("已从 86 底盒连接到设备端口。"); return;
     }
     const availableSystem = routeSystem;
+    if (device.deviceType === "smoke-detector" && availableSystem === "fire-signal") {
+      const startedPort = device.ports.find(port => port.id === portId && port.system === "fire-signal" && port.connectedSegmentIds.length === 0);
+      if (!startedPort) { setStatus("请选择烟感上绿色的消防信号端口起画。"); return; }
+      selectSystem(availableSystem); resetRouteConstraints(); setFireSignalStart({ deviceId: device.id, portId: startedPort.id }); setDeviceRouteStart(null); setSprinklerRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setDraft([structuredClone(startedPort.position)]); setCursor(null); setStatus("已从烟感端口起画；点击另一只烟感连接，或在墙面完成以封闭末端。"); return;
+    }
+    if (device.deviceType === "sprinkler-head" && availableSystem === "sprinkler") {
+      const startedPort = device.ports.find((port) => port.id === portId && port.system === "sprinkler" && port.connectedSegmentIds.length === 1);
+      const connectedSegmentId = startedPort?.connectedSegmentIds[0];
+      if (!startedPort || !connectedSegmentId || !deviceStartPorts(overlay, device, "sprinkler").some((port) => port.id === startedPort.id)) { setStatus("只有已连接一根消防水管的喷淋头可继续起画。"); return; }
+      selectSystem(availableSystem); resetRouteConstraints(); setSprinklerRouteStart({ deviceId: device.id, portId: startedPort.id, connectedSegmentId }); setDeviceRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setDraft([structuredClone(startedPort.position)]); setCursor(null); setStatus("已从已连接喷淋头继续起画；完成后该端口最多连接两根消防水管。"); return;
+    }
     if (!device.systems.includes(availableSystem) || !device.ports.some((port) => port.system === availableSystem)) return;
     if (!canUseCatalogSystem(catalogLock, availableSystem)) { setStatus(`当前 Builder 卡片不允许使用${SYSTEM_DEFAULTS[availableSystem].label}。`); return; }
     try {
       const started = startRouteFromDevice(overlay, device.id, availableSystem, portId);
-      selectSystem(availableSystem); resetRouteConstraints(); setDeviceRouteStart(started); setJunctionRouteStart(null); setEndpointRouteStart(null); setDraft([structuredClone(started.port.position)]); setCursor(null);
+      selectSystem(availableSystem); resetRouteConstraints(); setDeviceRouteStart(started); setSprinklerRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setDraft([structuredClone(started.port.position)]); setCursor(null);
     } catch { setStatus("该设备没有合法的开放输出端口。"); }
   };
   const onTargetHvacPowerPort = (unitId: string, portId: string, target: RoutePoint) => {
@@ -1029,11 +1116,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       setStatus("已确认开放管端辅助点；当前管道尚未与该管端连接，可继续逐点绘制。");
       return;
     }
-    if (deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
+    if (fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
     selectSystem(endpoint.system); resetRouteConstraints(); setEndpointRouteStart(endpoint); setDraft([structuredClone(endpoint.point)]); setCursor(null); setStatus("已从开放管端开始续画。");
   };
   const onStartJunctionRoute = (boxId: string, portId: string) => {
-    if (tool !== "draw" || deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
+    if (tool !== "draw" || fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart) return;
     try {
       const started = startRouteFromJunctionBox(overlay, boxId, portId);
       const candidateSystem = started.box.system;
@@ -1081,7 +1168,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commit(deleteNetworkObject(overlay, id));
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
-  const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setHvacOutletPreview(null); orthogonalDirection.current = null; };
+  const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setHvacOutletPreview(null); orthogonalDirection.current = null; };
   const canUseTool = (next: Tool) => next === "hvac-supply" || next === "hvac-return" ? canUseCatalogTool(catalogLock, "hvac-duct") : canUseCatalogTool(catalogLock, next);
   const chooseTool = (next: Tool) => { if (!canUseTool(next)) { setStatus("当前 Builder 卡片不允许切换到该工具。"); return; } setUniversalRouteMode(false); setRouteStartChooser(false); setTool(next); resetRouteSession(); if (['draw', 'branch', 'hvac-supply', 'hvac-return', 'hvac-control'].includes(next)) resetRouteConstraints(); setHvacControlThermostatId(null); setHvacControlWaypoints([]); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-control'].includes(next)) onSelect(null); };
   const handledAuthorCommand = useRef<number | null>(null);
@@ -1094,7 +1181,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (authorCommand.tool) chooseTool(authorCommand.tool);
     if (authorCommand.viewPreset) setPresetRequest((current) => applyViewPresetRequest(current, authorCommand.id, authorCommand.viewPreset!));
   }, [authorCommand]);
-  const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || deviceRouteStart || junctionRouteStart || endpointRouteStart);
+  const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart);
   const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
   const activeBeamCandidate = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer) : null;
   const beamPointerState = tool !== "beam" || !beamPointer ? null : !beamStart ? "free" : !activeBeamCandidate?.valid ? "invalid" : activeBeamCandidate.beam?.explicitCeilingCrossing ? "crossing" : beamSnapTarget ? "surface-snap" : "free";
@@ -1128,7 +1215,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const start = draft[draft.length - 1]!, projected = pointOnWorldAxis(start, worldAxis, origin, direction);
       scheduleCursor(preserveSlabHostForWorldAxisPoint(start, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
     }
-    if (canDrawWithoutSource && !surfaceHit) {
+    if ((canDrawWithoutSource || fireSignalStart) && !surfaceHit) {
       const point = pointOnViewPlane(draft[draft.length - 1]?.position ?? scene?.bounds.center ?? [0, 0, 0], origin, direction);
       if (orthogonal && draft.length) orthogonalDirection.current = resolveOrthogonalDirection(draft[draft.length - 1], point, orthogonalDirection.current);
       scheduleCursor(point); return;
@@ -1166,7 +1253,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if ('reason' in result) { setStatus(result.reason); return; }
       commit(result.overlay); setCursor(null); setStatus("已在世界轴上确认风管段；继续绘制或按 Enter 完成。"); return;
     }
-    if (!canDrawWithoutSource) { selectWhileBrowsing(null); return; }
+    if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }
     if (rejectLockedSystem(system)) return;
     const point = resolveEffectiveCursor(latestCursor.current);
     if (!point) return;
@@ -1176,7 +1263,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!plan.canCommit) { rejectDiagnostics(plan); return; }
     }
     setDraft(candidate); setCursor(null); orthogonalDirection.current = null;
-    const routeLabel = system === "sprinkler" ? "消防管" : "白色网络管";
+    const routeLabel = fireSignalStart ? "消防信号线" : system === "sprinkler" ? "消防管" : "白色网络管";
     setStatus(candidate.length === 1 ? `已确定${routeLabel}自由起点；继续逐点绘制。` : `已确定${routeLabel}落点；按 Enter 或双击生成。`);
   };
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
@@ -1552,7 +1639,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             </div>
                   )}
                   <small className="conduit-context-hint">
-                    {(system === "network" || system === "sprinkler") && tool === "draw"
+                    {system === "fire-signal" && tool === "draw"
+                      ? "点击烟感绿色信号端口起画；左键确认途经点，Enter 或双击结束，墙面末端封闭。"
+                      : (system === "network" || system === "sprinkler") && tool === "draw"
                       ? `${system === "sprinkler" ? "消防管" : "白色网络管"}可在空白处直接起画；`
                       : "先选合法来源或开放管端；"}
                     Shift 切正交，Tab 穿透，方向键锁定世界轴。
@@ -2133,7 +2222,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           。
                         </small>
                       </div>
-                      {selectedDevice.deviceType === "luminaire" ? <section className="conduit-context-section" aria-label="灯位接线盒尺寸">
+                      {selectedDevice.deviceType === "smoke-detector" ? <section className="conduit-context-section" aria-label="烟感尺寸">
+                        <b>烟感尺寸</b>
+                        <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections} onChange={(event) => applyDeviceSize(0, Number(event.target.value))} /> mm</span></label>
+                        <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} disabled={!sizeSelectionHasSameType} onChange={(event) => applyDeviceSize(2, Number(event.target.value))} /> mm</span></label>
+                        <small>{!sizeSelectionHasSameType ? "尺寸批量修改仅支持多选相同类型点位。" : sizeSelectionHasConnections ? `烟感端口已接消防信号线，直径已锁定；深度仍可修改。${selectedSizeDevices.length > 1 ? ` 将应用到 ${selectedSizeDevices.length} 个烟感。` : ""}` : `修改直径会带动四个端口移动。${selectedSizeDevices.length > 1 ? ` 将应用到 ${selectedSizeDevices.length} 个烟感。` : ""}`}</small>
+                      </section> : selectedDevice.deviceType === "luminaire" ? <section className="conduit-context-section" aria-label="灯位接线盒尺寸">
                         <b>灯位接线盒尺寸</b>
                         <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections} onChange={(event) => applyDeviceSize(0, Number(event.target.value))} /> mm</span></label>
                         <label>深度<span><input type="number" min="1" value={selectedDevice.sizeMm[2]} disabled={!sizeSelectionHasSameType} onChange={(event) => applyDeviceSize(2, Number(event.target.value))} /> mm</span></label>
@@ -2418,6 +2512,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           cursor.attachment.hostKind,
                         )
                       : deviceType === "luminaire" ||
+                        deviceType === "smoke-detector" ||
                         deviceType === "sprinkler-head" ||
                         deviceType === "sensor",
                   }
@@ -2489,7 +2584,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onStartEndpoint={onStartEndpoint}
             onDelete={deleteObject}
           />
-          <HvacScene overlay={overlayForLevel(overlay, activeLevelId)} selectedId={selectedId} systemVisible={systemLayerVisibility.HVACSystem} routeStartChooser={routeStartChooser && tool === 'draw'} ductStartActive={tool === 'hvac-duct'} deleteMode={tool === 'delete'} onDelete={deleteObject} controlRouteActive={tool === 'hvac-control'} powerRouteActive={tool === 'draw' && Boolean(deviceRouteStart) && system === 'receptacle'} targetAssist={hoveredHvacAssist} onHoverTargetPort={(unitId, portId, kind, hovered) => setHoveredHvacTarget((current) => hovered ? current?.unitId === unitId && current.portId === portId ? current : { unitId, portId, kind } : current?.unitId === unitId && current.portId === portId ? null : current)} draftControlRoute={hvacControlThermostatId ? { thermostatId: hvacControlThermostatId, points: hvacControlWaypoints, cursor: hoveredHvacTarget?.kind === 'control' && hoveredHvacAssist ? hoveredHvacAssist.point : cursor?.position ?? null } : null} onStartControlRoute={(thermostatId, candidate) => {
+          <HvacScene overlay={overlayForLevel(overlay, activeLevelId)} selectedId={selectedId} systemVisible={systemLayerVisibility.HVACSystem} routeStartChooser={routeStartChooser && tool === 'draw'} ductStartActive={tool === 'hvac-duct'} deleteMode={tool === 'delete'} onDelete={deleteObject} controlRouteActive={tool === 'hvac-control'} powerRouteActive={tool === 'draw' && Boolean(deviceRouteStart) && system === 'receptacle'} targetAssist={hoveredHvacAssist} onHoverTargetPort={(unitId, portId, kind, hovered) => setHoveredHvacTarget((current) => hovered ? current?.unitId === unitId && current.portId === portId ? current : { unitId, portId, kind } : current?.unitId === unitId && current.portId === portId ? null : current)} draftControlRoute={hvacControlThermostatId ? { thermostatId: hvacControlThermostatId, points: hvacControlWaypoints, cursor: hoveredHvacTarget?.kind === 'control' && hoveredHvacAssist ? hoveredHvacAssist.point : cursor?.position ?? null, targetUnitId: hoveredHvacTarget?.kind === 'control' && hoveredHvacResolution?.kind === 'connect' ? hoveredHvacTarget.unitId : undefined, bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm } : null} onStartControlRoute={(thermostatId, candidate) => {
             const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId);
             if (!thermostat) return;
             const port = ensureHvacThermostatPort(thermostat).controlPort;
@@ -2507,7 +2602,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             const arrival = resolveTargetClick(anchor, { kind: 'device-port', point: port.position, targetId: port.id, label: 'FCU 控制端口', distancePixels: 0, compatible: true }, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current });
             if (arrival.kind === 'confirm-alignment') { setHvacControlWaypoints(points => [...points, arrival.point]); setCursor(null); orthogonalDirection.current = null; setStatus('当前方向尚未对准 FCU；已确认辅助对齐点，请继续绘制。需要时按方向键切换轴，或按 ↓ 解除轴锁后连接。'); return; }
             if (arrival.kind === 'none') { setStatus('当前方向无法直接到达该 FCU；按方向键切换轴，或按 ↓ 解除轴锁后连接。'); return; }
-            const result = createHvacControlConduit(overlay, hvacControlThermostatId, unitId, hvacControlWaypoints);
+            const result = createHvacControlConduit(overlay, hvacControlThermostatId, unitId, hvacControlWaypoints, { bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
             if ('reason' in result) { setStatus(result.reason); return; }
             commit(result.overlay); onSelect(result.conduit.id); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setCursor(null); setTool('select'); setStatus('白色 HVAC 控制管已连接控温器与 FCU。');
           }} onTargetPowerPort={onTargetHvacPowerPort} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} selectedThermostatDimensions={selectedThermostat ? thermostatPositionDescription : undefined} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
@@ -2520,6 +2615,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             bounds={scene.bounds}
             onRay={onPointerRay}
             onEmptyClick={onEmptyCanvasClick}
+            onEmptyDoubleClick={() => finishCurrentRoute("include-preview")}
           />
           <Navigation bounds={scene.bounds} preset={preset} presetRevision={presetRequest.revision} projection={projection} onCameraRight={updateCameraRight} />
         </Canvas>

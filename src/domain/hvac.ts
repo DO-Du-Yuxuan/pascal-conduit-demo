@@ -258,30 +258,45 @@ export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string
   return { overlay: { ...candidate.overlay, hvac: { ...candidate.overlay.hvac, outlets: [...candidate.overlay.hvac.outlets.filter(item => item.id !== candidate.outlet.id), replacement] } } };
 }
 
-function planHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[]): { plan: PlannedRoute; sourcePort: HvacDevicePort; targetPort: HvacDevicePort } | { reason: string } {
+type HvacControlRouteOptions = { bendRadiusMm?: number; stockLengthMm?: number };
+function planHvacControlPoints(overlay: ConduitOverlayDocument, sourcePort: HvacDevicePort, points: RoutePoint[], options?: HvacControlRouteOptions): PlannedRoute | null {
+  const clean = points.filter((point, index) => index === 0 || length(points[index - 1]!.position, point.position) > 1e-6);
+  if (clean.length < 2) return null;
+  const plan: PlannedRoute = planRoute('network', HVAC_CONTROL_CONDUIT_DIAMETER_MM, 'surface', clean, undefined, [], { bendRadiusMm: options?.bendRadiusMm ?? overlay.settings.bendRadiusMm, stockLengthMm: options?.stockLengthMm ?? overlay.settings.stockLengthMm });
+  const collision = validatePlannedRoute(overlay, plan);
+  plan.diagnostics = collision;
+  plan.canCommit = collision.length === 0;
+  return plan;
+}
+
+/** Plans the transient HVAC route with the same conduit geometry and bend options used on commit. */
+export function planHvacControlDraft(overlay: ConduitOverlayDocument, thermostatId: string, points: RoutePoint[], options?: HvacControlRouteOptions): PlannedRoute | null {
+  const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId);
+  const sourcePort = thermostat && ensureHvacThermostatPort(thermostat).controlPort;
+  if (!sourcePort || sourcePort.system !== 'hvac-control' || sourcePort.role !== 'source') return null;
+  return planHvacControlPoints(overlay, sourcePort, [sourcePort.position, ...points], options);
+}
+
+function planHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[], options?: HvacControlRouteOptions): { plan: PlannedRoute; sourcePort: HvacDevicePort; targetPort: HvacDevicePort } | { reason: string } {
   const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId), unit = overlay.hvac.indoorUnits.find(item => item.id === indoorUnitId);
   if (!thermostat || !unit) return { reason: '控温器或 FCU 不存在。' };
   const sourcePort = ensureHvacThermostatPort(thermostat).controlPort, targetPort = ensureHvacUnitPorts(unit).controlPort;
   if (!sourcePort || sourcePort.system !== 'hvac-control' || sourcePort.role !== 'source' || !targetPort || targetPort.system !== 'hvac-control' || targetPort.role !== 'sink') return { reason: '控温器或 FCU 的控制端口无效。' };
   if (sourcePort.connectedSegmentIds.length || targetPort.connectedSegmentIds.length || overlay.hvac.controlConduits.some(route => route.thermostatId === thermostatId || route.indoorUnitId === indoorUnitId)) return { reason: '温控器和 FCU 控制端口各只能连接一条控制管。' };
-  const points = [sourcePort.position, ...waypoints.map(clone), targetPort.position];
-  const clean = points.filter((point, index) => index === 0 || length(points[index - 1]!.position, point.position) > 1e-6);
-  if (clean.length < 2) return { reason: '控制管至少需要一个有效管段。' };
-  const plan: PlannedRoute = planRoute('network', HVAC_CONTROL_CONDUIT_DIAMETER_MM, 'surface', clean, undefined, [], { bendRadiusMm: overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
-  if (!plan.canCommit) return { reason: plan.diagnostics[0]?.message ?? '控制管转弯空间不足。' };
-  const collision = validatePlannedRoute(overlay, plan);
-  if (collision.length) return { reason: collision[0]!.message };
-  return { plan, sourcePort, targetPort };
+  const planned = planHvacControlPoints(overlay, sourcePort, [sourcePort.position, ...waypoints.map(clone), targetPort.position], options);
+  if (!planned) return { reason: '控制管至少需要一个有效管段。' };
+  if (!planned.canCommit) return { reason: planned.diagnostics[0]?.message ?? '控制管转弯空间不足。' };
+  return { plan: planned, sourcePort, targetPort };
 }
 
 /** Uses the same geometry and collision checks as the final click. */
-export function inspectHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { reason: string } | { valid: true } {
-  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints);
+export function inspectHvacControlConnection(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = [], options?: HvacControlRouteOptions): { reason: string } | { valid: true } {
+  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints, options);
   return 'reason' in result ? { reason: result.reason } : { valid: true };
 }
 
-export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = []): { overlay: ConduitOverlayDocument; conduit: HvacControlConduit } | { overlay: ConduitOverlayDocument; reason: string } {
-  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints);
+export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermostatId: string, indoorUnitId: string, waypoints: RoutePoint[] = [], options?: HvacControlRouteOptions): { overlay: ConduitOverlayDocument; conduit: HvacControlConduit } | { overlay: ConduitOverlayDocument; reason: string } {
+  const result = planHvacControlConnection(overlay, thermostatId, indoorUnitId, waypoints, options);
   if ('reason' in result) return { overlay, reason: result.reason };
   const { plan, sourcePort, targetPort } = result;
   const conduitId = id('hvac-control-conduit'), createdAt = stamp();

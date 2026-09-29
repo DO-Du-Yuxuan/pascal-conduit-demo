@@ -72,12 +72,12 @@ function normalized(vector: Vec3 | undefined): Vec3 | null {
   return magnitude > 1e-8 ? scale(vector, 1 / magnitude) : null;
 }
 
-/** Distance to the first face of a placed device box along a finite ray. */
+/** Distance to the first face of a placed device envelope along a finite ray. */
 function rayDeviceEnvelopeHit(origin: Vec3, direction: Vec3, device: NetworkDevice): number | undefined {
   const frame = device.frame;
   if (!frame) return undefined;
   const axes = [frame.right, frame.up, frame.front], half = device.sizeMm.map(value => value / 2000);
-  if (device.deviceType === "luminaire" || device.deviceType === "sensor") {
+  if (device.deviceType === "luminaire" || device.deviceType === "smoke-detector" || device.deviceType === "sensor") {
     const relative = subtract(origin, device.position.position), localOrigin = axes.map(axis => dot(relative, axis)), localDirection = axes.map(axis => dot(direction, axis));
     const radius = device.sizeMm[0] / 2000, halfDepth = device.sizeMm[2] / 2000;
     const a = localDirection[0]! ** 2 + localDirection[1]! ** 2, b = 2 * (localOrigin[0]! * localDirection[0]! + localOrigin[1]! * localDirection[1]!), c = localOrigin[0]! ** 2 + localOrigin[1]! ** 2 - radius ** 2;
