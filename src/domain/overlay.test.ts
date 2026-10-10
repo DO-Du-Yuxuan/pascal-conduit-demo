@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { assessOverlayHosts, createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS } from "./overlay";
 import { branchAtSegment, commitBranchRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, planBranchContinuation, planRoute, resetRoutingIdsForTests, type PenetrationRequest } from "./routing";
+import { placeIndoorUnit } from "./hvac";
+import { createNetworkDevice } from "./devices";
 import { withCollisionDiagnostics } from "./routing-collision";
 
 const point = (x: number, y: number, z: number, hostId = "wall-a") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" } });
@@ -206,6 +208,14 @@ describe("Conduit overlay", () => {
     expect(JSON.stringify(source)).toBe(before);
   });
 
+  it.each(["receptacle", "lighting", "network"] as const)("only creates concealed chases on walls and floor tops for %s", (system) => {
+    for (const hostKind of ["wall", "slab", "ceiling", "beam"] as const) for (const surface of hostKind === "slab" ? ["top", "bottom"] : ["side-a"]) {
+      const attachment = { hostId: "host", hostKind, surface, normal: [0, 1, 0] as [number, number, number], levelId: "L0" };
+      const plan = planRoute(system, 20, "surface", [{ position: [0, 1, 0], attachment }, { position: [1, 1, 0], attachment }]);
+      expect(plan.surfaceChases.length).toBe(hostKind === "wall" || hostKind === "slab" && surface === "top" ? 1 : 0);
+    }
+  });
+
   it("does not cut sprinkler wall chases and can mark penetrations", () => {
     resetRoutingIdsForTests();
     const plan = planRoute("sprinkler", 50, "penetrate", [point(0, 2, 0), point(0, 2, 1, "slab-a")]);
@@ -237,6 +247,56 @@ describe("Conduit overlay", () => {
     expect(branched.junctionBoxes).toMatchObject([{ type: "junction-box", sizeMm: [86, 86, 50], segmentIds: expect.any(Array), ports: expect.arrayContaining([expect.objectContaining({ segmentId: expect.any(String) })]) }]);
     expect(branched.fittings).toHaveLength(0);
     expect(branched.segments.every((segment) => !segment.start.position.every((value, axis) => value === point(1, 1, 0).position[axis]) && !segment.end.position.every((value, axis) => value === point(1, 1, 0).position[axis]))).toBe(true);
+  });
+
+  it("closes a red power branch at an FCU and retains the stable power-port ID", () => {
+    const placed = placeIndoorUnit(createEmptyOverlay("fcu.json", "abc"), { position: [0, 2.7, 0], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "L0" } });
+    const port = placed.unit.powerPort!, [x, y, z] = port.position.position;
+    const start = { position: [x, y, z - 1] as [number, number, number] };
+    const routed = commitPlannedRoute(placed.overlay, planRoute("receptacle", 20, "surface", [{ position: [x - 1, y, z - 1] }, { position: [x + 1, y, z - 1] }]));
+    const parameters = { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 };
+    const points = [start, port.position];
+    const plan = planBranchContinuation(routed, routed.segments[0].id, points, parameters)!;
+    const next = commitBranchRoute(routed, routed.segments[0].id, points, parameters, [], plan, placed.unit.id, port.id);
+    const terminal = next.segments.find((segment) => segment.endPortId === port.id)!;
+    expect(terminal).toBeDefined();
+    expect(next.hvac.indoorUnits[0].powerPort?.id).toBe(port.id);
+    expect(next.hvac.indoorUnits[0].powerPort?.connectedSegmentIds).toEqual([terminal.id]);
+    expect(parseOverlay(JSON.parse(JSON.stringify(next))).hvac.indoorUnits[0].powerPort).toEqual(JSON.parse(JSON.stringify(next.hvac.indoorUnits[0].powerPort)));
+    const occupied = { ...routed, hvac: next.hvac };
+    expect(commitBranchRoute(occupied, routed.segments[0].id, points, parameters, [], plan, placed.unit.id, port.id)).toBe(occupied);
+    expect(placed.unit.powerPort?.connectedSegmentIds).toEqual([]);
+  });
+
+  it.each(["receptacle", "lighting", "sprinkler"] as const)("closes a %s branch at a compatible device and preserves both port references", (system) => {
+    const base = createEmptyOverlay("default-layout.json", "abc");
+    const routed = commitPlannedRoute(base, planRoute(system, 20, "surface", [point(0, 1, 0), point(2, 1, 0)]));
+    const source = createNetworkDevice(system === "lighting" ? "switch" : system === "sprinkler" ? "sprinkler-head" : "socket", point(0, 1, 0));
+    source.ports[0].position = structuredClone(routed.segments[0].start);
+    source.ports[0].connectedSegmentIds = [routed.segments[0].id];
+    routed.segments[0].startPortId = source.ports[0].id;
+    const device = createNetworkDevice(system === "sprinkler" ? "sprinkler-head" : system === "lighting" ? "switch" : "socket", point(1, 1, 1));
+    routed.devices.push(device, source);
+    const destination = device.ports.find((port) => port.system === system)!;
+    const points = [point(1, 1, 0), destination.position];
+    const parameters = { chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 };
+    const preview = planBranchContinuation(routed, routed.segments[0].id, points, parameters)!;
+    const snapshot = structuredClone(preview);
+    const next = commitBranchRoute(routed, routed.segments[0].id, points, parameters, [], preview, device.id, destination.id);
+    const terminal = next.segments.find((segment) => segment.endPortId === destination.id)!;
+    expect(terminal).toBeDefined();
+    expect(terminal.end.position).toEqual(destination.position.position);
+    expect(next.devices[0].ports.find((port) => port.id === destination.id)?.connectedSegmentIds).toEqual([terminal.id]);
+    const sourcePort = next.devices.find((item) => item.id === source.id)!.ports[0];
+    expect(sourcePort.connectedSegmentIds).toHaveLength(1);
+    expect(next.segments.find((segment) => segment.id === sourcePort.connectedSegmentIds[0])?.startPortId).toBe(sourcePort.id);
+    expect(sourcePort.connectedSegmentIds).not.toContain(routed.segments[0].id);
+    expect(preview).toEqual(snapshot);
+    expect(routed.devices[0].ports.every((port) => !port.connectedSegmentIds.length)).toBe(true);
+    const occupied = { ...routed, devices: next.devices };
+    expect(commitBranchRoute(occupied, routed.segments[0].id, points, parameters, [], preview, device.id, destination.id)).toBe(occupied);
+    const displaced = { ...routed, devices: [{ ...device, ports: device.ports.map((port) => ({ ...port, position: point(8, 1, 1) })) }] };
+    expect(commitBranchRoute(displaced, routed.segments[0].id, points, parameters, [], preview, device.id, destination.id)).toBe(displaced);
   });
 
   it("uses the same physical box port for branch preview and commit", () => {

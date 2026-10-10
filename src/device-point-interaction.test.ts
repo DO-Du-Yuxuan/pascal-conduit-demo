@@ -34,6 +34,27 @@ describe("device point interaction wiring", () => {
     }
   });
 
+  it("uses the same target confirmation path for an active branch and a normal route", () => {
+    expect(scene).toContain('targetingRoute = tool === "draw" || tool === "branch" && draft.length > 0');
+    expect(scene).toContain('branchable={draft.length === 0 && visible(segment.system)');
+    const handler = workspace.slice(workspace.indexOf("const onStartDeviceRoute ="), workspace.indexOf("const onStartEndpoint ="));
+    expect(handler).toContain('if (tool !== "draw" && !(tool === "branch" && branchStart && draft.length))');
+    expect(handler).toContain('commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan, device.id, endPort.id)');
+    const emptyClick = workspace.slice(workspace.indexOf("const onEmptyCanvasClick ="), workspace.indexOf('if (!scene) return', workspace.indexOf("const onEmptyCanvasClick =")));
+    expect(emptyClick).toContain('tool === "branch" && branchStart && draft.length');
+    expect(emptyClick).toContain('validatedPlan(candidate, branchStart?.segmentId)');
+  });
+
+  it("shares FCU power hover, alignment, and closing between source and branch routes", () => {
+    expect(workspace).toContain('const powerRouteActive = system === "receptacle" && draft.length > 0 && (tool === "draw" && Boolean(deviceRouteStart) || tool === "branch" && Boolean(branchStart))');
+    expect(workspace).toContain('powerRouteActive={powerRouteActive}');
+    const powerClick = workspace.slice(workspace.indexOf("const onTargetHvacPowerPort ="), workspace.indexOf("const onStartEndpoint ="));
+    expect(powerClick).toContain('if (!powerRouteActive) return;');
+    expect(powerClick).toContain('routePointsToTarget(port.position, port.id');
+    expect(powerClick).toContain('validatedPlan(points, branchStart?.segmentId, unit.id)');
+    expect(powerClick).toContain('commitBranchRoute(overlay, branchStart.segmentId, points, constructionParameters, explicitPenetrations, plan, unit.id, port.id)');
+  });
+
   it("renders every Ctrl/Command-selected device with selected styling", () => {
     expect(workspace).toContain("displaySelected: selectedDeviceIds.includes(device.id)");
     expect(scene).toContain("displaySelected");
@@ -54,7 +75,7 @@ describe("device point interaction wiring", () => {
   });
 
   it("clears point selection from empty space or Escape", () => {
-    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }');
+    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart && !(tool === "branch" && branchStart && draft.length) && !(tool === "draw" && draft.length)) { selectWhileBrowsing(null); return; }');
     expect(workspace).toContain("onEmptyClick={onEmptyCanvasClick}");
     expect(workspace).toContain('if (tool === "select") { selectWhileBrowsing(null); return; }');
   });
@@ -103,7 +124,7 @@ describe("device point interaction wiring", () => {
   it("allows fire-signal routes to confirm free-space waypoints and finish open or sealed", () => {
     expect(workspace).toContain('fireSignalStart && system === "fire-signal"');
     expect(workspace).toContain('if ((canDrawWithoutSource || fireSignalStart) && !surfaceHit)');
-    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }');
+    expect(workspace).toContain('if (!canDrawWithoutSource && !fireSignalStart && !(tool === "branch" && branchStart && draft.length) && !(tool === "draw" && draft.length)) { selectWhileBrowsing(null); return; }');
     expect(workspace).toContain('const wallTerminal = points[points.length - 1]?.attachment?.hostKind === "wall"');
     expect(workspace).toContain('endpointRouteStart.system !== "fire-signal"');
     expect(workspace).toContain("commitEndpointRoute(overlay, endpointRouteStart, plan, undefined, undefined, wallTerminal)");
@@ -115,9 +136,9 @@ describe("device point interaction wiring", () => {
   });
 
   it("preserves wall attachment when an orthogonal fire-signal route snaps and finishes", () => {
-    expect(workspace).toContain('if (fireSignalRouteActive && raw.attachment?.hostKind === "wall") return raw;');
-    expect(workspace).toContain('if (fireSignalRouteActive && hit.attachment.hostKind === "wall") { scheduleCursor(routePoint(hit)); return; }');
-    expect(workspace).toContain('const fireSignalWallHit = fireSignalRouteActive && hit.attachment.hostKind === "wall"');
+    expect(workspace).toContain('if (fireSignalRouteActive && !worldAxis && raw.attachment?.hostKind === "wall") return raw;');
+    expect(workspace).toContain('if (fireSignalRouteActive && !worldAxis && hit.attachment.hostKind === "wall") { scheduleCursor(routePoint(hit)); return; }');
+    expect(workspace).toContain('const fireSignalWallHit = fireSignalRouteActive && !worldAxis && hit.attachment.hostKind === "wall"');
     expect(workspace).toContain('fireSignalWallHit ? clickedPoint : resolveEffectiveCursor');
     expect(workspace).toContain('finishCurrentRoute(fireSignalRouteActive && latestCursor.current?.attachment?.hostKind === "wall" ? "include-preview" : "confirmed-only")');
   });

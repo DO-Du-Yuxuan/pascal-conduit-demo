@@ -31,6 +31,7 @@ const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): Route
 const segmentType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-segment" as const : "conduit-segment" as const;
 const fittingType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-fitting" as const : "conduit-fitting" as const;
 const isElectrical = (system: RoutingSystem) => system !== "sprinkler";
+const isConcealedHost = (host: HostAttachment | undefined): host is HostAttachment => Boolean(host && (host.hostKind === "wall" || host.hostKind === "slab" && host.surface === "top"));
 const selectPortDirection = (ports: NetworkPort[], direction: Vec3, used = new Set<string>()) => ports.filter((port) => !used.has(port.id)).sort((left, right) => dot(right.direction, direction) - dot(left.direction, direction))[0];
 
 export type RouteDiagnostic = { code: "bend_clearance" | "route_collision" | "self_collision" | "branch_clearance" | "beam_collision"; message: string; objectIds?: string[]; point?: Vec3 };
@@ -121,14 +122,14 @@ export function planRoute(system: RoutingSystem, diameterMm: number, mode: Surfa
 
   const surfaceChases: SurfaceChase[] = [];
   if (isElectrical(system) && mode === "surface") for (const segment of segments) {
-    const hosts = [segment.start.attachment, segment.end.attachment].filter((host): host is HostAttachment => Boolean(host && (host.hostKind === "wall" || host.hostKind === "slab")));
+    const hosts = [segment.start.attachment, segment.end.attachment].filter(isConcealedHost);
     for (const host of hosts.filter((candidate, hostIndex) => hosts.findIndex((item) => item.hostId === candidate.hostId) === hostIndex)) surfaceChases.push({ id: nextId("chase"), type: "surface-chase", hostId: host.hostId, hostKind: host.hostKind as "wall" | "slab", surfaceNormal: [...host.normal] as Vec3, routeElementId: segment.id, path: { kind: "line", start: copyPoint(segment.start), end: copyPoint(segment.end) }, widthMm: parameters.chaseWidthMm, depthMm: parameters.chaseDepthMm });
   }
   if (isElectrical(system) && mode === "surface") corners.forEach((corner, index) => {
     if (!corner.arc) return;
     const fitting = cornerFittings.get(index);
     if (!fitting) return;
-    const hosts = [points[index].attachment, points[index + 1].attachment, points[index + 2].attachment].filter((host): host is HostAttachment => Boolean(host && (host.hostKind === "wall" || host.hostKind === "slab")));
+    const hosts = [points[index].attachment, points[index + 1].attachment, points[index + 2].attachment].filter(isConcealedHost);
     for (const host of hosts.filter((candidate, hostIndex) => hosts.findIndex((item) => item.hostId === candidate.hostId) === hostIndex)) surfaceChases.push({ id: nextId("chase"), type: "surface-chase", hostId: host.hostId, hostKind: host.hostKind as "wall" | "slab", surfaceNormal: [...host.normal] as Vec3, routeElementId: fitting.id, path: { kind: "arc", arc: { ...corner.arc, start: [...corner.arc.start] as Vec3, end: [...corner.arc.end] as Vec3, center: [...corner.arc.center] as Vec3, normal: [...corner.arc.normal] as Vec3 } }, widthMm: parameters.chaseWidthMm, depthMm: parameters.chaseDepthMm });
   });
   const legacyRequests: PenetrationRequest[] = mode === "penetrate" ? segments.flatMap((segment) => [segment.start, segment.end].flatMap((entry) => entry.attachment ? [{ host: entry.attachment, entry, exit: entry, direction: entry.attachment.normal }] : [])) : [];
@@ -236,7 +237,7 @@ export function planBranchContinuation(overlay: ConduitOverlayDocument, segmentI
   return planRoute(target.system, target.diameterMm, target.system === "sprinkler" ? "suspended" : "surface", [branchPortPoint, ...branchPoints.slice(1)], parameters, explicitPenetrations, { bendRadiusMm: options?.bendRadiusMm ?? overlay.settings.bendRadiusMm, stockLengthMm: options?.stockLengthMm ?? overlay.settings.stockLengthMm });
 }
 
-export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], plannedRoute?: PlannedRoute): ConduitOverlayDocument {
+export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: string, branchPoints: RoutePoint[], parameters: ConstructionVisualParameters, explicitPenetrations: PenetrationRequest[] = [], plannedRoute?: PlannedRoute, endDeviceId?: string, endPortId?: string): ConduitOverlayDocument {
   const target = overlay.segments.find((segment) => segment.id === segmentId);
   if (!target || target.system === "network" || target.system === "fire-signal" || target.legacyUnrooted || branchPoints.length < 2) return overlay;
   const center = branchPoints[0], mainDirection = normalize(subtract(target.end.position, target.start.position)), branchDirection = normalize(subtract(branchPoints[1].position, center.position)), electrical = isElectrical(target.system);
@@ -251,8 +252,21 @@ export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: st
   const rightPoint = electrical ? copyPoint(rightBoxPort?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(mainDirection, halfSize)) };
   const branchPortPoint = electrical ? copyPoint(branchBoxPort?.position ?? center) : { ...copyPoint(center), position: add(center.position, scale(branchDirection, halfSize)) };
   const first: RouteSegment = { ...target, id: nextId("split"), end: leftPoint, endPortId: undefined }, second: RouteSegment = { ...target, id: nextId("split"), start: rightPoint, startPortId: undefined };
-  const route = plannedRoute ?? planBranchContinuation(overlay, segmentId, branchPoints, parameters, explicitPenetrations);
+  const route = plannedRoute ? { ...plannedRoute, segments: plannedRoute.segments.map((segment) => ({ ...segment })) } : planBranchContinuation(overlay, segmentId, branchPoints, parameters, explicitPenetrations);
   if (!route || !route.canCommit || !route.segments[0]) return overlay;
+  let devices = overlay.devices;
+  let indoorUnits = overlay.hvac.indoorUnits;
+  if (endDeviceId) {
+    const endDevice = devices.find((device) => device.id === endDeviceId);
+    const unit = indoorUnits.find((item) => item.id === endDeviceId);
+    const endPort = unit?.powerPort ?? endDevice?.ports.find((port) => port.id === endPortId && port.system === target.system && port.role !== "source" && port.connectedSegmentIds.length === 0);
+    const last = route.segments[route.segments.length - 1];
+    if (!endPort || endPort.id !== endPortId || endPort.system !== target.system || endPort.role === "source" || endPort.connectedSegmentIds.length || !last || length(subtract(last.end.position, endPort.position.position)) > .001 || (endDevice?.deviceType === "network-outlet" && endDevice.ports.some((port) => port.connectedSegmentIds.length))) return overlay;
+    // Bind a cloned terminal segment: committing must not mutate the preview plan.
+    route.segments = route.segments.map((segment) => segment.id === last.id ? { ...segment, endPortId: endPort.id } : { ...segment });
+    if (unit) indoorUnits = indoorUnits.map((item) => item.id === unit.id ? { ...item, powerPort: { ...unit.powerPort!, connectedSegmentIds: [last.id] } } : item);
+    devices = devices.map((device) => device.id === endDeviceId ? { ...device, ports: device.ports.map((port) => port.id === endPort.id ? { ...port, connectedSegmentIds: [last.id] } : port) } : device);
+  }
   const branchFirst = route.segments[0], nodePorts = electrical
     ? boxPorts.map((value) => value.id === leftBoxPort?.id ? { ...value, connectedSegmentIds: [first.id], segmentId: first.id } : value.id === rightBoxPort?.id ? { ...value, connectedSegmentIds: [second.id], segmentId: second.id } : value.id === branchBoxPort?.id ? { ...value, connectedSegmentIds: [branchFirst.id], segmentId: branchFirst.id } : value)
     : [port(nodeId, 0, leftPoint, scale(mainDirection, -1), first.id, target.system, ownerKind), port(nodeId, 1, rightPoint, mainDirection, second.id, target.system, ownerKind), port(nodeId, 2, branchPortPoint, branchDirection, branchFirst.id, target.system, ownerKind)];
@@ -262,6 +276,8 @@ export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: st
   bindPort(first, false, leftNodePort); bindPort(second, true, rightNodePort); bindPort(branchFirst, true, branchNodePort);
   const replacementForPort = (position: RoutePoint) => length(subtract(position.position, target.start.position)) <= length(subtract(position.position, target.end.position)) ? first.id : second.id;
   const remapFitting = (fitting: RouteFitting): RouteFitting => ({ ...fitting, segmentIds: fitting.segmentIds.map((id) => id === segmentId ? replacementForPort(fitting.position) : id), ports: fitting.ports.map((value) => value.segmentId === segmentId ? { ...value, segmentId: replacementForPort(value.position), connectedSegmentIds: value.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(value.position) : id) } : value) });
+  devices = devices.map((device) => ({ ...device, ports: device.ports.map((value) => value.connectedSegmentIds.includes(segmentId) ? { ...value, segmentId: value.segmentId === segmentId ? replacementForPort(value.position) : value.segmentId, connectedSegmentIds: value.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(value.position) : id) } : value) }));
+  indoorUnits = indoorUnits.map((unit) => unit.powerPort?.connectedSegmentIds.includes(segmentId) ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(unit.powerPort!.position) : id) } } : unit);
   const retainedFittings = overlay.fittings.map(remapFitting);
   const fittings: RouteFitting[] = electrical ? retainedFittings : [...retainedFittings, { id: nodeId, type: "sprinkler-fitting", fitting: "tee", system: target.system, diameterMm: target.diameterMm, position: copyPoint(center), segmentIds: [first.id, second.id, branchFirst.id], ports: nodePorts }];
   const remappedBoxes = overlay.junctionBoxes.map((box) => ({ ...box, segmentIds: box.segmentIds.map((id) => id === segmentId ? replacementForPort(box.position) : id), ports: box.ports.map((value) => value.segmentId === segmentId ? { ...value, segmentId: replacementForPort(value.position), connectedSegmentIds: value.connectedSegmentIds.map((id) => id === segmentId ? replacementForPort(value.position) : id) } : value) }));
@@ -269,7 +285,7 @@ export function commitBranchRoute(overlay: ConduitOverlayDocument, segmentId: st
   const splitChases = overlay.surfaceChases.flatMap((chase) => chase.routeElementId !== segmentId || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: nextId("chase"), routeElementId: first.id, path: { kind: "line" as const, start: chase.path.start, end: copyPoint(leftPoint) } }, { ...chase, id: nextId("chase"), routeElementId: second.id, path: { kind: "line" as const, start: copyPoint(rightPoint), end: chase.path.end } }]);
   const penetrations = overlay.penetrations.map((penetration) => penetration.segmentId !== segmentId ? penetration : ({ ...penetration, segmentId: length(subtract(penetration.entry.position, target.start.position)) <= length(subtract(center.position, target.start.position)) ? first.id : second.id }));
   const routedSegments = [first, second, ...route.segments].map((segment) => ({ ...segment, circuitId: target.circuitId, legacyUnrooted: target.legacyUnrooted }));
-  return { ...overlay, segments: overlay.segments.flatMap((segment) => segment.id === segmentId ? routedSegments : [segment]), fittings: [...fittings, ...route.fittings], junctionBoxes, circuits: overlay.circuits.map((circuit) => circuit.id === target.circuitId ? { ...circuit, segmentIds: circuit.segmentIds.flatMap((id) => id === segmentId ? routedSegments.map((item) => item.id) : [id]) } : circuit), surfaceChases: [...splitChases, ...route.surfaceChases], penetrations: [...penetrations, ...route.penetrations] };
+  return { ...overlay, devices, hvac: { ...overlay.hvac, indoorUnits }, segments: overlay.segments.flatMap((segment) => segment.id === segmentId ? routedSegments : [segment]), fittings: [...fittings, ...route.fittings], junctionBoxes, circuits: overlay.circuits.map((circuit) => circuit.id === target.circuitId ? { ...circuit, segmentIds: circuit.segmentIds.flatMap((id) => id === segmentId ? routedSegments.map((item) => item.id) : [id]) } : circuit), surfaceChases: [...splitChases, ...route.surfaceChases], penetrations: [...penetrations, ...route.penetrations] };
 }
 
 /** Removes selected network members in one pass and cleans every dependent reference. */
@@ -290,7 +306,7 @@ export function deleteNetworkObjects(overlay: ConduitOverlayDocument, ids: reado
   const fittings = overlay.fittings.filter((fitting) => !requestedIds.has(fitting.id) && fitting.segmentIds.every((segmentId) => remainingSegmentIds.has(segmentId)));
   const junctionBoxes = overlay.junctionBoxes.filter((box) => !requestedIds.has(box.id) && box.segmentIds.every((segmentId) => remainingSegmentIds.has(segmentId)));
   const removedElementIds = new Set([...removedIds, ...overlay.fittings.filter((fitting) => !fittings.some((item) => item.id === fitting.id)).map((fitting) => fitting.id), ...overlay.junctionBoxes.filter((box) => !junctionBoxes.some((item) => item.id === box.id)).map((box) => box.id)]);
-  const remainingElementIds = new Set([...remainingSegmentIds, ...fittings.map((fitting) => fitting.id), ...junctionBoxes.map((box) => box.id)]);
+  const remainingElementIds = new Set([...remainingSegmentIds, ...fittings.map((fitting) => fitting.id), ...junctionBoxes.map((box) => box.id), ...overlay.hvac.controlSegments.map((item) => item.id), ...overlay.hvac.controlFittings.map((item) => item.id)]);
   const devices = overlay.devices.filter((item) => !requestedIds.has(item.id)).map((item) => ({ ...item, ports: item.ports.map((port) => ({ ...port, connectedSegmentIds: port.connectedSegmentIds.filter((segmentId) => remainingSegmentIds.has(segmentId)) })) }));
   const indoorUnits = overlay.hvac.indoorUnits.map((unit) => unit.powerPort ? { ...unit, powerPort: { ...unit.powerPort, connectedSegmentIds: unit.powerPort.connectedSegmentIds.filter((segmentId) => remainingSegmentIds.has(segmentId)) } } : unit);
   return {

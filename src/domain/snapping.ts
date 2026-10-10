@@ -30,6 +30,11 @@ export function projectRoutePointToWorldAxis(start: RoutePoint, target: RoutePoi
   return { position: add(start.position, scale(direction, dot(delta, direction))) };
 }
 
+/** Resolve a surface click while a world axis is locked, including clicks before the first preview. */
+export function resolveWorldAxisSurfacePoint(start: RoutePoint, preview: RoutePoint | null, hit: RoutePoint, axis: WorldAxis): RoutePoint {
+  return projectRoutePointToWorldAxis(start, preview ?? hit, axis);
+}
+
 /** Resolves an orthogonal route direction against the actual target host plane. */
 export function projectRouteDirectionToHost(start: RoutePoint, target: RoutePoint, direction: Vec3): RoutePoint | null {
   const host = target.attachment;

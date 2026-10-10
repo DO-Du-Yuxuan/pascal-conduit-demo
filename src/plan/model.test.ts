@@ -12,6 +12,29 @@ const device = (id = 'd', x = 1): NetworkDevice => ({ id, type: 'network-device'
 const segment = (id: string, start: [number, number, number], end: [number, number, number]): RouteSegment => ({ id, type: 'conduit-segment', system: 'receptacle', diameterMm: 20, start: { position: start, attachment: host() }, end: { position: end, attachment: host() }, createdAt: '' });
 
 describe('2D point annotations', () => {
+  it('projects segment-mounted devices from their physical world centres', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    overlay.segments = [segment('pipe', [0, 2, 0], [4, 2, 0])];
+    overlay.devices = [1, 2, 3].map(x => ({ ...device(`d${x}`, x),
+      deviceType: 'sprinkler-head' as const, systems: ['sprinkler' as const],
+      position: { position: [x, 2.12, 1] as [number, number, number], attachment: { ...host(), localPosition: [1, 2, 0] as [number, number, number] } },
+      mount: { kind: 'segment' as const, segmentId: 'pipe', t: x / 4, tangent: [1, 0, 0] as [number, number, number], levelId: 'l0' },
+    }));
+    const context = createPlanContext(nodes, overlay);
+    expect(overlay.devices.map(d => context.devicePlanAnchor(d))).toEqual([[1, 1], [2, 1], [3, 1]]);
+    expect(overlay.devices.every(d => context.deviceVisible(d) && context.deviceLevel(d) === 'l0')).toBe(true);
+    const rectangle = { ...nodes, west: { id: 'west', type: 'wall', parentId: 'l0', start: [0, 0], end: [0, 4] },
+      east: { id: 'east', type: 'wall', parentId: 'l0', start: [4, 0], end: [4, 4] },
+      south: { id: 'south', type: 'wall', parentId: 'l0', start: [0, 4], end: [4, 4] } } as unknown as Record<string, NodeData>;
+    const dimensions = buildPointPositionDimensions(rectangle, overlay, 'l0');
+    expect(dimensions.length).toBeGreaterThan(0);
+    expect(dimensions.every(d => d.id.includes(':position:axis:'))).toBe(true);
+    for (const d of dimensions) {
+      expect((d.center[0] - d.reference[0]) * d.normal[0] + (d.center[1] - d.reference[1]) * d.normal[1]).toBeCloseTo(0, 6);
+      expect((d.referenceWitness[0] - d.reference[0]) * d.direction[0] + (d.referenceWitness[1] - d.reference[1]) * d.direction[1]).toBeCloseTo(0, 6);
+    }
+    expect(buildPlanAnnotations(rectangle, overlay, 'l0', 'millimeters').annotations).toHaveLength(0);
+  });
   it('derives reference-plane point height from the physical lower edge, including a lighting junction box disk', () => {
     const light = createReferencePlaneDevice('luminaire', [1, 2, 1], 'l0', 2000);
     expect(deviceInstallationHeightMeters(light, nodes, 'l0')).toBeCloseTo(1.985);
@@ -109,11 +132,11 @@ describe('2D point annotations', () => {
     expect(createPlanContext(nodes, overlay).deviceLevel(mounted)).toBe('l0');
   });
 
-  it('keeps a connected wall device visible when splitting leaves a stale segment mount id',()=>{
+  it('keeps a segment-mounted device visible without treating it as a wall installation',()=>{
     const overlay=createEmptyOverlay('a','sha'),connected=device();connected.mount={kind:'segment',segmentId:'split-away',t:1,tangent:[0,1,0]};overlay.devices=[connected];
     const context=createPlanContext(nodes,overlay);
     expect(context.deviceVisible(connected)).toBe(true);
-    expect(buildPlanAnnotations(nodes,overlay,'l0','millimeters').annotations).toHaveLength(1);
+    expect(buildPlanAnnotations(nodes,overlay,'l0','millimeters').annotations).toHaveLength(0);
   });
   it('inherits a valid level from an installation reference plane mount',()=>{
     const overlay=createEmptyOverlay('a','sha'),light={...device('light'),deviceType:'luminaire' as const,systems:['lighting' as const],position:{position:[1,1.5,2] as [number,number,number]},mount:{kind:'reference-plane' as const,levelId:'l0',elevationMm:1500}};

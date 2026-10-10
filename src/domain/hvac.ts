@@ -1,6 +1,8 @@
 import type { ConduitOverlayDocument, HvacControlConduit, HvacDuct, HvacDuctOutlet, HvacDevicePort, HvacIndoorUnit, HvacOutletFace, HvacSystem, HvacThermostat, HvacWallPenetration, RoutePoint, Vec3 } from './overlay';
 import { deviceFrame } from './devices';
-import { validatePlannedRoute } from './routing-collision';
+import { beamRouteDiagnostics } from './beam-routing';
+import type { NodeData } from '../types';
+import { withCollisionDiagnostics } from './routing-collision';
 import { planRoute, type PlannedRoute } from './routing';
 
 export const HVAC_DEFAULT_UNIT_SIZE_MM: [number, number, number] = [1000, 600, 300];
@@ -258,15 +260,14 @@ export function editHvacOutlet(overlay: ConduitOverlayDocument, outletId: string
   return { overlay: { ...candidate.overlay, hvac: { ...candidate.overlay.hvac, outlets: [...candidate.overlay.hvac.outlets.filter(item => item.id !== candidate.outlet.id), replacement] } } };
 }
 
-type HvacControlRouteOptions = { bendRadiusMm?: number; stockLengthMm?: number };
+type HvacControlRouteOptions = { bendRadiusMm?: number; stockLengthMm?: number; nodes?: Record<string, NodeData> };
 function planHvacControlPoints(overlay: ConduitOverlayDocument, sourcePort: HvacDevicePort, points: RoutePoint[], options?: HvacControlRouteOptions): PlannedRoute | null {
   const clean = points.filter((point, index) => index === 0 || length(points[index - 1]!.position, point.position) > 1e-6);
   if (clean.length < 2) return null;
   const plan: PlannedRoute = planRoute('network', HVAC_CONTROL_CONDUIT_DIAMETER_MM, 'surface', clean, undefined, [], { bendRadiusMm: options?.bendRadiusMm ?? overlay.settings.bendRadiusMm, stockLengthMm: options?.stockLengthMm ?? overlay.settings.stockLengthMm });
-  const collision = validatePlannedRoute(overlay, plan);
-  plan.diagnostics = collision;
-  plan.canCommit = collision.length === 0;
-  return plan;
+  const collisionChecked = withCollisionDiagnostics(overlay, plan);
+  const diagnostics = [...collisionChecked.diagnostics, ...beamRouteDiagnostics(options?.nodes ?? {}, collisionChecked)];
+  return { ...collisionChecked, diagnostics, canCommit: diagnostics.length === 0 };
 }
 
 /** Plans the transient HVAC route with the same conduit geometry and bend options used on commit. */
@@ -305,7 +306,7 @@ export function createHvacControlConduit(overlay: ConduitOverlayDocument, thermo
   const fittings = plan.fittings.map(({ id: fittingId, fitting, bendStyle, radiusMm, arc, bridge, diameterMm, position, segmentIds }) => ({ id: fittingId, type: 'hvac-control-fitting' as const, system: 'control' as const, fitting: fitting === 'bridge-bend' ? 'bridge-bend' as const : fitting === 'coupling' ? 'coupling' as const : 'elbow' as const, ...(bendStyle === 'sweep' || bendStyle === 'right-angle' ? { bendStyle } : {}), ...(radiusMm !== undefined ? { radiusMm } : {}), ...(arc ? { arc } : {}), ...(bridge ? { bridge } : {}), diameterMm, position: clone(position), segmentIds: [...segmentIds] }));
   const conduit: HvacControlConduit = { id: conduitId, type: 'hvac-control-conduit', system: 'control', thermostatId, thermostatPortId: sourcePort.id, indoorUnitId, indoorUnitPortId: targetPort.id, segmentIds: segments.map(segment => segment.id), fittingIds: fittings.map(fitting => fitting.id), diameterMm: HVAC_CONTROL_CONDUIT_DIAMETER_MM, createdAt };
   const firstId = segments[0]!.id, lastId = segments[segments.length - 1]!.id;
-  return { conduit, overlay: { ...overlay, hvac: { ...overlay.hvac, controlConduits: [...overlay.hvac.controlConduits, conduit], controlSegments: [...overlay.hvac.controlSegments, ...segments], controlFittings: [...overlay.hvac.controlFittings, ...fittings], thermostats: overlay.hvac.thermostats.map(item => {
+  return { conduit, overlay: { ...overlay, surfaceChases: [...overlay.surfaceChases, ...plan.surfaceChases], hvac: { ...overlay.hvac, controlConduits: [...overlay.hvac.controlConduits, conduit], controlSegments: [...overlay.hvac.controlSegments, ...segments], controlFittings: [...overlay.hvac.controlFittings, ...fittings], thermostats: overlay.hvac.thermostats.map(item => {
     if (item.id !== thermostatId) return item;
     const ensured = ensureHvacThermostatPort(item);
     return { ...ensured, controlPort: { ...ensured.controlPort!, connectedSegmentIds: [firstId] } };
@@ -320,7 +321,8 @@ export function deleteHvacControlConduit(overlay: ConduitOverlayDocument, condui
   const conduit = overlay.hvac.controlConduits.find(item => item.id === conduitId);
   if (!conduit) return overlay;
   const segmentIds = new Set(conduit.segmentIds);
-  return { ...overlay, hvac: { ...overlay.hvac, controlConduits: overlay.hvac.controlConduits.filter(item => item.id !== conduitId), controlSegments: overlay.hvac.controlSegments.filter(item => !segmentIds.has(item.id)), controlFittings: overlay.hvac.controlFittings.filter(item => !conduit.fittingIds.includes(item.id)), thermostats: overlay.hvac.thermostats.map(item => {
+  const routeElementIds = new Set([...conduit.segmentIds, ...conduit.fittingIds]);
+  return { ...overlay, surfaceChases: overlay.surfaceChases.filter(chase => !routeElementIds.has(chase.routeElementId)), hvac: { ...overlay.hvac, controlConduits: overlay.hvac.controlConduits.filter(item => item.id !== conduitId), controlSegments: overlay.hvac.controlSegments.filter(item => !segmentIds.has(item.id)), controlFittings: overlay.hvac.controlFittings.filter(item => !conduit.fittingIds.includes(item.id)), thermostats: overlay.hvac.thermostats.map(item => {
     if (item.id !== conduit.thermostatId) return item;
     const port = ensureHvacThermostatPort(item).controlPort!;
     return { ...item, controlPort: { ...port, connectedSegmentIds: port.connectedSegmentIds.filter(id => !segmentIds.has(id)) } };

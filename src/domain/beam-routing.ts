@@ -81,17 +81,20 @@ const segmentHitsExpandedBox = (start: Vec3, end: Vec3, volume: BeamVolume, radi
   return [start[0] + (end[0] - start[0]) * enter, start[1] + (end[1] - start[1]) * enter, start[2] + (end[2] - start[2]) * enter] as Vec3;
 };
 
-const exposedFace = (point: RoutePoint, volume: BeamVolume) => {
-  const attachment = point.attachment;
-  if (!attachment || attachment.hostKind !== "beam" || attachment.hostId !== volume.beam.id || attachment.surface === "top") return false;
+const liesOnExposedFace = (point: RoutePoint, volume: BeamVolume, face: string) => {
   const p = local(volume, point.position), tolerance = .006;
-  const face = attachment.surface;
   const withinWidth = Math.abs(p[0]) <= volume.halfWidth + tolerance, withinLength = Math.abs(p[2]) <= volume.halfLength + tolerance, withinHeight = p[1] >= volume.bottom - tolerance && p[1] <= volume.top + tolerance;
   return (face === "bottom" && withinWidth && withinLength && Math.abs(p[1] - volume.bottom) < tolerance)
     || (face === "side-a" && withinLength && withinHeight && Math.abs(p[0] + volume.halfWidth) < tolerance)
     || (face === "side-b" && withinLength && withinHeight && Math.abs(p[0] - volume.halfWidth) < tolerance)
     || (face === "end-a" && withinWidth && withinHeight && Math.abs(p[2] + volume.halfLength) < tolerance)
     || (face === "end-b" && withinWidth && withinHeight && Math.abs(p[2] - volume.halfLength) < tolerance);
+};
+
+const exposedFace = (point: RoutePoint, volume: BeamVolume) => {
+  const attachment = point.attachment;
+  return Boolean(attachment?.hostKind === "beam" && attachment.hostId === volume.beam.id
+    && attachment.surface !== "top" && liesOnExposedFace(point, volume, attachment.surface));
 };
 
 /** Whether retained Overlay evidence still touches one exposed physical Beam face. */
@@ -139,7 +142,6 @@ export function revalidateBeamAttachments(nodes: Record<string, NodeData>, overl
   return changed ? { ...overlay, devices, segments, fittings, junctionBoxes } : overlay;
 }
 
-const faceName = (point: RoutePoint, volume: BeamVolume) => exposedFace(point, volume) ? point.attachment!.surface : null;
 const outwardDeparture = (from: RoutePoint, toward: RoutePoint, volume: BeamVolume) => {
   if (!exposedFace(from, volume)) return false;
   return dot(normalize(sub(toward.position, from.position)), from.attachment!.normal) > .001;
@@ -160,7 +162,9 @@ export function beamRouteDiagnostics(nodes: Record<string, NodeData>, plan: Plan
     }));
   });
   for (const segment of [...plan.segments, ...bridgePieces]) for (const volume of validBeamVolumes(nodes)) {
-    const sameFaceRun = faceName(segment.start, volume) !== null && faceName(segment.start, volume) === faceName(segment.end, volume);
+    const sameBeamHost = segment.start.attachment?.hostKind === "beam" && segment.end.attachment?.hostKind === "beam"
+      && segment.start.attachment.hostId === volume.beam.id && segment.end.attachment.hostId === volume.beam.id;
+    const sameFaceRun = sameBeamHost && (["bottom", "side-a", "side-b", "end-a", "end-b"].some((face) => liesOnExposedFace(segment.start, volume, face) && liesOnExposedFace(segment.end, volume, face)));
     // An endpoint may leave its attached face, but a face-to-face shortcut
     // through the prism is never an implicit penetration.
     const leavesBeam = outwardDeparture(segment.start, segment.end, volume) || outwardDeparture(segment.end, segment.start, volume);

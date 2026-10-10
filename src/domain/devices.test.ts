@@ -548,6 +548,24 @@ describe("network devices and rooted circuits", () => {
     expect(inserted.fittings).toEqual(expect.arrayContaining([expect.objectContaining({ fitting: "tee", system: "sprinkler" })]));
     expect(head.orientation).toEqual([0, 1, 0]);
     expect(head.ports[0].connectedSegmentIds).toHaveLength(1);
+    expect(head.position.attachment).toBeUndefined();
+    expect(head.ports[0].position.attachment).toBeUndefined();
+    expect(head.mount).toMatchObject({ kind: "segment", levelId: "L0" });
+  });
+
+  it("inserts sprinkler heads on wall-attached water pipes without inheriting wall placement", () => {
+    const attachment = { ...point(0, 2, 0).attachment!, localPosition: [1, 2, 0] as [number, number, number] };
+    const overlay = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute("sprinkler", 50, "suspended", [
+      { position: [0, 2, 0], attachment }, { position: [2, 2, 0], attachment },
+    ]));
+    const inserted = insertDeviceOnSegment(overlay, overlay.segments[0]!.id, "sprinkler-head", [1, 2, 0]);
+    const head = inserted.devices.find(d => d.deviceType === "sprinkler-head")!;
+    expect(head.position.position).toEqual([1, 2.12, 0]);
+    expect(head.position.attachment).toBeUndefined();
+    expect(head.ports[0]!.position.attachment).toBeUndefined();
+    expect(head.orientation).toEqual([0, 1, 0]);
+    expect(head.mount).toMatchObject({ kind: "segment", levelId: "L0" });
+    expect(inserted.segments.find(s => s.endPortId === head.ports[0]!.id)?.end.position).toEqual(head.ports[0]!.position.position);
   });
 
   it("connects a free-start fire-water route to a sprinkler head without creating a circuit", () => {

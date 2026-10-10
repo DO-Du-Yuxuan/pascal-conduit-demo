@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createBeam, validateBeam } from "./beams";
+import { placeIndoorUnit, placeThermostat, createHvacControlConduit } from "./hvac";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./unified-project";
 import { commitFireSignalRoute, commitFreeRouteToDevice, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, createNetworkDevice, createSmokeDetector, openRouteEndpoints, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS } from "./devices";
-import { commitPlannedRoute, planRoute } from "./routing";
+import { commitPlannedRoute, deleteNetworkObject, planRoute } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
 import type { RoutePoint } from "./overlay";
 import { commitWorkspaceTransaction, createWorkspace, projectDocument } from "./workspace";
@@ -27,6 +28,32 @@ function project() {
 }
 
 describe("unified project file", () => {
+  it("round-trips HVAC shared bridge geometry and construction records under HVACSystem", () => {
+    const raw = project(); raw.nodes.socket.position = { position: [10, 1, 10] };
+    const loaded = decodeUnifiedProject(raw, "control.json", "sha");
+    const point = (x: number, z: number): RoutePoint => ({ position: [x, 1, z], attachment: { hostId: "wall", hostKind: "wall", surface: "front", normal: [0, 0, 1], levelId: "level" } });
+    const unit = placeIndoorUnit(loaded.overlay, point(2, 0));
+    const thermostat = placeThermostat(unit.overlay, point(0, 0));
+    if (!("thermostat" in thermostat)) throw new Error("fixture");
+    thermostat.thermostat.controlPort!.position = point(0, 0);
+    thermostat.overlay.hvac.indoorUnits[0].controlPort!.position = point(2, 0);
+    const base = commitPlannedRoute(thermostat.overlay, planRoute("receptacle", 20, "suspended", [{ position: [1, 1, -1] }, { position: [1, 1, 1] }]));
+    const routed = createHvacControlConduit(base, thermostat.thermostat.id, unit.unit.id);
+    if (!("conduit" in routed)) throw new Error(routed.reason);
+    const controlIds = new Set([...routed.conduit.segmentIds, ...routed.conduit.fittingIds]);
+    const chases = routed.overlay.surfaceChases.filter(item => controlIds.has(item.routeElementId));
+    expect(chases.length).toBeGreaterThan(0);
+    expect(deleteNetworkObject(routed.overlay, base.segments[0].id).surfaceChases).toEqual(chases);
+    const saved = encodeUnifiedProject(loaded.projectRaw, routed.overlay) as any;
+    expect(saved.nodes.HVACSystem.surfaceChases).toEqual(chases);
+    expect(saved.nodes.ElectricalSystem.surfaceChases).toEqual([]);
+    const restored = decodeUnifiedProject(saved, "control.json", "new-sha");
+    expect(restored.overlay.surfaceChases).toEqual(routed.overlay.surfaceChases);
+    expect(restored.overlay.hvac.controlFittings).toEqual(routed.overlay.hvac.controlFittings);
+    expect(saved.nodes.wall).toEqual(raw.nodes.wall);
+    expect(saved.nodes.future).toEqual(raw.nodes.future);
+  });
+
   it("round-trips FireProtectionSystem smoke detectors, white signal conduit, and sealed wall ends", () => {
     const raw = project();
     raw.nodes.level.children.push("ceiling");

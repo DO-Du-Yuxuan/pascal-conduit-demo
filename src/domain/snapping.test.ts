@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { projectRouteDirectionToHost, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
+import { resolveWorldAxisSurfacePoint, projectRouteDirectionToHost, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalBeamHit, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "./snapping";
 import type { RoutePoint } from "./overlay";
 
 const point = (x: number, y: number, z: number): RoutePoint => ({ position: [x, y, z], attachment: { hostId: "wall", hostKind: "wall", surface: "interior", normal: [0, 0, 1], levelId: "L0", localPosition: [x, y, z], basis: { u: [1, 0, 0], v: [0, 1, 0] } } });
@@ -156,5 +156,20 @@ describe("route object snap resolution", () => {
     const distantPort = { ...socketPort, point: { ...socketPort.point, position: [socketPort.point.position[0], socketPort.point.position[1], socketPort.point.position[2] + .01] as [number, number, number] } };
     expect(resolveTargetClick(routePoint, distantPort, { tolerancePixels: 16, hostOrthogonal: true }).kind).toBe("confirm-alignment");
     expect(resolveSnapCandidate(routePoint, [{ ...socketPort, kind: "open-end" }], { tolerancePixels: 16, hostOrthogonal: true }).kind).toBe("alignment");
+  });
+});
+
+describe("locked-axis surface confirmation", () => {
+  const anchor: RoutePoint = { position: [1, 2, 3] };
+  const beamHit: RoutePoint = { position: [8, 9, 10], attachment: { ...point(8, 9, 10).attachment!, hostId: "beam", hostKind: "beam", surface: "side-a" } };
+  it.each([['x', [6, 2, 3]], ['y', [1, 7, 3]], ['z', [1, 2, 8]]] as const)("keeps the displayed %s axis point when a Beam wins the click hit", (axis, expected) => {
+    const preview: RoutePoint = { position: [...expected] };
+    expect(resolveWorldAxisSurfacePoint(anchor, preview, beamHit, axis)).toEqual(preview);
+  });
+  it.each([['x', [8, 2, 3]], ['y', [1, 9, 3]], ['z', [1, 2, 10]]] as const)("projects a first-frame Beam click onto %s without acquiring its host", (axis, expected) => {
+    expect(resolveWorldAxisSurfacePoint(anchor, null, beamHit, axis)).toEqual({ position: [...expected] });
+  });
+  it("reprojects a stale raw-surface preview instead of releasing the axis lock", () => {
+    expect(resolveWorldAxisSurfacePoint(anchor, beamHit, beamHit, 'x')).toEqual({ position: [8, 2, 3] });
   });
 });

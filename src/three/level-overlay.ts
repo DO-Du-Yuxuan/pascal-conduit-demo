@@ -20,6 +20,7 @@ export function overlayForLevel(overlay: ConduitOverlayDocument, levelId: string
   const thermostatIds = new Set(thermostats.map((thermostat) => thermostat.id));
   const controlConduits = overlay.hvac.controlConduits.filter((route) => unitIds.has(route.indoorUnitId) && thermostatIds.has(route.thermostatId));
   const controlSegmentIds = new Set(controlConduits.flatMap((route) => route.segmentIds));
+  const controlFittingIds = new Set(controlConduits.flatMap((route) => route.fittingIds));
   return {
     ...overlay,
     segments,
@@ -41,6 +42,7 @@ export function overlayForLevel(overlay: ConduitOverlayDocument, levelId: string
       controls: [],
       controlConduits,
       controlSegments: overlay.hvac.controlSegments.filter(segment => controlSegmentIds.has(segment.id)),
+      controlFittings: overlay.hvac.controlFittings.filter(fitting => controlFittingIds.has(fitting.id)),
       wallPenetrations: overlay.hvac.wallPenetrations.filter((item) => hvacSegmentIds.has(item.segmentId)),
     },
   };

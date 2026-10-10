@@ -29,7 +29,7 @@ export function modelFinishedFloorAt(nodes: Record<string, NodeData>, levelId: s
   return finishedFloorElevationAt(nodes, levelId, modelLevelBase(nodes, levelId), x, z, measurementStartY);
 }
 export const deviceHostAttachment = (device: NetworkDevice): HostAttachment | undefined =>
-  device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
+  device.mount?.kind === 'segment' ? undefined : device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
 export const isFloorSocket = (device: NetworkDevice): boolean =>
   device.deviceType === 'socket' && deviceHostAttachment(device)?.hostKind === 'slab';
 export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
@@ -178,7 +178,7 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
   for (const d of overlay.devices.filter(context.deviceVisible)) {
     const level = context.deviceLevel(d);
     if (!level) { notices.push({ sourceId: d.id, levelId: null, text: '楼层归属不明，未绘制设备' }); continue; }
-    const attachment = d.position.attachment ?? (d.mount?.kind === 'host' ? d.mount.attachment : undefined);
+    const attachment = deviceHostAttachment(d);
     if (level === levelId && (attachment?.hostKind === 'wall' || d.deviceType === 'sensor')) devices.push(d);
   }
   const terminal = (d:NetworkDevice)=>!DEVICE_DEFAULTS[d.deviceType].source;
@@ -216,7 +216,7 @@ export function buildPointPositionDimensionReport(nodes:Record<string,NodeData>,
   const wallEntries:Array<{device:NetworkDevice;wall:NodeData;start:Point;direction:Point;length:number;scalar:number;center:Point;edgeHalf:number;normal:Point}>=[];
   for(const device of overlay.devices){
     if(!context.deviceVisible(device)||context.deviceLevel(device)!==levelId)continue;
-    const attachment=device.position.attachment??(device.mount?.kind==='host'?device.mount.attachment:undefined),wall=attachment&&nodes[attachment.hostId];
+    const attachment=deviceHostAttachment(device),wall=attachment&&nodes[attachment.hostId];
     if(!attachment||attachment.hostKind!=='wall')continue;
     if(wall?.type!=='wall'||!Array.isArray(wall.start)||!Array.isArray(wall.end)||wall.curveOffset!==undefined){notices.push({sourceId:device.id,levelId,text:'该方向定位尺寸链未闭合',anchor:point2(device.position.position)});continue;}
     const start:Point=[Number(wall.start[0]),Number(wall.start[1])],end:Point=[Number(wall.end[0]),Number(wall.end[1])],dx=end[0]-start[0],dz=end[1]-start[1],length=Math.hypot(dx,dz);

@@ -4,6 +4,37 @@ import type { HostAttachment, RoutePoint, Vec3 } from "../domain/overlay";
 import type { ThreeDSurfaceHit } from "./PascalScenePreview";
 
 export type WallHostCandidate = { node: NodeData; levelId: string | null; openings: Array<{ center: number; width: number }> };
+const subtract3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const add3 = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const scale3 = (a: Vec3, amount: number): Vec3 => [a[0] * amount, a[1] * amount, a[2] * amount];
+
+/** Snaps a hit on an adjacent Beam face back to the physical edge shared with the active face. */
+export function transitionToAdjacentBeamFace(start: RoutePoint, hit: RoutePoint): RoutePoint {
+  const from = start.attachment, target = hit.attachment;
+  if (from?.hostKind !== "beam" || !target || target.hostKind !== "beam" || from.hostId !== target.hostId || from.surface === target.surface) return hit;
+  const fromFace = ["bottom", "side-a", "side-b", "end-a", "end-b"].includes(from.surface);
+  const targetFace = ["bottom", "side-a", "side-b", "end-a", "end-b"].includes(target.surface);
+  // Exposed faces of a rectangular Beam meet at right angles. Opposite faces
+  // are parallel and cannot be joined by an edge transition.
+  if (!fromFace || !targetFace || Math.abs(dot3(from.normal, target.normal)) > .001) return hit;
+  const position = add3(hit.position, scale3(from.normal, dot3(subtract3(start.position, hit.position), from.normal)));
+  const delta = subtract3(position, hit.position), attachment = { ...target, localPosition: target.localPosition ? [...target.localPosition] as Vec3 : undefined };
+  if (attachment.localPosition && target.basis) {
+    if (target.surface === "bottom") {
+      attachment.localPosition[0] += dot3(delta, target.basis.v);
+      attachment.localPosition[1] += delta[1];
+      attachment.localPosition[2] += dot3(delta, target.basis.u);
+    } else if (target.surface === "side-a" || target.surface === "side-b") {
+      attachment.localPosition[1] += dot3(delta, target.basis.v);
+      attachment.localPosition[2] += dot3(delta, target.basis.u);
+    } else {
+      attachment.localPosition[0] += dot3(delta, target.basis.u);
+      attachment.localPosition[1] += dot3(delta, target.basis.v);
+    }
+  }
+  return { ...hit, position, attachment };
+}
 
 const planPoint = (value: unknown): [number, number] | null => Array.isArray(value) && Number.isFinite(value[0]) && Number.isFinite(value[1]) ? [Number(value[0]), Number(value[1])] : null;
 const clamp = (value: number) => Math.max(0, Math.min(1, value));

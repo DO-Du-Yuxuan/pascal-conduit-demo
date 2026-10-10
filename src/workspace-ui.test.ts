@@ -102,6 +102,9 @@ describe("conduit workspace UI contract", () => {
 
   it("renders HVAC control drafts and saved elbows with the shared planned-route conduit geometry", () => {
     expect(hvacSceneSource).toContain("planHvacControlDraft(overlay, draftControlRoute.thermostatId");
+    expect(hvacSceneSource).toContain("points: RoutePoint[]; cursor?: RoutePoint | null;");
+    expect(hvacSceneSource).toContain("draftControlRoute.cursor ? [draftControlRoute.cursor] : []");
+    expect(threeDSource).toContain("hoveredHvacResolution.point : cursor ?? null");
     expect(hvacSceneSource).toContain("<RoutePlanPreview plan={controlPreviewPlan}");
     expect(hvacSceneSource).toContain("controlPreviewPlan.canCommit ? '#ffffff' : '#ef4444'");
     expect(hvacSceneSource).toContain("<RoutePipeGeometry segment={routeSegment}");
@@ -296,9 +299,9 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain(">画控制线管</button>");
     expect(threeDSource).toContain("onStartControlRoute={(thermostatId, candidate) =>");
     expect(threeDSource).toContain("selectHvacThermostatPort(overlay, thermostatId, candidate.key)");
-    expect(threeDSource).toContain("createHvacControlConduit(overlay, hvacControlThermostatId, unitId, hvacControlWaypoints, { bendRadiusMm:");
+    expect(threeDSource).toContain("createHvacControlConduit(overlay, hvacControlThermostatId, unitId, hvacControlWaypoints, { nodes: scene?.nodes, bendRadiusMm:");
     expect(threeDSource).toContain("onTargetPowerPort={onTargetHvacPowerPort}");
-    expect(threeDSource).toContain("if (next === deviceRouteStart.overlay)");
+    expect(threeDSource).toContain("if (next === overlay || next === deviceRouteStart?.overlay)");
     expect(threeDSource).toContain('next === "hvac-supply" || next === "hvac-return" ? canUseCatalogTool(catalogLock, "hvac-duct") : canUseCatalogTool(catalogLock, next)');
     expect(threeDSource).toContain("已删除 HVAC 控制管及两端端口占用");
     expect(hvacSceneSource).toContain("onStartControlRoute?.(item.id, candidate)");
@@ -342,7 +345,7 @@ describe("conduit workspace UI contract", () => {
 
   it("applies route cursor constraints to HVAC control pipe previews and terminal alignment", () => {
     expect(threeDSource).toContain("projectRoutePointToWorldAxis(anchor, candidate, worldAxis)");
-    expect(threeDSource).toContain("projectRoutePointToDirection(anchor, candidate, direction)");
+    expect(threeDSource).toContain("resolveHostSurfaceCursor(scene?.nodes ?? {}, anchor, candidate, orthogonal, orthogonalDirection.current)");
     expect(threeDSource).toContain("当前方向尚未对准 FCU；已确认辅助对齐点");
     expect(threeDSource).toContain("tool === \"hvac-control\" && hvacControlThermostatId && worldAxis");
   });
@@ -354,7 +357,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("onClick={toggleRouteOrthogonalMode}");
     expect(threeDSource).toContain("onClick={() => chooseRouteWorldAxis('x')}");
     expect(threeDSource).toContain("className={orthogonal && !worldAxis ? 'active' : ''}");
-    expect(threeDSource.indexOf("const hvacEmptyClick = hvacEmptyCanvasRouteAction")).toBeLessThan(threeDSource.indexOf("if (!canDrawWithoutSource && !fireSignalStart) { selectWhileBrowsing(null); return; }"));
+    expect(threeDSource.indexOf("const hvacEmptyClick = hvacEmptyCanvasRouteAction")).toBeLessThan(threeDSource.indexOf("if (!canDrawWithoutSource && !fireSignalStart && !(tool === \"branch\" && branchStart && draft.length)"));
   });
 
   it("locks a newly started duct to the clicked port's outward direction before using free orthogonal choice", () => {

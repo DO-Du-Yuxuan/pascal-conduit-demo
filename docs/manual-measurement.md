@@ -31,6 +31,8 @@ The 12-pixel interaction radius is converted to metres only to decide whether sn
 
 ## Positioning dimensions
 
+管段挂载设备的 2D 符号、定位尺寸和标注共用实际世界坐标；`mount.kind: "segment"` 不作为墙面安装。定位尺寸使用室内两条主轴与真实边界见证，不将管段设备加入墙面尺寸链或墙面高度标注。尺寸数字位置与线偏移继续保留，几何重新从模型计算。
+
 Automatic 2D positioning dimensions use explicit model witnesses:
 
 - Regular Overlay point devices — including wall sockets, floor sockets, ceiling devices, switches, lighting junction boxes, network and fire points — locate the device **centre**. Strong and weak panels are the exception: their horizontal clearances start at the casing edge defined by `device.sizeMm[0]`; both the dimension value endpoint and its drawn witness extension land on that edge. Panel-to-panel chain dimensions run edge to edge. A boundary reference is the first physical wall face or opening edge in that direction, never a wall centreline. A missing wall thickness uses the 100 mm physical-wall default.

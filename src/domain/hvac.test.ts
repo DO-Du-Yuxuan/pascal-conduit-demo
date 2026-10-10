@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { addHvacOutlet, addHvacWallPenetration, appendHvacDuctSegment, createHvacControlConduit, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, editThermostat, hvacAxisPlanarReferences, hvacOutletEdgeClearances, HVAC_DEFAULT_SECTION_MM, indoorUnitCasingSizeMeters, indoorUnitFootprint, indoorUnitPort, indoorUnitPortDirection, inspectHvacControlConnection, isHvacObjectId, placeIndoorUnit, placeThermostat, planHvacControlDraft, projectFirstDuctSegmentFromPort, resizeHvacTerminalSegment } from './hvac';
+import { commitPlannedRoute, planRoute } from './routing';
+import { withCollisionDiagnostics } from './routing-collision';
+import { createBeam } from './beams';
 import { createEmptyOverlay, parseOverlay } from './overlay';
 
 const point = (x: number, y: number, z: number) => ({ position: [x, y, z] as [number, number, number] });
@@ -169,6 +172,46 @@ describe('HVAC Overlay', () => {
     const moved = editThermostat(freed, thermostat.thermostat.id, { position: point(2, 1.3, 0) });
     expect(moved.overlay.hvac.thermostats[0]?.controlPort?.position.position).toEqual([1.98108, 1.2570000000000001, 0]);
   });
+  it('shares automatic bridges between HVAC control routes and ordinary electrical conduits', () => {
+    const unit = placeIndoorUnit(createEmptyOverlay('route.json', 'sha'), point(2, 1, 0));
+    const thermostat = placeThermostat(unit.overlay, { ...point(0, 1, 0), attachment: { hostId: 'wall', hostKind: 'wall', surface: 'front', normal: [0, 0, 1], levelId: 'L0' } });
+    if (!('thermostat' in thermostat)) throw new Error('fixture');
+    thermostat.thermostat.controlPort!.position = point(0, 1, 0);
+    thermostat.overlay.hvac.indoorUnits[0]!.controlPort!.position = point(2, 1, 0);
+    const base = commitPlannedRoute(thermostat.overlay, planRoute('receptacle', 20, 'surface', [point(1, 1, -1), point(1, 1, 1)]));
+    const preview = planHvacControlDraft(base, thermostat.thermostat.id, [point(2, 1, 0)])!;
+    expect(preview.canCommit).toBe(true);
+    expect(preview.fittings.filter(fitting => fitting.fitting === 'bridge-bend')).toHaveLength(1);
+    expect(inspectHvacControlConnection(base, thermostat.thermostat.id, unit.unit.id)).toEqual({ valid: true });
+    const routed = createHvacControlConduit(base, thermostat.thermostat.id, unit.unit.id);
+    if (!('conduit' in routed)) throw new Error('fixture');
+    const savedBridge = routed.overlay.hvac.controlFittings.find(fitting => fitting.fitting === 'bridge-bend')!;
+    expect(savedBridge.bridge).toEqual(preview.fittings.find(fitting => fitting.fitting === 'bridge-bend')!.bridge);
+    expect(parseOverlay(routed.overlay).hvac.controlFittings.find(fitting => fitting.id === savedBridge.id)?.bridge).toEqual(savedBridge.bridge);
+    const overStraight = withCollisionDiagnostics(routed.overlay, planRoute('lighting', 20, 'surface', [point(.5, 1, -1), point(.5, 1, 1)]));
+    expect(overStraight.canCommit).toBe(true);
+    expect(overStraight.fittings.find(fitting => fitting.fitting === 'bridge-bend')?.bridge?.obstacleSegmentId).toBe(routed.conduit.segmentIds[0]);
+    const overBridge = withCollisionDiagnostics(routed.overlay, planRoute('network', 20, 'surface', [point(1, 1.03, -1), point(1, 1.03, 1)]));
+    expect(overBridge.canCommit).toBe(true);
+    expect(overBridge.fittings.find(fitting => fitting.fitting === 'bridge-bend')?.bridge?.obstacleFittingIds).toContain(savedBridge.id);
+    expect(base.hvac.controlSegments).toEqual([]);
+  });
+
+  it('persists and deletes concealed wall chases with the HVAC control route', () => {
+    const unit = placeIndoorUnit(createEmptyOverlay('route.json', 'sha'), point(2, 1, 0));
+    const thermostat = placeThermostat(unit.overlay, { ...point(0, 1, 0), attachment: { hostId: 'wall', hostKind: 'wall', surface: 'front', normal: [0, 0, 1], levelId: 'L0' } });
+    if (!('thermostat' in thermostat)) throw new Error('fixture');
+    thermostat.overlay.hvac.indoorUnits[0]!.controlPort!.position = { ...point(2, 1, 0), attachment: thermostat.thermostat.controlPort!.position.attachment };
+    const routed = createHvacControlConduit(thermostat.overlay, thermostat.thermostat.id, unit.unit.id);
+    if (!('conduit' in routed)) throw new Error('fixture');
+    expect(routed.overlay.surfaceChases.length).toBeGreaterThan(0);
+    expect(routed.overlay.surfaceChases.every(chase => routed.conduit.segmentIds.includes(chase.routeElementId) || routed.conduit.fittingIds.includes(chase.routeElementId))).toBe(true);
+    const deleted = deleteHvacControlConduit(routed.overlay, routed.conduit.id);
+    expect(deleted.surfaceChases).toEqual([]);
+    expect(deleted.hvac.thermostats[0]?.controlPort?.connectedSegmentIds).toEqual([]);
+    expect(deleted.hvac.indoorUnits[0]?.controlPort?.connectedSegmentIds).toEqual([]);
+  });
+
   it('uses the same planned sweep geometry and bend radius for HVAC preview, inspection, and commit', () => {
     const unit = placeIndoorUnit(createEmptyOverlay('route.json', 'sha'), point(0, 2.7, 0));
     const thermostat = placeThermostat(unit.overlay, { ...point(1, 1.3, 0), attachment: { hostId: 'wall', hostKind: 'wall', surface: 'front', normal: [0, 0, 1], levelId: 'L0' } });
@@ -182,6 +225,24 @@ describe('HVAC Overlay', () => {
     expect(committed.overlay.hvac.controlFittings.map(fitting => fitting.arc)).toEqual(preview.fittings.map(fitting => fitting.arc));
     expect(committed.overlay.hvac.controlSegments.map(segment => [segment.start.position, segment.end.position])).toEqual(preview.segments.map(segment => [segment.start.position, segment.end.position]));
     expect(inspectHvacControlConnection(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, waypoints, options)).toEqual({ valid: true });
+  });
+  it('blocks an HVAC control route crossing a physical Beam in preview, inspection and commit', () => {
+    const base: any = { level: { id: 'level', type: 'level', level: 0 }, ceiling: { id: 'ceiling', type: 'ceiling', parentId: 'level', height: 3, polygon: [[-3,-3],[3,-3],[3,3],[-3,3]] } };
+    const beam = createBeam(base, { id: 'beam', name: 'test Beam', levelId: 'level', start: [-1,0], end: [1,0], width: .3, height: .5 }).beam!;
+    const nodes = { ...base, beam };
+    const unit = placeIndoorUnit(createEmptyOverlay('beam.json', 'sha'), point(0, 2.7, 2));
+    const thermostat = placeThermostat(unit.overlay, { ...point(0,2.75,-2), attachment: { hostId: 'wall', hostKind: 'wall', surface: 'front', normal: [0,0,1], levelId: 'level' } });
+    if (!('thermostat' in thermostat)) throw new Error('fixture');
+    thermostat.thermostat.controlPort!.position = point(0,2.75,-2);
+    thermostat.overlay.hvac.indoorUnits[0]!.controlPort!.position = point(0,2.75,2);
+    const target = thermostat.overlay.hvac.indoorUnits[0]!.controlPort!.position;
+    const preview = planHvacControlDraft(thermostat.overlay, thermostat.thermostat.id, [target], { nodes });
+    expect(preview?.canCommit).toBe(false);
+    expect(preview?.diagnostics).toContainEqual(expect.objectContaining({ code: 'beam_collision', objectIds: ['beam'] }));
+    expect(inspectHvacControlConnection(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, [], { nodes })).toHaveProperty('reason');
+    const committed = createHvacControlConduit(thermostat.overlay, thermostat.thermostat.id, unit.unit.id, [], { nodes });
+    expect(committed).toHaveProperty('reason');
+    expect(committed.overlay).toBe(thermostat.overlay);
   });
   it('locks a connected unit but propagates its shared section and records fixed-clearance Wall penetrations', () => {
     const placed = placeIndoorUnit(createEmptyOverlay('a', 'b'), point(0, 2.7, 0));

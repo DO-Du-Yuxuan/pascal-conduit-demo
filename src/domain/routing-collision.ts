@@ -383,6 +383,15 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute, ig
       if (runSegmentIds.has(obstacle.id)) continue;
       addObstacleCrossings(segmentPrimitive(obstacle), obstacle.system, obstacle.start.attachment?.normal);
     }
+    for (const route of overlay.hvac.controlConduits) for (const segmentId of route.segmentIds) {
+      const obstacle = overlay.hvac.controlSegments.find((segment) => segment.id === segmentId);
+      if (!obstacle || runSegmentIds.has(obstacle.id)) continue;
+      addObstacleCrossings({ id: obstacle.id, segmentId: obstacle.id, a: obstacle.start.position, b: obstacle.end.position, radius: route.diameterMm / 2000 }, "network", obstacle.start.attachment?.normal);
+    }
+    for (const fitting of overlay.hvac.controlFittings) if ((fitting.arc || fitting.bridge) && !ignoredObjectIds.has(fitting.id) && !fitting.segmentIds.includes(ignoredSegmentId ?? "")) {
+      const points = fitting.bridge ? [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit] : arcPoints(fitting.arc!, Math.PI / 90);
+      for (let index = 0; index < points.length - 1; index += 1) addObstacleCrossings({ id: fitting.id, a: points[index]!, b: points[index + 1]!, radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds }, "network", fitting.position.attachment?.normal, fitting.id, fitting.segmentIds);
+    }
     for (const fitting of overlay.fittings) if ((fitting.arc || fitting.bridge) && electrical(fitting.system) && !ignoredObjectIds.has(fitting.id) && !fitting.segmentIds.includes(ignoredSegmentId ?? "")) {
       const points = fitting.bridge ? [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit] : arcPoints(fitting.arc!, Math.PI / 90);
       for (let index = 0; index < points.length - 1; index += 1) {
@@ -511,7 +520,7 @@ function clonePoint(point: RoutePoint): RoutePoint { return { position: [...poin
 
 export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>, allowedEndpointContact?: AllowedEndpointContact, slabContext?: BridgeSlabContext): PlannedRoute {
   let bridged = plan;
-  const obstacleCount = overlay.segments.length + overlay.fittings.reduce((sum, fitting) => sum + (fitting.arc ? Math.ceil(Math.abs(fitting.arc.sweepRadians) / (Math.PI / 90)) : 1), 0);
+  const obstacleCount = overlay.segments.length + overlay.hvac.controlSegments.length + [...overlay.fittings, ...overlay.hvac.controlFittings].reduce((sum, fitting) => sum + (fitting.arc ? Math.ceil(Math.abs(fitting.arc.sweepRadians) / (Math.PI / 90)) : 1), 0);
   const progressLimit = Math.max(1, (plan.segments.length + 1) * (obstacleCount + 1));
   const bridgeSignatures = new Set<string>();
   for (let iteration = 0; iteration < progressLimit; iteration += 1) {

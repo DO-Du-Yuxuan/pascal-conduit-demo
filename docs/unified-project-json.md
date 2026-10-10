@@ -49,6 +49,8 @@
 
 ## Project 4.0 公开类型目录
 
+管段安装设备（`mount.kind: "segment"`）的 2D 符号使用保存的真实世界 X/Z 坐标，不按管段继承的墙面局部坐标重新定位。主管插入喷淋头时，喷淋头及其端口只保存支管末端位置与管段挂载、楼层引用，不继承主管的建筑宿主附件；新插入喷淋头默认向上喷。
+
 以下是当前合同确认的精确公开类型及唯一父系统。父级关系必须正确；已知类型放错系统会被拒绝。十个系统容器即使为空也必须存在。其余未知且未明确退休的节点与字段保留原样往返，但不承诺当前版本可编辑或渲染。
 
 | 父容器 | 公开实体 `type` |
@@ -74,13 +76,15 @@
 
 新桥的 `bridge.obstacleSegmentIds` 记录实际直管障碍，`bridge.obstacleFittingIds` 记录实际大弯或既有过桥弯障碍；兼容字段 `bridge.obstacleSegmentId` 保留首个直管障碍，只有管件障碍时引用其相邻真实管段。旧数据只有单数 ID 时仍可导入。避让不会移动或修改既有障碍，导入项目的未知字段与稳定 ID 按原合同保留。
 
-规划允许跨新路线的自动定尺直接接头，把桥覆盖的接头及直管部分替换为桥，并维护两侧管段、端口和管件引用；保留未覆盖的定尺分段。取消固定端部余量，但完整桥形仍必须位于可用直线范围内。已保存的大弯和过桥弯均按其真实中心线作为候选，桥形对本轮交叉障碍复核目标 10 mm 净距。桥体继续参加实体碰撞复核和梁体碰撞检查；平行重叠、草稿自交、新大弯自身的交叉、器件碰撞或真实空间不足仍会阻止提交。桥跨度若覆盖已确认的穿孔通道，则不自动抬离通道；未受影响的穿孔只能映射到完整包含其入口和出口的真实保留直管段，施工记录不得悬空或虚构。消防与 HVAC 控制管不在此自动过桥范围。
+规划允许跨新路线的自动定尺直接接头，把桥覆盖的接头及直管部分替换为桥，并维护两侧管段、端口和管件引用；保留未覆盖的定尺分段。取消固定端部余量，但完整桥形仍必须位于可用直线范围内。已保存的大弯和过桥弯均按其真实中心线作为候选，桥形对本轮交叉障碍复核目标 10 mm 净距。桥体继续参加实体碰撞复核和梁体碰撞检查；平行重叠、草稿自交、新大弯自身的交叉、器件碰撞或真实空间不足仍会阻止提交。桥跨度若覆盖已确认的穿孔通道，则不自动抬离通道；未受影响的穿孔只能映射到完整包含其入口和出口的真实保留直管段，施工记录不得悬空或虚构。消防管不在此自动过桥范围；白色 HVAC 控制管复用同一规划，并可作为既有过桥障碍。
 
 过桥资格不再调用楼板覆盖推导。新画管的世界 X/Z 锁定光标仍在唯一楼板顶面几何验证通过时保留或创建 slab top attachment；标高变化、Y 锁定、越界或歧义位置不创建 slab attachment。过桥本身不虚构宿主，不修改只读 Building，也不补写原始 Project JSON。见 [ADR 0010](adr/0010-geometry-based-conduit-bridges.md)。
 
 `FanCoilUnit` 默认外壳尺寸为 `1000 × 600 × 300 mm`，并嵌入稳定的红色电源端口和白色 HVAC 控制端口；`FCUThermostat` 嵌入白色控制源端口。`HVACControlConduit` 是 HVACSystem 下独立于 Electrical `Conduit` 的控制线路实体，含稳定路线 ID、嵌套稳定管段 ID 和两端端口引用，默认直径 20 mm。温控器只能连接一台 FCU，FCU 控制端口和电源端口各最多连接一根管。FCU 电源端由 ElectricalSystem 中强电箱起始的红色插座管线连接；温控器可直接作为白色控制管起点，不需要弱电箱。白色 HVAC 控制管不能与 ElectricalSystem 白色网络管互接。`GalvanizedSheetMetalDuct` 默认截面为 `500 × 200 mm`。`LightingJunctionBox` 默认名称为“灯位接线盒”、直径 60 mm、深度 30 mm，包含四个相互独立的水平照明管端口；这是新建对象的尺寸默认值，导入和再次保存既有 Project 4.0 节点时保留其 `sizeMm`、位置、端口 ID 和管线连接。未接管时编辑直径会按新圆盘半径移动四个端口并保留稳定设备/端口 ID；任一端口接管后直径锁定，深度仍可独立修改。`RFIDReader` 默认 `86 × 130 × 25 mm`，仅允许墙面或 Beam 侧面宿主。旧 4.0 `Spotlight` 是唯一明确支持的设备类型别名：导入时保留稳定节点 ID、位置、尺寸、端口 ID 和管线连接，内部按灯位接线盒处理；导出统一使用 `LightingJunctionBox`，并保留该节点其他字段。`Luminaire` 不属于当前公开类型目录；编辑器内部 `luminaire` 仅为 `LightingJunctionBox` 的兼容适配 discriminator。类型名称及父系统是公开合同，`sensor`、`indoor-unit`、`air-duct`、`thermostat` 等其他适配 discriminator 也不是 JSON 类型。
 
 明确退休并拒绝导入的公共类型：`Luminaire`、`Sensor`、`IndoorUnit`、`Thermostat`、`AirDuct`、`FireWaterInlet`、`FireWaterFitting`。文件版本不是 4.0 时拒绝导入，不执行旧格式迁移或静默重写。拒绝已知退休类型或错误系统归属，不意味着拒绝未知合法未来类型。
+
+红、蓝、白网络新管线只为墙面和楼板顶面生成 `surfaceChases`；梁、天花及其他表面为明敷。梁面及相邻面公共棱边的转角沿用 `ConduitElbow`、`bendStyle: "right-angle"`，不生成大弯弧线或半径。端点保留真实面附件和稳定端口引用；合法贴面直段不因公共棱边端点记录了邻接面而被误判为穿梁。分支接入目标设备时，终点 `endPortId` 与设备端口 `connectedSegmentIds` 双向保存，主管拆分也同步更新原端口引用。以上沿用 4.0 字段，不迁移既有路线或建筑数据。
 
 ## 非节点数据归属
 
@@ -91,7 +95,7 @@
 | 消防信号线管 | `FireProtectionSystem` 下的独立 `FireSignalConduit` 管段及具体弯头/接头类型，使用 `system: "fire-signal"`，不属于 Circuit。墙面封闭终点由末段 `endTermination: "wall"` 保存，不生成可续接开放端。 |
 | 旧 `lightingControlGroups` | 为兼容导入而忽略，导入时不进入 Overlay，导出时从 `LightingSystem` 删除；开关不再与灯位接线盒建立逻辑控制关系。 |
 | HVAC `controls` | 旧逻辑关联仅作为兼容输入读取并丢弃；导入不创建线路。当前控制关系由 `HVACControlConduit` 实体和端口/管段 ID 表达。 |
-| `HVACControlConduit` | `HVACSystem` 子节点，拥有 `thermostatId`、`thermostatPortId`、`indoorUnitId`、`indoorUnitPortId`、`segmentIds`、`fittingIds`、`diameterMm`，并在节点内嵌 `segments` 与弯头几何。端口 ID 与所有路线、管段、弯头 ID 全局稳定且唯一。 |
+| `HVACControlConduit` | `HVACSystem` 子节点，拥有 `thermostatId`、`thermostatPortId`、`indoorUnitId`、`indoorUnitPortId`、`segmentIds`、`fittingIds`、`diameterMm`，并在节点内嵌 `segments` 与弯头、过桥几何。墙地暗敷槽及明确穿孔归 HVACSystem 的 `surfaceChases` / `penetrations`，使用内嵌管段或管件的稳定 ID 引用。端口 ID 与所有路线、管段、弯头 ID 全局稳定且唯一。 |
 | `surfaceChases`、`penetrations`、HVAC `wallPenetrations` | 与产生它们的路线同属一个系统容器，保留宿主建筑 ID、路线 ID、显式/派生依据及尺寸；不修改建筑节点。 |
 | `installationReferencePlanes`、`layoutReferencePlanes` | 按 `levelId` 归入对应 `Level` 节点的同名数组，保留明确与推导标高的依据。 |
 | 弯曲半径、定尺长度、盒尺寸等施工参数 | 归相关系统容器的 `settings`，现有 `Mm` 单位与数值不变。 |

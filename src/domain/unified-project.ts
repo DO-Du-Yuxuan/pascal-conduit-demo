@@ -226,7 +226,7 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
     // Spotlight is a legacy public alias for the same four-port lighting junction box.
     // Lighting control groups are intentionally discarded: control is expressed by routed conduit.
     if (container.type === "HVACSystem") overlay.hvac.wallPenetrations = copy(container.wallPenetrations ?? []);
-    if (["ElectricalSystem", "LightingSystem", "FireProtectionSystem"].includes(container.type)) {
+    if (["ElectricalSystem", "LightingSystem", "FireProtectionSystem", "HVACSystem"].includes(container.type)) {
       if (["ElectricalSystem", "LightingSystem"].includes(container.type)) {
         for (const item of container.circuits ?? []) overlay.circuits.push(copy(item));
       }
@@ -371,11 +371,13 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
   const routeElementSystem = (id: string): RoutingSystem | undefined => overlay.segments.find((item) => item.id === id)?.system
     ?? overlay.fittings.find((item) => item.id === id)?.system
     ?? overlay.junctionBoxes.find((item) => item.id === id)?.system;
-  for (const container of containers.filter((node) => ["ElectricalSystem", "LightingSystem", "FireProtectionSystem"].includes(node.type))) {
+  const routeElementOwner = (id: string) => overlay.hvac.controlSegments.some((item) => item.id === id) || overlay.hvac.controlFittings.some((item) => item.id === id)
+    ? "HVACSystem" : systemFor(routeElementSystem(id) ?? "receptacle");
+  for (const container of containers.filter((node) => ["ElectricalSystem", "LightingSystem", "FireProtectionSystem", "HVACSystem"].includes(node.type))) {
     if (container.type === "FireProtectionSystem") delete container.circuits;
-    else container.circuits = mergeFields(original[container.id]?.circuits, overlay.circuits.filter((item) => systemFor(item.system) === container.type));
-    container.surfaceChases = mergeFields(original[container.id]?.surfaceChases, overlay.surfaceChases.filter((item) => (originalArrayOwner("surfaceChases", item.id) ?? systemFor(routeElementSystem(item.routeElementId) ?? "receptacle")) === container.type));
-    container.penetrations = mergeFields(original[container.id]?.penetrations, overlay.penetrations.filter((item) => (originalArrayOwner("penetrations", item.id) ?? systemFor(overlay.segments.find((segment) => segment.id === item.segmentId)?.system ?? "receptacle")) === container.type));
+    else if (container.type !== "HVACSystem") container.circuits = mergeFields(original[container.id]?.circuits, overlay.circuits.filter((item) => systemFor(item.system) === container.type));
+    container.surfaceChases = mergeFields(original[container.id]?.surfaceChases, overlay.surfaceChases.filter((item) => (originalArrayOwner("surfaceChases", item.id) ?? routeElementOwner(item.routeElementId)) === container.type));
+    container.penetrations = mergeFields(original[container.id]?.penetrations, overlay.penetrations.filter((item) => (originalArrayOwner("penetrations", item.id) ?? routeElementOwner(item.segmentId)) === container.type));
   }
   // Do not retain legacy switch-to-luminaire logical controls in the new project.
   delete byType.LightingSystem.lightingControlGroups;
