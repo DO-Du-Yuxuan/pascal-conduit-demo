@@ -3,7 +3,8 @@ import { createBeam } from "./beams";
 import { beamRouteDiagnostics, projectBeamPenetrationExit, revalidateBeamAttachments, revalidateBeamPenetrations, validBeamVolumes } from "./beam-routing";
 import { createNetworkDevice } from "./devices";
 import { createEmptyOverlay } from "./overlay";
-import { planRoute } from "./routing";
+import { commitPlannedRoute, planRoute } from "./routing";
+import { withCollisionDiagnostics } from "./routing-collision";
 import type { RoutePoint } from "./overlay";
 
 const ceiling = { id: "ceiling", type: "ceiling", parentId: "level", height: 3, polygon: [[-2, -2], [2, -2], [2, 2], [-2, 2]] };
@@ -29,6 +30,28 @@ describe("Beam routing obstacle", () => {
     const plan = planRoute("receptacle", 20, "surface", [onBottom(-.8, 0), onBottom(.8, 0)]);
     expect(beamRouteDiagnostics(nodes, plan)).toEqual([]);
     expect(plan.surfaceChases).toEqual([]);
+  });
+  it("checks the raised bridge body even when its straight legs clear the Beam", () => {
+    const plan = planRoute("network", 20, "suspended", [free(0, 2.48, -1), free(0, 2.48, 1)]);
+    expect(beamRouteDiagnostics(nodes, plan)).toEqual([]);
+    plan.fittings.push({ id: "bridge", type: "conduit-fitting", fitting: "bridge-bend", system: "network", diameterMm: 20,
+      position: free(0, 2.48, 0), segmentIds: [], ports: [],
+      bridge: { obstacleSegmentId: "obstacle", entry: [0, 2.48, -.3], crestStart: [0, 2.53, -.25], crestEnd: [0, 2.53, .25], exit: [0, 2.48, .3], riseMm: 50, clearanceMm: 10 } });
+    expect(beamRouteDiagnostics(nodes, plan)).toEqual(expect.arrayContaining([expect.objectContaining({ code: "beam_collision", objectIds: ["beam"] })]));
+    plan.fittings[0].bridge!.crestStart[1] = 2.43;
+    plan.fittings[0].bridge!.crestEnd[1] = 2.43;
+    expect(beamRouteDiagnostics(nodes, plan)).toEqual([]);
+  });
+  it("keeps generated Beam-bottom bridges outside their host", () => {
+    const overlay = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute("receptacle", 20, "surface", [onBottom(-.8, 0), onBottom(.8, 0)]));
+    const plan = withCollisionDiagnostics(overlay, planRoute("network", 20, "surface", [onBottom(0, -.1), onBottom(0, .1)]));
+    expect(plan.canCommit).toBe(true);
+    const fitting = plan.fittings.find(fitting => fitting.bridge)!;
+    expect(fitting.bridge!.crestStart[1]).toBeLessThan(2.5);
+    expect(beamRouteDiagnostics(nodes, plan)).toEqual([]);
+    fitting.bridge!.crestStart[1] = 2.53;
+    fitting.bridge!.crestEnd[1] = 2.53;
+    expect(beamRouteDiagnostics(nodes, plan).some(diagnostic => diagnostic.code === "beam_collision")).toBe(true);
   });
   it("allows a ceiling route to terminate on an exposed Beam side without treating the endpoint as a collision", () => {
     const ceilingPoint: RoutePoint = { position: [0, 3, -1], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "level", localPosition: [0, 3, -1], basis: { u: [1, 0, 0], v: [0, 0, 1] } } };

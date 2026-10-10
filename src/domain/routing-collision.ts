@@ -11,15 +11,25 @@ const dot = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const length = (v: Vec3) => Math.hypot(...v);
 const normalize = (v: Vec3): Vec3 => { const size = length(v); return size < 1e-9 ? [1, 0, 0] : scale(v, 1 / size); };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
+const cross = (a: Vec3, b: Vec3): Vec3 => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 
 function closestSegmentPoints(first: Primitive, second: Primitive) {
   const u = subtract(first.b, first.a), v = subtract(second.b, second.a), w = subtract(first.a, second.a);
   const a = dot(u, u), b = dot(u, v), c = dot(v, v), d = dot(u, w), e = dot(v, w), denominator = a * c - b * b;
-  let s = denominator < 1e-10 ? 0 : clamp((b * e - c * d) / denominator);
-  let t = c < 1e-10 ? 0 : clamp((b * s + e) / c);
-  s = a < 1e-10 ? 0 : clamp((b * t - d) / a);
+  let s = 0, t = 0;
+  if (a < 1e-12) t = c < 1e-12 ? 0 : clamp(e / c);
+  else if (c < 1e-12) s = clamp(-d / a);
+  else {
+    s = denominator > 1e-12 * a * c ? clamp((b * e - c * d) / denominator) : 0;
+    t = (b * s + e) / c;
+    // Re-solve on the finite obstacle endpoint only when its unbounded
+    // parameter falls outside the segment. Updating s while retaining an old
+    // interior t produces an approximate, sometimes too-large distance.
+    if (t < 0) { t = 0; s = clamp(-d / a); }
+    else if (t > 1) { t = 1; s = clamp((b - d) / a); }
+  }
   const p = add(first.a, scale(u, s)), q = add(second.a, scale(v, t));
-  return { distance: length(subtract(p, q)), point: scale(add(p, q), .5) as Vec3 };
+  return { distance: length(subtract(p, q)), point: scale(add(p, q), .5) as Vec3, firstPoint: p, secondPoint: q };
 }
 
 function arcPoints(arc: BendArc, maxStep = Math.PI / 18) {
@@ -231,24 +241,6 @@ function groundHostId(segment: RouteSegment, context?: BridgeSlabContext, expect
   const hostId = derivedSlabHost(segment, context, expectedLevelId);
   return isGroundSegment(segment) && segment.start.attachment!.hostId !== hostId ? undefined : hostId;
 }
-function groundArcHostId(fitting: RouteFitting, context?: BridgeSlabContext, expectedLevelId?: string) {
-  if (!fitting.arc || !electrical(fitting.system) || !context) return undefined;
-  const points = arcPoints(fitting.arc, Math.PI / 90);
-  if (points.some((point) => Math.abs(point[1] - points[0]![1]) > .001)) return undefined;
-  let hostId: string | undefined;
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const segment: RouteSegment = {
-      id: `${fitting.id}:host-check:${index}`, type: "conduit-segment", system: fitting.system,
-      diameterMm: fitting.diameterMm + 1,
-      start: { position: points[index]!, ...(fitting.position.attachment ? { attachment: fitting.position.attachment } : {}) },
-      end: { position: points[index + 1]!, ...(fitting.position.attachment ? { attachment: fitting.position.attachment } : {}) }, createdAt: "",
-    };
-    const pieceHost = groundHostId(segment, context, expectedLevelId);
-    if (!pieceHost || hostId && pieceHost !== hostId) return undefined;
-    hostId = pieceHost;
-  }
-  return hostId;
-}
 export function preserveSlabHostForWorldAxisPoint(start: RoutePoint, position: Vec3, axis: "x" | "y" | "z", diameterMm: number, context?: BridgeSlabContext): RoutePoint {
   const attachment = start.attachment;
   if (axis === "y" || !context || Math.abs(position[1] - start.position[1]) > .001) return { position };
@@ -267,82 +259,250 @@ export function preserveSlabHostForWorldAxisPoint(start: RoutePoint, position: V
   }
   return { position, attachment: nextAttachment };
 }
-const pointAt = (segment: RouteSegment, factor: number): RoutePoint => ({ position: add(segment.start.position, scale(subtract(segment.end.position, segment.start.position), factor)), attachment: segment.start.attachment ? structuredClone(segment.start.attachment) : undefined });
 const segmentLength = (segment: RouteSegment) => length(subtract(segment.end.position, segment.start.position));
 
-/** Replaces a newly planned straight floor crossing with a raised double-45 bridge. */
-function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute, slabContext?: BridgeSlabContext): PlannedRoute | null {
-  for (const proposed of plan.segments) {
-    if (!electrical(proposed.system) || !groundHostId(proposed, slabContext, slabContext?.levelId)) continue;
-    const proposedHostId = groundHostId(proposed, slabContext, slabContext?.levelId);
-    const direction = normalize(subtract(proposed.end.position, proposed.start.position)), proposedLength = segmentLength(proposed);
-    const crossings: Array<{ obstacleId: string; segmentId?: string; fittingId?: string; relatedSegmentIds?: string[]; along: number; rise: number; topHalf: number; spanStart: number; spanEnd: number }> = [];
-    const addObstacleCrossings = (obstacle: Primitive, obstacleSystem: RouteSegment["system"], obstacleHostId: string | undefined, fittingId?: string, relatedSegmentIds?: string[]) => {
-      if (!electrical(obstacleSystem) || obstacleHostId !== proposedHostId) return;
-      const obstacleDirection = normalize(subtract(obstacle.b, obstacle.a));
-      if (Math.abs(dot(direction, obstacleDirection)) > .98) return;
-      const first = segmentPrimitive(proposed), hit = closestSegmentPoints(first, obstacle);
-      if (hit.distance > first.radius + obstacle.radius + .001) return;
-      const along = dot(subtract(hit.point, proposed.start.position), direction), rise = first.radius + obstacle.radius + .01, topHalf = obstacle.radius + .01, halfSpan = rise + topHalf;
-      // Keep the old single-obstacle profile, and merge only when its occupied
-      // ramp/crest interval overlaps the next crossing's interval.
-      if (along < halfSpan + .02 || proposedLength - along < halfSpan + .02) return;
-      crossings.push({ obstacleId: obstacle.id, segmentId: obstacle.segmentId, fittingId, relatedSegmentIds, along, rise, topHalf, spanStart: along - halfSpan, spanEnd: along + halfSpan });
-    };
-    for (const obstacle of overlay.segments) {
-      const obstacleHostId = groundHostId(obstacle, slabContext);
-      addObstacleCrossings(segmentPrimitive(obstacle), obstacle.system, obstacleHostId, undefined, [obstacle.id]);
+type BridgeCrossing = { obstacleId: string; obstaclePrimitive: Primitive; segmentId?: string; fittingId?: string; relatedSegmentIds?: string[]; along: number; rise: number; topHalf: number; spanStart: number; spanEnd: number; lift: Vec3; target: number; separation: number; sine: number };
+type RouteRun = { segments: RouteSegment[]; start: Vec3; end: Vec3; direction: Vec3; length: number };
+
+const pointOnRun = (run: RouteRun, along: number): Vec3 => add(run.start, scale(run.direction, along));
+function routeRuns(plan: PlannedRoute): RouteRun[] {
+  const runs: RouteRun[] = [];
+  for (let index = 0; index < plan.segments.length;) {
+    const first = plan.segments[index]!;
+    if (!electrical(first.system)) { index += 1; continue; }
+    const segments = [first];
+    let cursor = index;
+    while (cursor + 1 < plan.segments.length) {
+      const current = segments[segments.length - 1]!, next = plan.segments[cursor + 1]!;
+      const a = normalize(subtract(current.end.position, current.start.position)), b = normalize(subtract(next.end.position, next.start.position));
+      const hasBlockingFitting = plan.fittings.some((fitting) => fitting.fitting !== "coupling" && fitting.segmentIds.includes(current.id) && fitting.segmentIds.includes(next.id));
+      if (!samePoint(current.end.position, next.start.position) || dot(a, b) < 1 - 1e-8 || current.system !== next.system || current.diameterMm !== next.diameterMm || hasBlockingFitting) break;
+      // Route points can divide a straight leg without a fitting; stock joints
+      // are explicitly connected with a coupling. Both are safe to coalesce.
+      segments.push(next); cursor += 1;
     }
-    for (const fitting of overlay.fittings) {
-      if (!fitting.arc) continue;
-      const hostId = groundArcHostId(fitting, slabContext);
-      if (!hostId) continue;
-      const points = arcPoints(fitting.arc, Math.PI / 90);
+    const start = first.start.position, last = segments[segments.length - 1]!, end = last.end.position, span = subtract(end, start), size = length(span);
+    if (size > 1e-9) runs.push({ segments, start, end, direction: scale(span, 1 / size), length: size });
+    index = cursor + 1;
+  }
+  return runs;
+}
+
+function preferredLift(run: RouteRun, obstacleNormal?: Vec3): Vec3 | null {
+  const first = run.segments[0]!;
+  const attachmentNormal = first.start.attachment?.normal ?? first.end.attachment?.normal ?? obstacleNormal;
+  const direction = run.direction;
+  let reference = attachmentNormal && length(attachmentNormal) > 1e-8 ? attachmentNormal : [0, 1, 0] as Vec3;
+  // A route on a vertical host still needs an out-of-plane bridge. World up
+  // supplies that direction when the host normal is parallel to the route.
+  reference = subtract(reference, scale(direction, dot(reference, direction)));
+  if (length(reference) < 1e-7) reference = subtract([0, 1, 0], scale(direction, direction[1]));
+  return length(reference) < 1e-7 ? null : normalize(reference);
+}
+
+function minimumRampDistance(rampRise: number, topHalf: number, sine: number, baseOffset: number) {
+  const start: [number, number] = [(topHalf + rampRise) * sine, baseOffset];
+  const end: [number, number] = [topHalf * sine, baseOffset + rampRise];
+  const dx = end[0] - start[0], dy = end[1] - start[1], denominator = dx * dx + dy * dy;
+  const t = denominator < 1e-12 ? 0 : clamp(-(start[0] * dx + start[1] * dy) / denominator);
+  return Math.hypot(start[0] + dx * t, start[1] + dy * t);
+}
+
+function topHalfForClearance(rampRise: number, target: number, sine: number, baseOffset: number) {
+  let low = 0, high = Math.max(target, rampRise, .001);
+  for (let index = 0; index < 32 && minimumRampDistance(rampRise, high, sine, baseOffset) < target - 1e-9; index += 1) high = high * 2 + .001;
+  if (!Number.isFinite(high) || minimumRampDistance(rampRise, high, sine, baseOffset) < target - 1e-8) return Number.POSITIVE_INFINITY;
+  for (let index = 0; index < 32; index += 1) {
+    const middle = (low + high) / 2;
+    if (minimumRampDistance(rampRise, middle, sine, baseOffset) >= target - 1e-9) high = middle;
+    else low = middle;
+  }
+  // Leave 0.2mm for segment clipping and saved-coordinate roundoff so the
+  // rendered three-piece bridge never falls just below its 10mm target.
+  return high + .0002;
+}
+
+function pointAtPosition(source: RoutePoint, position: Vec3): RoutePoint {
+  const attachment = source.attachment ? structuredClone(source.attachment) : undefined;
+  if (attachment && length(attachment.normal) > 1e-8 && Math.abs(dot(subtract(position, source.position), normalize(attachment.normal))) > .001) return { position: [...position] as Vec3 };
+  if (attachment?.localPosition && attachment.basis) {
+    const delta = subtract(position, source.position);
+    attachment.localPosition = [attachment.localPosition[0] + dot(delta, attachment.basis.u), attachment.localPosition[1], attachment.localPosition[2] + dot(delta, attachment.basis.v)];
+  }
+  return { position: [...position] as Vec3, ...(attachment ? { attachment } : {}) };
+}
+
+function segmentPart(segment: RouteSegment, id: string, start: Vec3, end: Vec3, preserveStart: boolean, preserveEnd: boolean): RouteSegment | null {
+  if (length(subtract(end, start)) < 1e-7) return null;
+  return { ...segment, id, start: preserveStart ? clonePoint(segment.start) : pointAtPosition(segment.start, start), end: preserveEnd ? clonePoint(segment.end) : pointAtPosition(segment.end, end), ...(preserveStart ? {} : { startPortId: undefined }), ...(preserveEnd ? {} : { endPortId: undefined }) };
+}
+
+/**
+ * Makes one bridge over a group of real 3D clashes. Collinear planned pieces
+ * form a run so the bridge may span a stock coupling without moving any
+ * already committed route.
+ */
+function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds: ReadonlySet<string> = new Set()): PlannedRoute | null {
+  for (const run of routeRuns(plan)) {
+    const system = run.segments[0]!.system, diameterMm = run.segments[0]!.diameterMm;
+    const crossings: BridgeCrossing[] = [];
+    const addObstacleCrossings = (obstacle: Primitive, obstacleSystem: RouteSegment["system"], obstacleNormal?: Vec3, fittingId?: string, relatedSegmentIds?: string[]) => {
+      if (!electrical(obstacleSystem) || ignoredObjectIds.has(obstacle.id) || ignoredSegmentId !== undefined && (obstacle.segmentId === ignoredSegmentId || obstacle.relatedSegmentIds?.includes(ignoredSegmentId))) return;
+      const obstacleVector = subtract(obstacle.b, obstacle.a), obstacleLength = length(obstacleVector);
+      if (obstacleLength < 1e-8) return;
+      const obstacleDirection = scale(obstacleVector, 1 / obstacleLength), crossDirection = cross(run.direction, obstacleDirection), sine = length(crossDirection);
+      // True parallelism has no crossing plane to bridge. Shallow but real
+      // crossings remain eligible and receive a wider ramp below.
+      if (sine < 1e-7) return;
+      const hit = closestSegmentPoints({ id: run.segments[0]!.id, a: run.start, b: run.end, radius: diameterMm / 2000 }, obstacle);
+      const clearance = .01, newRadius = diameterMm / 2000, target = newRadius + obstacle.radius + clearance;
+      if (hit.distance > newRadius + obstacle.radius + .001) return;
+      let along = dot(subtract(hit.firstPoint, run.start), run.direction);
+      if (along < -newRadius || along > run.length + newRadius) return;
+      along = clamp(along / run.length) * run.length;
+      const normal = scale(crossDirection, 1 / sine), reference = preferredLift(run, obstacleNormal);
+      if (!reference) return;
+      let lift = dot(normal, reference) < 0 ? scale(normal, -1) : normal;
+      const routeAttachment = run.segments[0]!.start.attachment ?? run.segments[0]!.end.attachment;
+      const validLiftNormal = (value?: Vec3) => Boolean(value && length(value) > 1e-8 && length(subtract(value, scale(run.direction, dot(value, run.direction))) ) > 1e-7);
+      const obstacleHasHostNormal = validLiftNormal(obstacleNormal);
+      const routeHasHostNormal = Boolean(routeAttachment?.hostId && validLiftNormal(routeAttachment.normal));
+      const hasHostNormal = routeHasHostNormal || obstacleHasHostNormal;
+      const initialSeparation = dot(subtract(hit.firstPoint, hit.secondPoint), lift);
+      if (!hasHostNormal && initialSeparation < 0) lift = scale(lift, -1);
+      const signedSeparation = dot(subtract(hit.firstPoint, hit.secondPoint), lift);
+      const rise = Math.max(.001, target - signedSeparation);
+      const topHalf = topHalfForClearance(rise, target, sine, signedSeparation);
+      if (!Number.isFinite(topHalf)) return;
+      const halfSpan = rise + topHalf;
+      if (along < halfSpan + .001 || run.length - along < halfSpan + .001) return;
+      crossings.push({ obstacleId: obstacle.id, obstaclePrimitive: obstacle, segmentId: obstacle.segmentId, fittingId, relatedSegmentIds, along, rise, topHalf, spanStart: along - halfSpan, spanEnd: along + halfSpan, lift, target, separation: signedSeparation, sine });
+    };
+    const runSegmentIds = new Set(run.segments.map((segment) => segment.id));
+    for (const obstacle of overlay.segments) {
+      if (runSegmentIds.has(obstacle.id)) continue;
+      addObstacleCrossings(segmentPrimitive(obstacle), obstacle.system, obstacle.start.attachment?.normal);
+    }
+    for (const fitting of overlay.fittings) if ((fitting.arc || fitting.bridge) && electrical(fitting.system) && !ignoredObjectIds.has(fitting.id) && !fitting.segmentIds.includes(ignoredSegmentId ?? "")) {
+      const points = fitting.bridge ? [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit] : arcPoints(fitting.arc!, Math.PI / 90);
       for (let index = 0; index < points.length - 1; index += 1) {
-        addObstacleCrossings({ id: fitting.id, a: points[index]!, b: points[index + 1]!, radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds }, fitting.system, hostId, fitting.id, fitting.segmentIds);
+        addObstacleCrossings({ id: fitting.id, a: points[index]!, b: points[index + 1]!, radius: fitting.diameterMm / 2000, relatedSegmentIds: fitting.segmentIds }, fitting.system, fitting.position.attachment?.normal, fitting.id, fitting.segmentIds);
       }
     }
     crossings.sort((left, right) => left.spanStart - right.spanStart || left.spanEnd - right.spanEnd || left.obstacleId.localeCompare(right.obstacleId));
-    const firstCrossing = crossings[0];
-    if (!firstCrossing) continue;
-    const group = [firstCrossing];
-    let groupEnd = firstCrossing.spanEnd;
+    const first = crossings[0];
+    if (!first) continue;
+    const group = [first]; let groupEnd = first.spanEnd, groupRise = first.rise;
     for (const crossing of crossings.slice(1)) {
       if (crossing.spanStart > groupEnd + 1e-7) break;
+      if (dot(first.lift, crossing.lift) < .999) continue;
       group.push(crossing);
-      groupEnd = Math.max(groupEnd, crossing.spanEnd);
+      groupRise = Math.max(groupRise, crossing.rise);
+      const halfSpan = Math.max(...group.map((item) => item.along + topHalfForClearance(groupRise, item.target, item.sine, item.separation)));
+      const startSpan = Math.min(...group.map((item) => item.along - topHalfForClearance(groupRise, item.target, item.sine, item.separation)));
+      groupEnd = Math.max(groupEnd, halfSpan + groupRise);
+      if (Number.isFinite(startSpan)) group[0]!.spanStart = Math.min(group[0]!.spanStart, startSpan - groupRise);
     }
-    const rise = Math.max(...group.map((crossing) => crossing.rise));
-    const crestStartAlong = Math.min(...group.map((crossing) => crossing.along - crossing.topHalf));
-    const crestEndAlong = Math.max(...group.map((crossing) => crossing.along + crossing.topHalf));
+    const lift = first.lift, rise = groupRise;
+    const crestStartAlong = Math.min(...group.map((item) => item.along - topHalfForClearance(rise, item.target, item.sine, item.separation)));
+    const crestEndAlong = Math.max(...group.map((item) => item.along + topHalfForClearance(rise, item.target, item.sine, item.separation)));
     const entryAlong = crestStartAlong - rise, exitAlong = crestEndAlong + rise;
-    if (entryAlong < .02 || proposedLength - exitAlong < .02) continue;
-    const routePointAt = (along: number) => pointAt(proposed, along / proposedLength);
-    const entry = routePointAt(entryAlong).position, crestStart = add(routePointAt(crestStartAlong).position, [0, rise, 0]), crestEnd = add(routePointAt(crestEndAlong).position, [0, rise, 0]), exit = routePointAt(exitAlong).position;
-    const entryFactor = entryAlong / proposedLength, exitFactor = exitAlong / proposedLength;
-    const hit = routePointAt(group.reduce((sum, crossing) => sum + crossing.along, 0) / group.length).position;
-    const before: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-a`, end: pointAt(proposed, entryFactor), endPortId: undefined }, after: RouteSegment = { ...proposed, id: `${proposed.id}:bridge-b`, start: pointAt(proposed, exitFactor), startPortId: undefined };
-    const bridgeId = `${proposed.id}:bridge`, bridgePorts: NetworkPort[] = [
-      { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system: proposed.system, connectedSegmentIds: [before.id], segmentId: before.id },
-      { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system: proposed.system, connectedSegmentIds: [after.id], segmentId: after.id },
-    ];
-    before.endPortId = bridgePorts[0].id; after.startPortId = bridgePorts[1].id;
-    const obstacleSegmentIds = [...new Set(group.flatMap((crossing) => crossing.segmentId ? [crossing.segmentId] : []))];
-    const obstacleFittingIds = [...new Set(group.flatMap((crossing) => crossing.fittingId ? [crossing.fittingId] : []))];
-    // The legacy singular field is required by older Project 4.0 readers. For
-    // an arc-only crossing, anchor it to an actual adjacent segment while the
-    // new fitting ID records the precise obstacle.
-    const compatibilitySegmentId = obstacleSegmentIds[0] ?? group.flatMap((crossing) => crossing.relatedSegmentIds ?? [])[0];
-    if (!compatibilitySegmentId) continue;
-    const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: DEFAULT_BEND_RADIUS_MM, system: proposed.system, diameterMm: proposed.diameterMm, position: { position: hit, attachment: proposed.start.attachment ? structuredClone(proposed.start.attachment) : undefined }, segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: compatibilitySegmentId, obstacleSegmentIds, ...(obstacleFittingIds.length ? { obstacleFittingIds } : {}), entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
-    const replacementFor = (position: Vec3) => samePoint(position, proposed.start.position) ? before.id : after.id;
-    const fittings = plan.fittings.map((item) => {
-      if (!item.segmentIds.includes(proposed.id)) return item;
-      const ports = item.ports.map((port) => port.segmentId !== proposed.id ? port : { ...port, segmentId: replacementFor(port.position.position), connectedSegmentIds: port.connectedSegmentIds.map((id) => id === proposed.id ? replacementFor(port.position.position) : id) });
-      return { ...item, ports, segmentIds: item.segmentIds.flatMap((id) => id !== proposed.id ? [id] : [...new Set(ports.filter((port) => port.segmentId === before.id || port.segmentId === after.id).map((port) => port.segmentId!))]) };
+    if (entryAlong < .001 || run.length - exitAlong < .001) continue;
+    const penetrationsConflict = plan.penetrations.some((penetration) => {
+      if (!run.segments.some((segment) => segment.id === penetration.segmentId)) return false;
+      const first = dot(subtract(penetration.entry.position, run.start), run.direction), second = dot(subtract(penetration.exit.position, run.start), run.direction);
+      return Math.min(first, second) < exitAlong - 1e-7 && Math.max(first, second) > entryAlong + 1e-7;
     });
-    const surfaceChases = plan.surfaceChases.flatMap((chase) => chase.routeElementId !== proposed.id || chase.path.kind !== "line" ? [chase] : [{ ...chase, id: `${chase.id}:bridge-a`, routeElementId: before.id, path: { kind: "line" as const, start: clonePoint(before.start), end: clonePoint(before.end) } }, { ...chase, id: `${chase.id}:bridge-b`, routeElementId: after.id, path: { kind: "line" as const, start: clonePoint(after.start), end: clonePoint(after.end) } }]);
-    return { ...plan, segments: plan.segments.flatMap((segment) => segment.id === proposed.id ? [before, after] : [segment]), fittings: [...fittings, fitting], surfaceChases };
+    if (penetrationsConflict) continue;
+    const entry = pointOnRun(run, entryAlong), crestStart = add(pointOnRun(run, crestStartAlong), scale(lift, rise)), crestEnd = add(pointOnRun(run, crestEndAlong), scale(lift, rise)), exit = pointOnRun(run, exitAlong);
+    const bridgePrimitives: Primitive[] = [[entry, crestStart], [crestStart, crestEnd], [crestEnd, exit]].map(([a, b], index) => ({ id: `bridge-clearance:${index}`, a: a!, b: b!, radius: diameterMm / 2000 }));
+    const bridgeClearanceValid = bridgePrimitives.every((candidate) => crossings.every((crossing) => closestSegmentPoints(candidate, crossing.obstaclePrimitive).distance >= candidate.radius + crossing.obstaclePrimitive.radius + .01 - 1e-6));
+    if (!bridgeClearanceValid) continue;
+    const bridgeId = `${run.segments[0]!.id}:bridge:${crypto.randomUUID()}`;
+    const compatibilitySegmentId = group.find((item) => item.segmentId)?.segmentId ?? group.flatMap((item) => item.relatedSegmentIds ?? [])[0];
+    if (!compatibilitySegmentId) continue;
+
+    const mapped: Array<{ oldId: string; segment: RouteSegment; min: number; max: number }> = [];
+    const replacements = new Map<string, RouteSegment[]>();
+    for (const segment of run.segments) {
+      const localStart = dot(subtract(segment.start.position, run.start), run.direction), localEnd = dot(subtract(segment.end.position, run.start), run.direction);
+      const pieces: RouteSegment[] = [];
+      if (localStart < entryAlong - 1e-7) {
+        const endAlong = Math.min(localEnd, entryAlong), endPoint = pointOnRun(run, endAlong);
+        const piece = segmentPart(segment, segment.id, segment.start.position, endPoint, true, endAlong >= localEnd - 1e-7);
+        if (piece) { pieces.push(piece); mapped.push({ oldId: segment.id, segment: piece, min: localStart, max: endAlong }); }
+      }
+      if (localEnd > exitAlong + 1e-7) {
+        const startAlong = Math.max(localStart, exitAlong), startPoint = pointOnRun(run, startAlong);
+        const id = pieces.length ? `${segment.id}:bridge-after` : segment.id;
+        const piece = segmentPart(segment, id, startPoint, segment.end.position, startAlong <= localStart + 1e-7, true);
+        if (piece) { pieces.push(piece); mapped.push({ oldId: segment.id, segment: piece, min: startAlong, max: localEnd }); }
+      }
+      replacements.set(segment.id, pieces);
+    }
+    const mappedPenetrations: PlannedRoute["penetrations"] = [];
+    let penetrationMappingFailed = false;
+    for (const penetration of plan.penetrations) {
+      if (!runSegmentIds.has(penetration.segmentId)) { mappedPenetrations.push(penetration); continue; }
+      const fits = mapped.filter((item) => item.oldId === penetration.segmentId && [penetration.entry.position, penetration.exit.position].every((position) => {
+        const along = dot(subtract(position, run.start), run.direction);
+        return along >= item.min - 1e-6 && along <= item.max + 1e-6 && length(subtract(position, pointOnRun(run, along))) < .002;
+      }));
+      if (fits.length !== 1) { penetrationMappingFailed = true; break; }
+      mappedPenetrations.push({ ...penetration, segmentId: fits[0]!.segment.id });
+    }
+    if (penetrationMappingFailed) continue;
+    const before = mapped.find((item) => Math.abs(item.max - entryAlong) < 1e-6)?.segment;
+    const after = mapped.find((item) => Math.abs(item.min - exitAlong) < 1e-6)?.segment;
+    if (!before || !after) continue;
+    const direction = run.direction, bridgePorts: NetworkPort[] = [
+      { id: `${bridgeId}:port:0`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(before.end), direction: scale(direction, -1), role: "bidirectional", system, connectedSegmentIds: [before.id], segmentId: before.id },
+      { id: `${bridgeId}:port:1`, owner: { kind: "fitting", id: bridgeId }, position: clonePoint(after.start), direction, role: "bidirectional", system, connectedSegmentIds: [after.id], segmentId: after.id },
+    ];
+    before.endPortId = bridgePorts[0]!.id; after.startPortId = bridgePorts[1]!.id;
+    const obstacleSegmentIds = [...new Set(group.flatMap((item) => item.segmentId ? [item.segmentId] : []))];
+    const obstacleFittingIds = [...new Set(group.flatMap((item) => item.fittingId ? [item.fittingId] : []))];
+    const centerAlong = group.reduce((sum, item) => sum + item.along, 0) / group.length, center = pointOnRun(run, centerAlong);
+    const centerSegment = run.segments.find((segment) => {
+      const startAlong = dot(subtract(segment.start.position, run.start), run.direction), endAlong = dot(subtract(segment.end.position, run.start), run.direction);
+      return centerAlong >= startAlong - 1e-7 && centerAlong <= endAlong + 1e-7;
+    }) ?? run.segments[0]!;
+    const fitting: RouteFitting = { id: bridgeId, type: "conduit-fitting", fitting: "bridge-bend", bendStyle: "sweep", radiusMm: DEFAULT_BEND_RADIUS_MM, system, diameterMm, position: pointAtPosition(centerSegment.start, center), segmentIds: [before.id, after.id], ports: bridgePorts, bridge: { obstacleSegmentId: compatibilitySegmentId, obstacleSegmentIds, ...(obstacleFittingIds.length ? { obstacleFittingIds } : {}), entry, crestStart, crestEnd, exit, riseMm: rise * 1000, clearanceMm: 10 } };
+
+    const pointDistance = (a: Vec3, b: Vec3) => length(subtract(a, b));
+    const remapId = (oldId: string, position: Vec3) => {
+      const candidates = mapped.filter((item) => item.oldId === oldId);
+      if (!candidates.length) return undefined;
+      return candidates.reduce((best, item) => Math.min(pointDistance(position, item.segment.start.position), pointDistance(position, item.segment.end.position)) < Math.min(pointDistance(position, best.segment.start.position), pointDistance(position, best.segment.end.position)) ? item : best).segment.id;
+    };
+    const removeCouplings = new Set(plan.fittings.filter((item) => item.fitting === "coupling" && item.segmentIds.filter((id) => runSegmentIds.has(id)).length === 2 && dot(subtract(item.position.position, run.start), direction) > entryAlong - 1e-7 && dot(subtract(item.position.position, run.start), direction) < exitAlong + 1e-7).map((item) => item.id));
+    const fittings = plan.fittings.filter((item) => !removeCouplings.has(item.id)).map((item) => {
+      if (!item.segmentIds.some((id) => runSegmentIds.has(id))) return item;
+      const ports = item.ports.map((port) => {
+        if (!port.segmentId || !runSegmentIds.has(port.segmentId)) return port;
+        const nextId = remapId(port.segmentId, port.position.position);
+        return nextId ? { ...port, segmentId: nextId, connectedSegmentIds: port.connectedSegmentIds.map((id) => id === port.segmentId ? nextId : id) } : port;
+      });
+      const segmentIds = item.segmentIds.flatMap((id) => {
+        if (!runSegmentIds.has(id)) return [id];
+        const replacement = [...new Set(ports.filter((port) => port.segmentId && (port.connectedSegmentIds.includes(id) || mapped.some((entry) => entry.oldId === id && entry.segment.id === port.segmentId))).map((port) => port.segmentId!))];
+        return replacement.length ? replacement : (replacements.get(id) ?? []).map((segment) => segment.id);
+      });
+      return { ...item, ports, segmentIds: [...new Set(segmentIds)] };
+    });
+    const runChases = plan.surfaceChases.filter((chase) => runSegmentIds.has(chase.routeElementId) && chase.path.kind === "line");
+    const surfaceChases = plan.surfaceChases.filter((chase) => !runSegmentIds.has(chase.routeElementId));
+    for (const item of mapped) {
+      const templates = runChases.filter((chase) => chase.routeElementId === item.oldId);
+      for (const chase of templates) {
+        surfaceChases.push({ ...chase, id: `${chase.id}:bridge:${item.segment.id}`, routeElementId: item.segment.id, path: { kind: "line", start: clonePoint(item.segment.start), end: clonePoint(item.segment.end) } });
+      }
+    }
+    return {
+      ...plan,
+      segments: plan.segments.flatMap((segment) => replacements.has(segment.id) ? replacements.get(segment.id)! : [segment]),
+      fittings: [...fittings, fitting], surfaceChases, penetrations: mappedPenetrations,
+    };
   }
   return null;
 }
@@ -350,8 +510,20 @@ function bridgeCandidate(overlay: ConduitOverlayDocument, plan: PlannedRoute, sl
 function clonePoint(point: RoutePoint): RoutePoint { return { position: [...point.position] as Vec3, attachment: point.attachment ? structuredClone(point.attachment) : undefined }; }
 
 export function withCollisionDiagnostics(overlay: ConduitOverlayDocument, plan: PlannedRoute, ignoredSegmentId?: string, ignoredObjectIds?: ReadonlySet<string>, allowedEndpointContact?: AllowedEndpointContact, slabContext?: BridgeSlabContext): PlannedRoute {
-  let bridged = plan, next = bridgeCandidate(overlay, bridged, slabContext), count = 0;
-  while (next && count < 8) { bridged = next; next = bridgeCandidate(overlay, bridged, slabContext); count += 1; }
+  let bridged = plan;
+  const obstacleCount = overlay.segments.length + overlay.fittings.reduce((sum, fitting) => sum + (fitting.arc ? Math.ceil(Math.abs(fitting.arc.sweepRadians) / (Math.PI / 90)) : 1), 0);
+  const progressLimit = Math.max(1, (plan.segments.length + 1) * (obstacleCount + 1));
+  const bridgeSignatures = new Set<string>();
+  for (let iteration = 0; iteration < progressLimit; iteration += 1) {
+    const next = bridgeCandidate(overlay, bridged, ignoredSegmentId, ignoredObjectIds);
+    if (!next) break;
+    const added = next.fittings.find((fitting) => fitting.fitting === "bridge-bend" && !bridged.fittings.some((current) => current.id === fitting.id));
+    if (!added?.bridge) break;
+    const signature = `${added.bridge.obstacleSegmentId}:${added.bridge.entry.join(",")}:${added.bridge.exit.join(",")}`;
+    if (bridgeSignatures.has(signature)) break;
+    bridgeSignatures.add(signature);
+    bridged = next;
+  }
   const diagnostics = validatePlannedRoute(overlay, bridged, ignoredSegmentId, ignoredObjectIds, allowedEndpointContact);
   return { ...bridged, diagnostics, canCommit: diagnostics.length === 0 };
 }

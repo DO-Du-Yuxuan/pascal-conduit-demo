@@ -401,11 +401,14 @@ describe("Conduit overlay", () => {
     expect(coupling?.ports[1].connectedPortId).toBe(sweep.ports[0].id);
   });
 
-  it("blocks physical crossings but allows separated heights", () => {
+  it("bridges electrical crossings, blocks fire-water clashes, and allows separated heights", () => {
     const base = commitPlannedRoute(createEmptyOverlay("default-layout.json", "abc"), planRoute("receptacle", 20, "surface", [point(-1, 1, 0), point(1, 1, 0)]));
     const crossing = withCollisionDiagnostics(base, planRoute("network", 20, "surface", [point(0, 1, -1, "slab-a"), point(0, 1, 1, "slab-a")]));
-    expect(crossing.canCommit).toBe(false);
-    expect(crossing.diagnostics[0]).toMatchObject({ code: "route_collision" });
+    expect(crossing.canCommit).toBe(true);
+    expect(crossing.fittings.some(fitting => fitting.bridge)).toBe(true);
+    const blocked = withCollisionDiagnostics(base, planRoute("sprinkler", 50, "suspended", [point(0, 1, -1), point(0, 1, 1)]));
+    expect(blocked.canCommit).toBe(false);
+    expect(blocked.diagnostics[0]).toMatchObject({ code: "route_collision" });
     const above = withCollisionDiagnostics(base, planRoute("sprinkler", 50, "suspended", [point(0, 2, -1, "ceiling-a"), point(0, 2, 1, "ceiling-a")]));
     expect(above.canCommit).toBe(true);
   });

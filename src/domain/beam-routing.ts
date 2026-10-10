@@ -148,7 +148,18 @@ const outwardDeparture = (from: RoutePoint, toward: RoutePoint, volume: BeamVolu
 /** Beam-face runs are legal; every other solid intersection blocks ordinary routing. */
 export function beamRouteDiagnostics(nodes: Record<string, NodeData>, plan: PlannedRoute, bypassHostId?: string | null): RouteDiagnostic[] {
   const diagnostics: RouteDiagnostic[] = [];
-  for (const segment of plan.segments) for (const volume of validBeamVolumes(nodes)) {
+  // Bridges are physical route bodies too. Their crest is deliberately off the
+  // original host face and must not inherit that face's collision exemption.
+  const bridgePieces = plan.fittings.flatMap((fitting) => {
+    if (!fitting.bridge) return [];
+    const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
+    return points.slice(0, -1).map((start, index) => ({
+      diameterMm: fitting.diameterMm,
+      start: { position: start, attachment: index === 0 ? fitting.position.attachment : undefined },
+      end: { position: points[index + 1], attachment: index === 2 ? fitting.position.attachment : undefined },
+    }));
+  });
+  for (const segment of [...plan.segments, ...bridgePieces]) for (const volume of validBeamVolumes(nodes)) {
     const sameFaceRun = faceName(segment.start, volume) !== null && faceName(segment.start, volume) === faceName(segment.end, volume);
     // An endpoint may leave its attached face, but a face-to-face shortcut
     // through the prism is never an implicit penetration.

@@ -6,6 +6,7 @@ import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, validatePla
 import { placeNetworkDevice } from "./devices";
 import { pointOnWorldAxis } from "./drawing";
 import { projectRoutePointToWorldAxis } from "./snapping";
+import { Line3, Vector3 } from "three";
 
 const point = (x: number, y: number, z: number, hostId = "slab") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
 
@@ -93,11 +94,11 @@ describe("routing collision validation", () => {
     expect(bridge?.bridge).toMatchObject({ obstacleSegmentId: base.segments[0].id, clearanceMm: 10 });
     expect(bridge?.bridge?.crestStart[1]).toBeGreaterThan(0);
     expect(bridge?.bridge?.riseMm).toBe(30);
-    expect(bridge?.bridge?.entry[2]).toBeCloseTo(-.05);
-    expect(bridge?.bridge?.exit[2]).toBeCloseTo(.05);
+    expect(bridge?.bridge?.entry[2]).toBeLessThan(-.04);
+    expect(bridge?.bridge?.exit[2]).toBeGreaterThan(.04);
   });
 
-  it("derives a temporary slab host only for a fully covered imported obstacle segment", () => {
+  it("bridges a real crossing without requiring a derived slab host", () => {
     const levelId = "level_3syt3grnb9zg523c", slabId = "slab_r3920kf4ohvb5je5";
     const importedTarget: RouteSegment = {
       id: "conduit-1e50b4cb-92d0-43e2-857a-d29f9b353825", type: "conduit-segment", system: "receptacle", diameterMm: 20,
@@ -116,10 +117,10 @@ describe("routing collision validation", () => {
       }],
     };
 
-    expect(withCollisionDiagnostics(overlay, whiteRoute).fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(false);
-    const bridged = withCollisionDiagnostics(overlay, whiteRoute, undefined, undefined, undefined, slabContext);
+    const bridged = withCollisionDiagnostics(overlay, whiteRoute);
     expect(bridged.canCommit).toBe(true);
-    expect(bridged.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge).toMatchObject({ obstacleSegmentId: importedTarget.id, riseMm: 30, clearanceMm: 10 });
+    expect(bridged.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge).toMatchObject({ obstacleSegmentId: importedTarget.id, clearanceMm: 10 });
+    expect(bridged.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge?.riseMm).toBeCloseTo(30, 4);
     expect(importedTarget.start.attachment).toBeUndefined();
     expect(importedTarget.end.attachment).toBeUndefined();
     expect(overlay.segments[0]).toEqual(importedTarget);
@@ -179,7 +180,7 @@ describe("routing collision validation", () => {
     expect(checked.fittings.find(fitting => fitting.fitting === "bridge-bend")?.bridge).toMatchObject({ obstacleSegmentId: "elbow-before", obstacleSegmentIds: [], obstacleFittingIds: [elbow.id], riseMm: 30, clearanceMm: 10 });
   });
 
-  it("does not infer a slab host for routes outside, through holes, on another level, or with ambiguous slabs", () => {
+  it("still resolves a physical crossing with unsuitable or ambiguous slab context", () => {
     const levelId = "level-1", slabId = "slab-1";
     const obstacle: RouteSegment = { id: "red", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [-.8, .05, 0] }, end: { position: [.8, .05, 0] }, createdAt: "" };
     const overlay = { ...createEmptyOverlay("a.json", "sha"), segments: [obstacle] };
@@ -194,8 +195,8 @@ describe("routing collision validation", () => {
       context([slab, { ...slab, id: "slab-2" }]),
     ]) {
       const checked = withCollisionDiagnostics(overlay, route, undefined, undefined, undefined, invalidContext);
-      expect(checked.fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(false);
-      expect(checked.canCommit).toBe(false);
+      expect(checked.fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(true);
+      expect(checked.canCommit).toBe(true);
     }
   });
 
@@ -208,8 +209,8 @@ describe("routing collision validation", () => {
     expect(bridges).toHaveLength(1);
     expect(bridges[0]?.bridge?.obstacleSegmentIds).toEqual(base.segments.map(segment => segment.id));
     expect(bridges[0]?.bridge?.riseMm).toBeCloseTo(45, 8);
-    expect(bridges[0]?.bridge?.crestStart[2]).toBeCloseTo(-.07);
-    expect(bridges[0]?.bridge?.crestEnd[2]).toBeCloseTo(.085);
+    expect(bridges[0]?.bridge?.crestStart[2]).toBeLessThan(-.049);
+    expect(bridges[0]?.bridge?.crestEnd[2]).toBeGreaterThan(.049);
   });
 
   it("keeps separated crossing groups as separate bridges", () => {
@@ -230,6 +231,93 @@ describe("routing collision validation", () => {
     }
   });
 
+  it("bridges shallow but real crossings with enough span for the sloped pipe body", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
+    for (const degrees of [10, 20]) {
+      const radians = degrees * Math.PI / 180;
+      const route = planRoute("lighting", 20, "surface", [
+        { position: [-Math.cos(radians), 0, -Math.sin(radians)] },
+        { position: [Math.cos(radians), 0, Math.sin(radians)] },
+      ]);
+      const checked = withCollisionDiagnostics(base, route);
+      expect(checked.canCommit, `${degrees} degree crossing`).toBe(true);
+      expect(checked.fittings.filter((fitting) => fitting.fitting === "bridge-bend")).toHaveLength(1);
+    }
+  });
+
+  it("keeps a ceiling bridge below the route host even when the obstacle is 10mm lower", () => {
+    const ceilingPoint = (x: number, y: number, z: number) => ({
+      position: [x, y, z] as [number, number, number],
+      attachment: { hostId: "ceiling-1", hostKind: "ceiling" as const, surface: "bottom", normal: [0, -1, 0] as [number, number, number], levelId: "L0" },
+    });
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [ceilingPoint(-1, 2.99, 0), ceilingPoint(1, 2.99, 0)]));
+    const checked = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [ceilingPoint(0, 3, -1), ceilingPoint(0, 3, 1)]));
+    const bridge = checked.fittings.find((fitting) => fitting.fitting === "bridge-bend")?.bridge;
+    expect(checked.canCommit).toBe(true);
+    expect(bridge?.riseMm).toBeCloseTo(40, 7);
+    expect(bridge?.crestStart[1]).toBeLessThan(3);
+    expect(bridge?.crestEnd[1]).toBeLessThan(3);
+  });
+
+  it("keeps planning bridges after more than eight independent crossings", () => {
+    let base = createEmptyOverlay("a.json", "sha");
+    for (let index = 0; index < 9; index += 1) {
+      const z = (index - 4) * 2;
+      base = commitPlannedRoute(base, planRoute("receptacle", 20, "surface", [point(-1, 0, z), point(1, 0, z)]));
+    }
+    const checked = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -10), point(0, 0, 10)]));
+    expect(checked.fittings.filter((fitting) => fitting.fitting === "bridge-bend")).toHaveLength(9);
+    expect(checked.canCommit).toBe(true);
+  });
+
+  it("rebuilds a bridge across an automatic stock coupling while keeping route references valid", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
+    const route = planRoute("lighting", 20, "surface", [point(0, 0, -4.01), point(0, 0, 1)]);
+    expect(route.fittings.some((fitting) => fitting.fitting === "coupling")).toBe(true);
+    const checked = withCollisionDiagnostics(base, route);
+    const bridges = checked.fittings.filter((fitting) => fitting.fitting === "bridge-bend");
+    const segmentIds = new Set(checked.segments.map((segment) => segment.id));
+    const portIds = new Set(checked.fittings.flatMap((fitting) => fitting.ports.map((port) => port.id)));
+
+    expect(checked.canCommit).toBe(true);
+    expect(bridges).toHaveLength(1);
+    expect(checked.fittings.some((fitting) => fitting.fitting === "coupling")).toBe(false);
+    expect(checked.segments.every((segment) => Math.hypot(...segment.end.position.map((value, index) => value - segment.start.position[index]!) as [number, number, number]) <= 4 + 1e-7)).toBe(true);
+    expect(checked.fittings.every((fitting) => fitting.segmentIds.every((id) => segmentIds.has(id)))).toBe(true);
+    expect(checked.fittings.flatMap((fitting) => fitting.ports).every((port) => port.connectedSegmentIds.every((id) => segmentIds.has(id)))).toBe(true);
+    expect(checked.segments.every((segment) => (!segment.startPortId || portIds.has(segment.startPortId)) && (!segment.endPortId || portIds.has(segment.endPortId)))).toBe(true);
+    expect(checked.surfaceChases.every((chase) => segmentIds.has(chase.routeElementId))).toBe(true);
+    expect(checked.penetrations.every((penetration) => segmentIds.has(penetration.segmentId))).toBe(true);
+    expect(base.segments).toHaveLength(1);
+  });
+
+  it("preserves a penetration only when one retained straight piece still contains its full channel", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
+    const host = { hostId: "wall-1", hostKind: "wall" as const, surface: "interior", normal: [0, 0, 1] as [number, number, number], levelId: "L0" };
+    const clearRoute = planRoute("lighting", 20, "surface", [point(0, 0, -1), point(0, 0, 1)], undefined, [{ host, entry: point(0, 0, .5), exit: point(0, 0, .6), direction: [0, 0, 1] }]);
+    const originalPenetration = clearRoute.penetrations[0]!;
+    const checked = withCollisionDiagnostics(base, clearRoute);
+    const retainedPenetration = checked.penetrations[0];
+    expect(checked.canCommit).toBe(true);
+    expect(retainedPenetration).toBeDefined();
+    expect(checked.segments.some((segment) => segment.id === retainedPenetration?.segmentId)).toBe(true);
+    expect(retainedPenetration?.entry).toEqual(originalPenetration.entry);
+    expect(retainedPenetration?.exit).toEqual(originalPenetration.exit);
+
+    const blockedRoute = planRoute("lighting", 20, "surface", [point(0, 0, -1), point(0, 0, 1)], undefined, [{ host, entry: point(0, 0, -.01), exit: point(0, 0, .01), direction: [0, 0, 1] }]);
+    const blocked = withCollisionDiagnostics(base, blockedRoute);
+    expect(blocked.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
+    expect(blocked.canCommit).toBe(false);
+  });
+
+  it("does not build a bridge over a route segment explicitly ignored for replacement", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
+    const route = planRoute("lighting", 20, "surface", [point(0, 0, -1), point(0, 0, 1)]);
+    const checked = withCollisionDiagnostics(base, route, base.segments[0]!.id);
+    expect(checked.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
+    expect(checked.canCommit).toBe(true);
+  });
+
   it("does not bridge a sprinkler crossing or parallel floor overlap", () => {
     const base = commitPlannedRoute(createEmptyOverlay("a.json", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0, "floor-a"), point(1, 0, 0, "floor-a")]));
     const sprinkler = withCollisionDiagnostics(base, planRoute("sprinkler", 50, "suspended", [point(0, 0, -1, "floor-a"), point(0, 0, 1, "floor-a")]));
@@ -237,5 +325,31 @@ describe("routing collision validation", () => {
     expect(sprinkler.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
     expect(parallel.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
     expect(parallel.canCommit).toBe(false);
+  });
+  it("does not accept a second bridge with insufficient clearance from an existing ramp", () => {
+    const base = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
+    const first = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -1), point(0, 0, 1)]));
+    const overlay = commitPlannedRoute(base, first);
+    const second = withCollisionDiagnostics(overlay, planRoute("network", 20, "surface", [point(-1, 0, -.035), point(1, 0, -.035)]));
+    if (!second.canCommit) return;
+    const obstacles = overlay.segments.map(segment => [segment.start.position, segment.end.position]);
+    for (const fitting of overlay.fittings) if (fitting.bridge) {
+      const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
+      points.slice(0, -1).forEach((start, index) => obstacles.push([start, points[index + 1]]));
+    }
+    // Independently sample the saved bridge against finite obstacle lines;
+    // the old ordinary collision tolerance could accept only 2-3mm clearance.
+    for (const fitting of second.fittings) if (fitting.bridge) {
+      const points = [fitting.bridge.entry, fitting.bridge.crestStart, fitting.bridge.crestEnd, fitting.bridge.exit];
+      points.slice(0, -1).forEach((start, index) => {
+        for (let sample = 0; sample <= 100; sample += 1) {
+          const position = new Vector3(...start).lerp(new Vector3(...points[index + 1]), sample / 100);
+          for (const [a, b] of obstacles) {
+            const closest = new Line3(new Vector3(...a), new Vector3(...b)).closestPointToPoint(position, true, new Vector3());
+            expect(position.distanceTo(closest)).toBeGreaterThanOrEqual(.03 - .00001);
+          }
+        }
+      });
+    }
   });
 });

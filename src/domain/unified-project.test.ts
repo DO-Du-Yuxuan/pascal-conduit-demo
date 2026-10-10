@@ -3,6 +3,8 @@ import { createBeam, validateBeam } from "./beams";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./unified-project";
 import { commitFireSignalRoute, commitFreeRouteToDevice, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, createNetworkDevice, createSmokeDetector, openRouteEndpoints, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS } from "./devices";
 import { commitPlannedRoute, planRoute } from "./routing";
+import { withCollisionDiagnostics } from "./routing-collision";
+import type { RoutePoint } from "./overlay";
 import { commitWorkspaceTransaction, createWorkspace, projectDocument } from "./workspace";
 import { parseProject } from "../parser/parse";
 
@@ -379,6 +381,30 @@ it("exports a bridge bend through the public ConduitElbow fitting discriminator"
   const reopened = decodeUnifiedProject(saved, "bridge-saved.json", "sha2");
   expect(reopened.overlay.fittings[0]).toMatchObject({ id: bridge.id, fitting: "bridge-bend", bridge: bridge.bridge });
   expect(encodeUnifiedProject(reopened.projectRaw, reopened.overlay).nodes[bridge.id]).toMatchObject({ type: "ConduitElbow", fitting: "elbow", bridge: bridge.bridge });
+});
+
+it("round-trips nine downward bridges with unique ports and unchanged imported data", () => {
+  const raw = project(), loaded = decodeUnifiedProject(raw, "bridges.json", "sha");
+  const point = (x: number, z: number): RoutePoint => ({ position: [x, 2.7, z], attachment: { hostId: "ceiling", hostKind: "ceiling", surface: "bottom", normal: [0, -1, 0], levelId: "level" } });
+  let overlay = loaded.overlay;
+  for (let index = 0; index < 9; index += 1) overlay = commitPlannedRoute(overlay, planRoute("receptacle", 20, "surface", [point(-1, index * .3), point(1, index * .3)]));
+  const existing = structuredClone(overlay);
+  const planned = withCollisionDiagnostics(overlay, planRoute("network", 20, "surface", [point(0, -.3), point(0, 2.7)]));
+  expect(planned.canCommit).toBe(true);
+  const bridges = planned.fittings.filter(fitting => fitting.bridge);
+  expect(bridges).toHaveLength(9);
+  expect(new Set(bridges.flatMap(fitting => [fitting.id, ...fitting.ports.map(port => port.id)])).size).toBe(27);
+  for (const fitting of bridges) {
+    expect(fitting.bridge!.crestStart[1]).toBeLessThan(2.7);
+    expect(fitting.bridge!.riseMm).toBeGreaterThan(0);
+  }
+  expect(overlay).toEqual(existing);
+  const saved = encodeUnifiedProject(loaded.projectRaw, commitPlannedRoute(overlay, planned));
+  const reopened = decodeUnifiedProject(saved, "bridges-saved.json", "sha2");
+  expect(reopened.overlay.fittings.filter(fitting => fitting.bridge).map(fitting => fitting.bridge)).toEqual(bridges.map(fitting => fitting.bridge));
+  expect(saved.nodes.wall).toEqual(raw.nodes.wall);
+  expect(saved.nodes.future).toEqual(raw.nodes.future);
+  expect(saved.topExtra).toBe("preserve");
 });
 
 it("rejects Circuit fields on FireWaterPipe", () => {
