@@ -213,7 +213,14 @@ describe('construction plan rendering integration',()=>{
   act(()=>root.render(<svg><ConduitPlanOverlay overlay={overlay} levelId="l" selectedId={null} onSelect={()=>{}} context={context} scale={50} rotation={0}/></svg>));
   const symbol=div.querySelector('[data-device-symbol="sprinkler-head"]');
   expect(symbol?.getAttribute('data-sprinkler-direction')).toBe('pendent');
-  expect(symbol?.querySelectorAll('path')[1]?.getAttribute('d')).toContain('M0-10V10');
+  expect(symbol?.querySelectorAll('path')[1]?.getAttribute('d')).toContain('M0-20V20');
+  expect(symbol?.querySelector('circle')?.getAttribute('r')).toBe('6');
+  const sections = [{ system: 'sprinkler' as const, label: '消防施工图', rows: [{ deviceType: 'sprinkler-head' as const, sprinklerDirection: 'pendent' as const, name: '向下喷淋头', mounting: '管段', height: '2700 mm', heightMeters: 2.7, quantity: 1, sourceIds: ['sprinkler'], measurementBasis: 'derived' as const, assumptions: [], confidence: 'limited' as const }] }];
+  act(()=>root.render(<ConstructionLegend sections={sections} annotationScale={1}/>));
+  const legend = div.querySelector('svg');
+  expect(legend?.style.overflow).toBe('visible');
+  expect(legend?.querySelectorAll('path')[1]?.getAttribute('d')).toContain('L0 20');
+  expect(legend?.querySelector('circle')?.getAttribute('r')).toBe('6');
  });
  it('renders a sensor only while the dedicated sensor layer is visible',()=>{
   const div=document.createElement('div');document.body.append(div);const root=createRoot(div);roots.push(root);

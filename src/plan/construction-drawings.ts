@@ -1,7 +1,8 @@
 import type { NodeData } from '../types';
-import type { ConduitOverlayDocument, NetworkDevice, RoutingSystem } from '../domain/overlay';
+import type { ConduitOverlayDocument, NetworkDevice, RoutingSystem, SprinklerDirection } from '../domain/overlay';
+import { sprinklerDirectionOf } from '../domain/devices';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
-import { deviceInstallationHeightMeters, devicePlanLabel, isFloorSocket, type PlanContext } from './model';
+import { deviceHostAttachment, deviceInstallationHeightMeters, devicePlanLabel, isFloorSocket, type PlanContext } from './model';
 
 export type ConstructionDrawingSystem = RoutingSystem | 'sensor';
 export type ConstructionDrawingVisibility = Record<RoutingSystem, boolean> & { sensor?: boolean };
@@ -18,10 +19,10 @@ export const CONSTRUCTION_DRAWING_SYSTEMS: ConstructionDrawingSystem[] = ['recep
 export const allConstructionDrawingsSelected = (visibility: ConstructionDrawingVisibility) => CONSTRUCTION_DRAWING_SYSTEMS.every(system => system === 'sensor' ? visibility.sensor !== false : visibility[system]);
 export const setAllConstructionDrawings = (checked: boolean): ConstructionDrawingVisibility => ({ receptacle: checked, lighting: checked, network: checked, sprinkler: checked, 'fire-signal': checked, sensor: checked });
 
-export type InstallationScheduleRow = { variant?: string; deviceType: NetworkDevice['deviceType']; floorSocket?: boolean; name: string; mounting: string; height: string; heightMeters: number; quantity: number; sourceIds: string[]; measurementBasis: 'explicit' | 'derived'; assumptions: string[]; confidence: 'high' | 'limited' };
+export type InstallationScheduleRow = { variant?: string; deviceType: NetworkDevice['deviceType']; sprinklerDirection?: SprinklerDirection; floorSocket?: boolean; name: string; mounting: string; height: string; heightMeters: number; quantity: number; sourceIds: string[]; measurementBasis: 'explicit' | 'derived'; assumptions: string[]; confidence: 'high' | 'limited' };
 export type InstallationScheduleSection = { system: ConstructionDrawingSystem; label: string; rows: InstallationScheduleRow[] };
 
-const wallAttachment = (device: NetworkDevice) => device.position.attachment?.hostKind === 'wall' || (device.mount?.kind === 'host' && device.mount.attachment.hostKind === 'wall');
+const wallAttachment = (device: NetworkDevice) => deviceHostAttachment(device)?.hostKind === 'wall';
 export const usesExteriorHeightCallout = (device: NetworkDevice) => wallAttachment(device);
 
 export function buildInstallationSchedule(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string, unit: MeasurementUnit, context: PlanContext): InstallationScheduleSection[] {
@@ -34,7 +35,8 @@ export function buildInstallationSchedule(nodes: Record<string, NodeData>, overl
     // Their independent Project/Overlay systems remain unchanged.
     const system: ConstructionDrawingSystem | undefined = device.deviceType === 'sensor' ? context.sensorVisible ? 'sensor' : undefined : deviceSystem === 'fire-signal' ? 'sprinkler' : deviceSystem;
     if (!system) continue;
-    const mounting = device.mount?.kind === 'reference-plane' ? '安装参考面' : device.position.attachment?.hostKind === 'ceiling' ? '天花' : device.position.attachment?.hostKind === 'slab' ? '楼板' : '悬空';
+    const attachment = deviceHostAttachment(device);
+    const mounting = device.mount?.kind === 'segment' ? '管段' : device.mount?.kind === 'reference-plane' ? '安装参考面' : attachment?.hostKind === 'ceiling' ? '天花' : attachment?.hostKind === 'slab' ? '楼板' : attachment?.hostKind === 'beam' ? '梁面' : '悬空';
     const heightMeters = deviceInstallationHeightMeters(device, nodes, levelId);
     const height = `${formatMeasurement(heightMeters, unit)}${suffix}`;
     const name = devicePlanLabel(device, overlay);
@@ -43,7 +45,7 @@ export function buildInstallationSchedule(nodes: Record<string, NodeData>, overl
     const key = `${device.deviceType}|${name}|${mounting}|${height}`;
     const current = systemRows.get(key);
     if (current) { current.quantity += 1; current.sourceIds.push(device.id); }
-    else systemRows.set(key, { deviceType: device.deviceType, floorSocket, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' || floorSocket ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '依据明确保存的外壳中心位置和设备实体尺寸换算下缘，并减去点位处楼板顶面；无楼板时使用楼层基准。' : floorSocket ? '插座明确挂载楼板顶面，施工图按地插显示，安装高度记为 0。' : '高度按设备下边缘相对当前 3D 模型完成地计算；无楼板时使用楼层基准，施工前需按完成面复核。'] });
+    else systemRows.set(key, { deviceType: device.deviceType, ...(device.deviceType === 'sprinkler-head' ? { sprinklerDirection: sprinklerDirectionOf(device) } : {}), floorSocket, name, mounting, height, heightMeters, quantity: 1, sourceIds: [device.id], measurementBasis: device.mount?.kind === 'reference-plane' ? 'explicit' : 'derived', confidence: device.mount?.kind === 'reference-plane' || floorSocket ? 'high' : 'limited', assumptions: [device.mount?.kind === 'reference-plane' ? '依据明确保存的外壳中心位置和设备实体尺寸换算下缘，并减去点位处楼板顶面；无楼板时使用楼层基准。' : floorSocket ? '插座明确挂载楼板顶面，施工图按地插显示，安装高度记为 0。' : '高度按设备下边缘相对当前 3D 模型完成地计算；无楼板时使用楼层基准，施工前需按完成面复核。'] });
     rows.set(system, systemRows);
   }
   return CONSTRUCTION_DRAWING_SYSTEMS.flatMap(system => {

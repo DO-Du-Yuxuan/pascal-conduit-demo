@@ -11,6 +11,34 @@ import { Line3, Vector3 } from "three";
 const point = (x: number, y: number, z: number, hostId = "slab") => ({ position: [x, y, z] as [number, number, number], attachment: { hostId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } });
 
 describe("routing collision validation", () => {
+  it.each(["x", "y", "z"] as const)("bridges an unhosted signal conduit locked to world %s", axis => {
+    const index = axis === "x" ? 0 : axis === "y" ? 1 : 2;
+    const other = index === 0 ? 2 : 0;
+    const start = { position: [0, 3, 0] as [number, number, number] };
+    start.position[index] -= 1;
+    const target = { position: [1, 4, 1] as [number, number, number] };
+    target.position[index] = start.position[index] + 2;
+    const end = projectRoutePointToWorldAxis(start, target, axis);
+    const obstacleStart = [0, 3, 0] as [number, number, number], obstacleEnd = [...obstacleStart] as [number, number, number];
+    obstacleStart[other] -= 1; obstacleEnd[other] += 1;
+    const base = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute("network", 20, "suspended", [{ position: obstacleStart }, { position: obstacleEnd }]));
+    const checked = withCollisionDiagnostics(base, planRoute("fire-signal", 20, "suspended", [start, end]));
+    expect(checked.canCommit).toBe(true);
+    expect(checked.fittings.some(f => f.bridge)).toBe(true);
+    expect(checked.points.every(p => !p.attachment)).toBe(true);
+  });
+  it.each(["surface", "suspended", "penetrate"] as const)("bridges unhosted signal and ordinary conduits in %s mode", mode => {
+    for (const [existing, proposed] of [["receptacle", "fire-signal"], ["fire-signal", "network"], ["fire-signal", "fire-signal"]] as const) {
+      const base = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute(existing, 20, mode, [{ position: [-1, 3, 0] }, { position: [1, 3, 0] }]));
+      const checked = withCollisionDiagnostics(base, planRoute(proposed, 20, mode, [{ position: [0, 3, -1] }, { position: [0, 3, 1] }]));
+      expect(checked.canCommit).toBe(true);
+      expect(checked.fittings.filter(f => f.bridge)).toHaveLength(1);
+      expect(checked.fittings.find(f => f.bridge)?.system).toBe(proposed);
+      const fireWater = withCollisionDiagnostics(base, planRoute("sprinkler", 50, mode, [{ position: [0, 3, -1] }, { position: [0, 3, 1] }]));
+      expect(fireWater.canCommit).toBe(false);
+      expect(fireWater.fittings.some(f => f.bridge)).toBe(false);
+    }
+  });
   it("checks candidate conduits against persisted HVAC control routes", () => {
     const overlay = createEmptyOverlay("a.json", "sha");
     overlay.hvac.controlConduits = [{ id: "hvac-route", type: "hvac-control-conduit", system: "control", thermostatId: "t", thermostatPortId: "t:control-port", indoorUnitId: "u", indoorUnitPortId: "u:control-port", segmentIds: ["hvac-segment"], fittingIds: [], diameterMm: 20, createdAt: "now" }];
@@ -158,17 +186,17 @@ describe("routing collision validation", () => {
     expect(checked.fittings.some(fitting => fitting.fitting === "bridge-bend")).toBe(true);
   });
 
-  it("bridges a floor crossing over a supported large elbow arc without ignoring its collision volume", () => {
+  it.each(["receptacle", "fire-signal"] as const)("bridges a crossing over a saved %s sweep without ignoring its collision volume", system => {
     const levelId = "level-1", slabId = "slab-1", attachment = { hostId: slabId, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId };
     const elbow: RouteFitting = {
       id: "large-sweep", type: "conduit-fitting", fitting: "elbow", bendStyle: "sweep", radiusMm: 300,
-      system: "receptacle", diameterMm: 20, position: { position: [.3, .05, 0], attachment },
+      system, diameterMm: 20, position: { position: [.3, .05, 0], attachment },
       segmentIds: ["elbow-before", "elbow-after"], ports: [],
       arc: { start: [.3, .05, 0], end: [0, .05, .3], center: [0, .05, 0], normal: [0, -1, 0], sweepRadians: Math.PI / 2 },
     };
     const obstacleSegments: RouteSegment[] = [
-      { id: "elbow-before", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [.5, .05, 0], attachment }, end: { position: [.3, .05, 0], attachment }, createdAt: "" },
-      { id: "elbow-after", type: "conduit-segment", system: "receptacle", diameterMm: 20, start: { position: [0, .05, .3], attachment }, end: { position: [0, .05, .5], attachment }, createdAt: "" },
+      { id: "elbow-before", type: "conduit-segment", system, diameterMm: 20, start: { position: [.5, .05, 0], attachment }, end: { position: [.3, .05, 0], attachment }, createdAt: "" },
+      { id: "elbow-after", type: "conduit-segment", system, diameterMm: 20, start: { position: [0, .05, .3], attachment }, end: { position: [0, .05, .5], attachment }, createdAt: "" },
     ];
     const overlay = { ...createEmptyOverlay("a.json", "sha"), segments: obstacleSegments, fittings: [elbow] };
     const routePoint = (z: number) => ({ position: [.2, .05, z] as [number, number, number], attachment });
@@ -326,9 +354,9 @@ describe("routing collision validation", () => {
     expect(parallel.fittings.some((fitting) => fitting.fitting === "bridge-bend")).toBe(false);
     expect(parallel.canCommit).toBe(false);
   });
-  it("does not accept a second bridge with insufficient clearance from an existing ramp", () => {
+  it.each(["lighting", "fire-signal"] as const)("does not accept a second bridge with insufficient clearance from an existing %s ramp", system => {
     const base = commitPlannedRoute(createEmptyOverlay("a", "sha"), planRoute("receptacle", 20, "surface", [point(-1, 0, 0), point(1, 0, 0)]));
-    const first = withCollisionDiagnostics(base, planRoute("lighting", 20, "surface", [point(0, 0, -1), point(0, 0, 1)]));
+    const first = withCollisionDiagnostics(base, planRoute(system, 20, "surface", [point(0, 0, -1), point(0, 0, 1)]));
     const overlay = commitPlannedRoute(base, first);
     const second = withCollisionDiagnostics(overlay, planRoute("network", 20, "surface", [point(-1, 0, -.035), point(1, 0, -.035)]));
     if (!second.canCommit) return;

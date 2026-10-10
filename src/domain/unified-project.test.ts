@@ -386,7 +386,7 @@ it("accepts route authoring only under ElectricalSystem or LightingSystem", () =
   }
 });
 
-it("exports a bridge bend through the public ConduitElbow fitting discriminator", () => {
+it.each(["receptacle", "fire-signal"] as const)("exports a %s bridge through its public elbow discriminator", system => {
   const raw = project();
   const loaded = decodeUnifiedProject(raw, "bridge.json", "sha");
   const bridge = {
@@ -395,7 +395,7 @@ it("exports a bridge bend through the public ConduitElbow fitting discriminator"
     fitting: "bridge-bend" as const,
     bendStyle: "sweep" as const,
     radiusMm: 150,
-    system: "receptacle" as const,
+    system,
     diameterMm: 20,
     position: { position: [1, 0.2, 0] as [number, number, number] },
     segmentIds: ["bridge-before", "bridge-after"],
@@ -404,10 +404,11 @@ it("exports a bridge bend through the public ConduitElbow fitting discriminator"
   };
   const overlay = { ...loaded.overlay, fittings: [bridge] };
   const saved = encodeUnifiedProject(loaded.projectRaw, overlay);
-  expect(saved.nodes[bridge.id]).toMatchObject({ type: "ConduitElbow", fitting: "elbow", bridge: bridge.bridge });
+  const type = system === "fire-signal" ? "FireSignalConduitElbow" : "ConduitElbow";
+  expect(saved.nodes[bridge.id]).toMatchObject({ type, fitting: "elbow", bridge: bridge.bridge });
   const reopened = decodeUnifiedProject(saved, "bridge-saved.json", "sha2");
   expect(reopened.overlay.fittings[0]).toMatchObject({ id: bridge.id, fitting: "bridge-bend", bridge: bridge.bridge });
-  expect(encodeUnifiedProject(reopened.projectRaw, reopened.overlay).nodes[bridge.id]).toMatchObject({ type: "ConduitElbow", fitting: "elbow", bridge: bridge.bridge });
+  expect(encodeUnifiedProject(reopened.projectRaw, reopened.overlay).nodes[bridge.id]).toMatchObject({ type, fitting: "elbow", bridge: bridge.bridge });
 });
 
 it("round-trips nine downward bridges with unique ports and unchanged imported data", () => {

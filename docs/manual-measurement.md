@@ -48,3 +48,5 @@ All stored and calculated values remain metres.
 - Feet–inches: rounded to the nearest 1/16 inch, for example `12'-7 9/16"`.
 
 The unit control changes both automatic exterior annotations and manual measurements without altering geometry or stored values.
+
+Pipe-mounted devices use their segment mount consistently for plan symbols, positioning dimensions, and the installation schedule. They appear as pipe-mounted rows with all visible device source IDs and quantities; inherited building attachments do not exclude them as wall callouts. Sprinkler direction arrows extend 20 symbol units from the centre in the plan and legend, retaining the original circle size and the saved upright or pendent direction.

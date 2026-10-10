@@ -165,7 +165,7 @@ export function validateBranchCandidate(overlay: ConduitOverlayDocument, ignored
   });
 }
 
-const electrical = (system: RouteSegment["system"]) => system === "receptacle" || system === "lighting" || system === "network";
+const electrical = (system: RouteSegment["system"]) => system !== "sprinkler";
 export type BridgeSlabContext = { levelId: string; slabs: readonly { id: string; parentId?: string; type?: string; elevation?: unknown; polygon?: unknown; holes?: unknown }[]; levelBaseY?: Readonly<Record<string, number>> };
 const isGroundSegment = (segment: RouteSegment) => Boolean(segment.start.attachment && segment.end.attachment && segment.start.attachment.hostKind === "slab" && segment.end.attachment.hostKind === "slab" && segment.start.attachment.hostId === segment.end.attachment.hostId && segment.start.attachment.surface === "top" && segment.end.attachment.surface === "top");
 const planar = (value: unknown): [number, number] | null => {
@@ -293,10 +293,11 @@ function preferredLift(run: RouteRun, obstacleNormal?: Vec3): Vec3 | null {
   const attachmentNormal = first.start.attachment?.normal ?? first.end.attachment?.normal ?? obstacleNormal;
   const direction = run.direction;
   let reference = attachmentNormal && length(attachmentNormal) > 1e-8 ? attachmentNormal : [0, 1, 0] as Vec3;
-  // A route on a vertical host still needs an out-of-plane bridge. World up
-  // supplies that direction when the host normal is parallel to the route.
+  // Choose a geometric reference when the host normal is parallel to the
+  // route, including vertical unhosted runs where world up is also parallel.
   reference = subtract(reference, scale(direction, dot(reference, direction)));
   if (length(reference) < 1e-7) reference = subtract([0, 1, 0], scale(direction, direction[1]));
+  if (length(reference) < 1e-7) reference = subtract([1, 0, 0], scale(direction, direction[0]));
   return length(reference) < 1e-7 ? null : normalize(reference);
 }
 

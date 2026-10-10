@@ -16,6 +16,20 @@ const ceilingAttachment: HostAttachment = { hostId: 'ceiling', hostKind: 'ceilin
 const device = (id: string, deviceType: NetworkDevice['deviceType'], systems: NetworkDevice['systems'], y: number, attachment?: HostAttachment): NetworkDevice => ({ id, type: 'network-device', deviceType, name: deviceType === 'luminaire' ? '灯位接线盒' : '插座', position: { position: [1, y, 1], attachment }, sizeMm: [86, 86, 50], orientation: [0, 0, 0], systems, ports: [], createdAt: '' });
 
 describe('construction drawing visibility and installation schedule', () => {
+  it('counts every pipe-mounted sprinkler using the same mount semantics as plan symbols', () => {
+    const overlay = createEmptyOverlay('a', 'sha');
+    overlay.devices = Array.from({ length: 16 }, (_, index) => ({
+      ...device(`head-${index}`, 'sprinkler-head', ['sprinkler'], 3, index < 12 ? { ...ceilingAttachment, hostId: 'wall', hostKind: 'wall' as const } : undefined),
+      sprinklerDirection: index % 2 ? 'pendent' as const : 'upright' as const,
+      mount: { kind: 'segment' as const, segmentId: 'water', t: .5, tangent: [0, 1, 0] as [number, number, number], levelId: 'level' },
+    }));
+    overlay.segments = [{ id: 'water', type: 'sprinkler-segment', system: 'sprinkler', diameterMm: 50, start: { position: [0, 3, 0] }, end: { position: [4, 3, 0] }, createdAt: '' }];
+    const rows = buildInstallationSchedule(nodes, overlay, 'level', 'millimeters', createPlanContext(nodes, overlay))[0]!.rows;
+    expect(rows.reduce((sum, row) => sum + row.quantity, 0)).toBe(16);
+    expect(rows.flatMap(row => row.sourceIds).sort()).toEqual(overlay.devices.map(d => d.id).sort());
+    expect(rows.every(row => row.mounting === '管段')).toBe(true);
+    expect(rows.map(row => row.sprinklerDirection).sort()).toEqual(['pendent', 'upright']);
+  });
   it('turns all five construction drawings on and off as one global selection', () => {
     const partial: ConstructionDrawingVisibility = { receptacle: true, lighting: false, network: true, sprinkler: false, 'fire-signal': false };
     expect(partial.receptacle).toBe(true);
