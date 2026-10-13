@@ -21,11 +21,9 @@ const normalize = (value: Vec3): Vec3 => { const size = length(value); return si
 const pointAlong = (start: RoutePoint, end: RoutePoint, distance: number): RoutePoint => {
   const span = length(subtract(end.position, start.position));
   if (distance <= EPSILON) return copyPoint(start);
-  // Existing non-Beam route construction deliberately carries its starting
-  // host evidence through stock-length parts for legacy penetration planning.
-  // A Beam endpoint is different: collision validation needs its actual face
-  // evidence to distinguish legal surface contact from entering the solid.
-  if (end.attachment?.hostKind === "beam" && distance >= span - EPSILON) return copyPoint(end);
+  // Intermediate stock parts retain their incoming evidence, but the actual
+  // hosted endpoint must keep its own face and local coordinates.
+  if (end.attachment && distance >= span - EPSILON) return copyPoint(end);
   return { ...copyPoint(start), position: add(start.position, scale(normalize(subtract(end.position, start.position)), distance)) };
 };
 const segmentType = (system: RoutingSystem) => system === "sprinkler" ? "sprinkler-segment" as const : "conduit-segment" as const;

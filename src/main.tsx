@@ -28,7 +28,7 @@ import {
   ViewBox,
   zoomExtents,
 } from "./geometry/transform";
-import { canvasWheelGesture, canvasWheelZoomFactor, SAFARI_GESTURE_ZOOM_EXPONENT, TRACKPAD_PINCH_ZOOM_SENSITIVITY, zoomCanvasViewBox } from "./geometry/canvas-navigation";
+import { canvasWheelGesture, canvasWheelPanDelta, canvasWheelZoomFactor, SAFARI_GESTURE_ZOOM_EXPONENT, TRACKPAD_PINCH_ZOOM_SENSITIVITY, zoomCanvasViewBox } from "./geometry/canvas-navigation";
 import { inspectNodes } from "./diagnostics/check";
 import { buildExperimentalWalls, Wall as PascalWall } from "./geometry/walls";
 import { hasValidShelfFootprint, resolveShelfData, resolveShelfPlanTransform, shelfCorners, shelfDividerXs, shelfMatrix } from "./geometry/shelf";
@@ -40,9 +40,10 @@ import { buildExteriorDimensions, DimensionSegment, dimensionOverlayBounds, upri
 import { buildManualMeasurementGeometry, buildMeasurementSnapSegments, formatArea, formatMeasurement, ManualMeasurement, MeasurementMode, MeasurementSnap, MeasurementUnit, resolveMeasurementMode, snapMeasurementPoint } from "./geometry/manual-measurement";
 import { ALPHA_THRESHOLD, computeCropPlacement, floorplanImageCropDiagnostics, FloorplanImageCropCacheEntry, loadFloorplanImageCrop, peekFloorplanImageCrop, subscribeFloorplanImageCrop } from "./geometry/floorplan-image-crop";
 import { auditSceneCoverage } from "./coverage/auditSceneCoverage";
-import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoSceneVisibility, restoreAllSceneNodes, undoSceneVisibility } from "./scene-visibility";
+import { createSceneVisibilityHistory, sourceNodeIsVisible, hideSceneNode, restoreSceneNode, isHideableSceneNode, redoSceneVisibility, restoreAllSceneNodes, undoSceneVisibility } from "./scene-visibility";
 import { buildThreeDSceneInput } from "./three/scene-input";
 import ThreeDWorkspace from "./three/ThreeDWorkspace";
+import { DEFAULT_3D_LAYERS, buildingLayerForType } from "./three/view-state";
 import type { ThreeDAuthorCommand } from "./three/ThreeDWorkspace";
 import { BUILDER_CARD_SECTION_LABELS, BUILDER_CARDS, BUILDER_SYSTEMS, catalogLockForBuilderCard, type BuilderAuthorTool, type BuilderCard, type BuilderCardSection, type BuilderSystemId } from "./builder-workbench";
 import { saveJsonFile } from "./three/save-json-file";
@@ -52,9 +53,16 @@ import { type ConduitOverlayDocument, type ManualCallout } from "./domain/overla
 import { projectDocument, readProjectIdentity } from "./domain/workspace";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./domain/unified-project";
 import { buildCrashDiagnostic, createRecoveryDownloadSnapshot, explainReactError, getLastSuccessfulRecoverySnapshot } from "./crash-recovery";
-import { validateBeam } from "./domain/beams";
+import { validateBeam, type BeamNode } from "./domain/beams";
+import { beamNodeDefinition } from "./nodes/beam/definition";
+const BeamFootprint = beamNodeDefinition.PlanRenderer;
 import { addManualCallout, deleteManualCallout, updateManualCallout } from "./domain/manual-callouts";
 import { clampSplitRatio, type WorkspaceViewMode } from "./domain/workspace-layout";
+import { BuilderActionIcon, BuilderIcon, type BuilderIconName } from "./ui/BuilderIcons";
+import { SceneTree } from "./ui/SceneTree";
+import { BuilderStructures } from "./plan/BuilderStructures";
+import { BUILDER_PLAN_COLORS } from "./plan/builder-presentation";
+import { shouldEnableSpacePan } from "./three/camera-navigation";
 type Visibility = {
   images: boolean;
   boxes: boolean;
@@ -63,6 +71,7 @@ type Visibility = {
   names: boolean;
   zones: boolean;
   slabs: boolean;
+  structures: boolean;
   walls: boolean;
   beams: boolean;
   shelves: boolean;
@@ -95,6 +104,7 @@ const visibilityDefault: Visibility = {
   names: false,
   zones: true,
   slabs: true,
+  structures: true,
   walls: true,
   beams: true,
   shelves: true,
@@ -115,6 +125,7 @@ const visibilityDefault: Visibility = {
 };
 const emptyView: ViewBox = { minX: -5, minZ: -5, width: 10, height: 10 };
 const DEFAULT_CANVAS_ROTATION = 90;
+const systemIcon = (id: BuilderSystemId): BuilderIconName => id === "bath" ? "bathroom" : id;
 const formatPanelLength = (valueMeters: number, unit: MeasurementUnit) => unit === "millimeters" ? `${formatMeasurement(valueMeters, unit)} mm` : formatMeasurement(valueMeters, unit);
 
 class DebugErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null; componentStack: string; recoveryStatus: string }> {
@@ -210,14 +221,16 @@ function App() {
     [visibility, setVisibility] = useState(visibilityDefault),
     [workspaceViewMode, setWorkspaceViewMode] = useState<WorkspaceViewMode>("2d"),
     [builderSidebarWidth, setBuilderSidebarWidth] = useState(328),
-    [builderSidebarOpen, setBuilderSidebarOpen] = useState(true),
-    [builderSidebarTab, setBuilderSidebarTab] = useState<"systems" | "drawings">("systems"),
+    [builderSidebarOpen, setBuilderSidebarOpen] = useState(() => window.innerWidth > 850),
+    [builderSidebarTab, setBuilderSidebarTab] = useState<"scene" | "systems" | "drawings">("scene"),
     [selectedBuilderSystem, setSelectedBuilderSystem] = useState<BuilderSystemId | null>(null),
+    [builderActiveTool, setBuilderActiveTool] = useState<string>("select"),
     [builderSubmenu, setBuilderSubmenu] = useState<"systems" | "build" | null>(null),
     [builderAuthorCommand, setBuilderAuthorCommand] = useState<ThreeDAuthorCommand | null>(null),
     [builderPanelHost, setBuilderPanelHost] = useState<HTMLElement | null>(null),
     [constructionLegendHost, setConstructionLegendHost] = useState<HTMLDivElement | null>(null),
     [threeDActivated, setThreeDActivated] = useState(false),
+    [threeDBuildingLayers, setThreeDBuildingLayers] = useState({ ...DEFAULT_3D_LAYERS }),
     [splitRatio, setSplitRatio] = useState(45),
     [threeDOverlayVersion, setThreeDOverlayVersion] = useState(0);
   const input = useRef<HTMLInputElement>(null), nextMeasurementId = useRef(1), splitResize = useRef<{ startX: number; startRatio: number; width: number } | null>(null), builderSidebarResize = useRef<{ startX: number; width: number } | null>(null), nextBuilderCommandId = useRef(0);
@@ -233,6 +246,7 @@ function App() {
   const levels = Object.values(nodes).filter((n) => n.type === "level");
   const threeDScene = useMemo(() => data ? buildThreeDSceneInput(data) : null, [data]);
   const hiddenNodeIds = useMemo(() => new Set(sceneVisibility.hiddenNodeIds), [sceneVisibility.hiddenNodeIds]);
+  const layerHiddenNodeIds = useMemo(() => new Set(Object.values(nodes).filter(node => { const layer = buildingLayerForType(node.type); return layer && !threeDBuildingLayers[layer]; }).map(node => node.id)), [nodes, threeDBuildingLayers]);
   useEffect(() => { const closeTransientUi = (event: KeyboardEvent) => { if (event.key !== "Escape") return; setMeasurementMode("off"); setCalloutTargetId(null); }; window.addEventListener("keydown", closeTransientUi); return () => window.removeEventListener("keydown", closeTransientUi); }, []);
   useEffect(() => {
     if (!projectDirty && !conduitOverlayDirty) return;
@@ -268,6 +282,7 @@ function App() {
       setSelectedDimension(null);
       setSelectedManualId(null);
       setSceneVisibility(createSceneVisibilityHistory());
+      setThreeDBuildingLayers({ ...DEFAULT_3D_LAYERS });
       setManualMeasurements([]);
       setMeasurementMode("off");
       nextMeasurementId.current = 1;
@@ -364,7 +379,7 @@ function App() {
     <div className="visibility">{Object.entries(entries).map(([key, label]) => <label key={key}><input aria-label={label} type="checkbox" checked={key === "conduitSprinkler" ? fireDrawingIsVisible({ sprinkler: visibility.conduitSprinkler, "fire-signal": visibility.conduitFireSignal }) : visibility[key as keyof Visibility]} onChange={() => key === "conduitSprinkler" ? toggleFireDrawingVisibility() : toggleVisibility(key as keyof Visibility)} />{label}</label>)}{footer}</div>
   </details>;
   const layerControls = <>
-    {layerGroup("建筑图层", { walls: "墙体", beams: "梁", slabs: "楼板", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
+    {layerGroup("建筑图层", { walls: "墙体", beams: "梁", slabs: "楼板", structures: "柱与栏杆", openings: "门窗", stairs: "楼梯", images: "家具", zones: "空间名称", dimensions: "外围尺寸" })}
     {layerGroup("施工图层", { conduitReceptacle: "插座施工图", conduitLighting: "灯位接线盒施工图", conduitNetwork: "弱电施工图", conduitSprinkler: "消防施工图", conduitSensor: "传感器", conduitHvac: "空调施工图", conduits: "管道", pointPositionDimensions: "点位定位尺寸" }, <label className="construction-drawing-all"><input aria-label="全部施工图" type="checkbox" checked={allConstructionDrawingsSelected({ receptacle: visibility.conduitReceptacle, lighting: visibility.conduitLighting, network: visibility.conduitNetwork, sprinkler: visibility.conduitSprinkler, 'fire-signal': visibility.conduitFireSignal, sensor: visibility.conduitSensor }) && visibility.conduitHvac} onChange={(event) => { const next = setAllConstructionDrawings(event.target.checked); setVisibility(current => ({ ...current, conduitReceptacle: next.receptacle, conduitLighting: next.lighting, conduitNetwork: next.network, conduitSprinkler: next.sprinkler, conduitFireSignal: next['fire-signal'], conduitSensor: next.sensor ?? true, conduitHvac: event.target.checked })); }} />全部施工图</label>)}
     <label className="point-annotation-scale">点位标注比例 <input aria-label="点位标注比例" type="range" min="50" max="200" step="10" value={pointAnnotationScale * 100} onChange={(event) => setPointAnnotationScale(Number(event.target.value) / 100)} /><output>{Math.round(pointAnnotationScale * 100)}%</output></label>
   </>;
@@ -383,6 +398,7 @@ function App() {
         <div className="two-d-history-buttons"><button disabled={!sceneVisibility.undoStack.length} aria-label="撤销隐藏" onClick={() => setSceneVisibility(undoSceneVisibility)}>↶</button><button disabled={!sceneVisibility.redoStack.length} aria-label="重做隐藏" onClick={() => setSceneVisibility(redoSceneVisibility)}>↷</button></div>
       </section>
   </div>;
+  const builderBeamActive = builderActiveTool === "beam";
   const displayedCanvases = canvases.slice(0, 1);
   const activeCanvas = displayedCanvases[0];
   const activeLevelId = activeCanvas?.levelId || levels[0]?.id || "";
@@ -409,21 +425,31 @@ function App() {
     if (!data || !Object.keys(nodes).length) return;
     setThreeDActivated(true);
     if (workspaceViewMode === "2d") setWorkspaceViewMode("3d");
-    setBuilderAuthorCommand({ id: ++nextBuilderCommandId.current, tool: null, viewPreset: "top" });
+    const id = ++nextBuilderCommandId.current;
+    setBuilderAuthorCommand(current => ({ ...current, id, tool: null, viewPreset: "top", cameraOrbit: undefined }));
+  };
+  const rotateWorkspaceView = (direction: "cw" | "ccw") => {
+    if (workspaceViewMode === "2d") {
+      const canvas = displayedCanvases[0];
+      if (canvas) updateCanvas(canvas.id, { rotation: (canvas.rotation + (direction === "cw" ? 90 : 270)) % 360 });
+      return;
+    }
+    const id = ++nextBuilderCommandId.current;
+    setBuilderAuthorCommand(current => ({ ...current, id, tool: null, viewPreset: undefined, cameraOrbit: direction }));
   };
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <b>Pascal 施工管线路由</b>
+          <BuilderIcon name="build" size={22} /><b>Pascal 施工管线路由</b>
         </div>
         <div className="actions">
           <span className="build-version" title="当前页面的构建版本与时间">{__BUILD_LABEL__}</span>
           <button className="primary" onClick={() => input.current?.click()}>
-            导入 JSON
+            <BuilderIcon name="import" size={15} />导入 JSON
           </button>
           <button disabled={!data?.raw || typeof data.raw !== "object"} onClick={() => void exportProjectJson()} title="保存统一项目 JSON，包含建筑、系统和图纸">
-            导出项目 JSON
+            <BuilderIcon name="save" size={15} />导出项目 JSON
           </button>
           <input
             ref={input}
@@ -441,28 +467,31 @@ function App() {
       </header>
       <main className={`workspace conduit-workspace builder-workspace ${builderSidebarOpen ? "" : "builder-sidebar-hidden"}`} style={{ "--builder-sidebar-width": `${builderSidebarWidth}px` } as React.CSSProperties}>
         <aside className="builder-sidebar" aria-label="工作区常驻栏">
-          <div className="builder-sidebar-heading"><div><span className="builder-eyebrow">WORKSPACE</span><b>设计工作区</b></div><button aria-label="隐藏常驻栏" onClick={() => setBuilderSidebarOpen(false)}>«</button></div>
+
           <div className="builder-sidebar-tabs" role="tablist" aria-label="左栏内容">
-            <button role="tab" aria-selected={builderSidebarTab === "systems"} className={builderSidebarTab === "systems" ? "active" : ""} onClick={() => setBuilderSidebarTab("systems")}>系统</button>
-            <button role="tab" aria-selected={builderSidebarTab === "drawings"} className={builderSidebarTab === "drawings" ? "active" : ""} onClick={() => setBuilderSidebarTab("drawings")}>图纸</button>
+            <button role="tab" aria-controls="builder-scene-panel" aria-selected={builderSidebarTab === "scene"} className={builderSidebarTab === "scene" ? "active" : ""} onClick={() => setBuilderSidebarTab("scene")}><BuilderIcon name="scene" size={15} />场景</button>
+            <button role="tab" aria-controls="builder-systems-panel" aria-selected={builderSidebarTab === "systems"} className={builderSidebarTab === "systems" ? "active" : ""} onClick={() => setBuilderSidebarTab("systems")}><BuilderIcon name="system" size={15} />系统</button>
+            <button role="tab" aria-controls="builder-drawings-panel" aria-selected={builderSidebarTab === "drawings"} className={builderSidebarTab === "drawings" ? "active" : ""} onClick={() => setBuilderSidebarTab("drawings")}><BuilderIcon name="drawing" size={15} />图纸</button>
           </div>
           <div className="builder-sidebar-scroll">
-              <div hidden={builderSidebarTab !== "systems"}>
-              {selectedBuilderSystem && <>
-              <div className="builder-system-heading"><span>{BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.icon}</span><div><b>{BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.label}系统</b><small>选择设备或绘制工具</small></div></div>
+              <div id="builder-scene-panel" role="tabpanel" hidden={builderSidebarTab !== "scene"}><SceneTree nodes={nodes} selectedId={selectedId} hiddenNodeIds={hiddenNodeIds} layerHiddenNodeIds={layerHiddenNodeIds} onRestoreNode={id => setSceneVisibility(current => restoreSceneNode(current, id))} onEnableLayerForNode={id => { const layer = buildingLayerForType(nodes[id]?.type ?? ""); if (layer) setThreeDBuildingLayers(current => ({ ...current, [layer]: true })); }} onSelect={selectCanvasObject} onHide={id => { setSceneVisibility(current => hideSceneNode(current, id)); if (selectedId === id) selectCanvasObject(null); }} onRestore={() => setSceneVisibility(restoreAllSceneNodes)} /></div>
+              <div id="builder-systems-panel" role="tabpanel" hidden={builderSidebarTab !== "systems"}>
+              {!selectedBuilderSystem && !builderBeamActive && <div className="builder-panel-empty"><BuilderIcon name="system" size={28} /><p>从底部「系统」选择施工系统。</p></div>}
+              {selectedBuilderSystem && !builderBeamActive && <>
+              <div className="builder-system-heading"><BuilderIcon name={systemIcon(selectedBuilderSystem)} size={24} /><div><b>{BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.label}系统</b><small>选择设备或绘制工具</small></div></div>
               {BUILDER_CARDS[selectedBuilderSystem].length ? <div className="builder-card-sections" aria-label={`${BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.label}工具`}>
                 {(["place", "draw", "edit"] as const satisfies readonly BuilderCardSection[]).map((section) => {
                   const cards = BUILDER_CARDS[selectedBuilderSystem].filter((card) => card.section === section);
                   if (!cards.length) return null;
                   return <section className="builder-card-section" key={section} aria-label={BUILDER_CARD_SECTION_LABELS[section]}><h3>{BUILDER_CARD_SECTION_LABELS[section]}</h3><div className="builder-card-grid">
-                    {cards.map((card) => <button key={`${card.tool}-${card.deviceType ?? card.system ?? ""}`} className="builder-device-card" disabled={!data || !Object.keys(nodes).length} title={!data ? "导入项目后可使用" : card.label} onClick={() => openBuilderTool(card)}><span aria-hidden="true">{card.icon}</span><b>{card.label}</b></button>)}
+                    {cards.map((card) => <button key={`${card.tool}-${card.deviceType ?? card.system ?? ""}`} className="builder-device-card" disabled={!data || !Object.keys(nodes).length} title={!data ? "导入项目后可使用" : card.label} onClick={() => openBuilderTool(card)}><BuilderIcon name={card.tool === "delete" ? "delete" : card.section === "draw" ? "system" : "device"} size={24} /><b>{card.label}</b></button>)}
                   </div></section>;
                 })}
-              </div> : <div className="builder-system-empty"><span aria-hidden="true">◇</span><b>当前版本暂无编辑工具</b><p>可查看并保留导入的系统数据。后续工具将在此显示。</p></div>}
+              </div> : <div className="builder-system-empty"><BuilderIcon name="system" size={28} /><b>当前版本暂无编辑工具</b><p>可查看并保留导入的系统数据。后续工具将在此显示。</p></div>}
               </>}
-              <div className="builder-author-panel-host" hidden={!selectedBuilderSystem || !BUILDER_CARDS[selectedBuilderSystem].length} ref={setBuilderPanelHost} />
+              <div className="builder-author-panel-host" hidden={!builderBeamActive && (!selectedBuilderSystem || !BUILDER_CARDS[selectedBuilderSystem].length)} ref={setBuilderPanelHost} />
               </div>
-            <div hidden={builderSidebarTab !== "drawings"} id="builder-drawings-panel" className="builder-drawings-panel">{twoDPanel}</div>
+            <div role="tabpanel" hidden={builderSidebarTab !== "drawings"} id="builder-drawings-panel" className="builder-drawings-panel">{twoDPanel}</div>
           </div>
         </aside>
         <div className="builder-sidebar-resizer" role="separator" aria-label="调整常驻栏宽度" aria-orientation="vertical" aria-valuemin={260} aria-valuemax={560} aria-valuenow={builderSidebarWidth} tabIndex={0}
@@ -472,12 +501,13 @@ function App() {
           onPointerCancel={() => { builderSidebarResize.current = null; }}
           onKeyDown={(event) => { if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); setBuilderSidebarWidth((width) => Math.max(260, Math.min(560, width + (event.key === "ArrowLeft" ? -16 : 16)))); } }} />
         <section className="canvas-workspace">
-          {!builderSidebarOpen && <button className="builder-sidebar-reopen" onClick={() => setBuilderSidebarOpen(true)} aria-label="显示常驻栏">» <span>工具</span></button>}
+          {builderSidebarOpen && <button className="builder-sidebar-reopen" onClick={() => setBuilderSidebarOpen(false)} aria-label="隐藏常驻栏"><BuilderIcon name="collapse" size={16} /></button>}
+          {!builderSidebarOpen && <button className="builder-sidebar-reopen" onClick={() => setBuilderSidebarOpen(true)} aria-label="显示常驻栏"><BuilderIcon name="expand" /><span>工具</span></button>}
           <div className="builder-view-controls" aria-label="视图与楼层">
             <div className="workspace-view-toggle builder-view-toggle" role="group" aria-label="工作区视图">
-              <button className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}>3D</button>
-              <button className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}>2D</button>
-              <button className={workspaceViewMode === "split" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("split"); setMeasurementMode("off"); }}>分屏</button>
+              <button aria-pressed={workspaceViewMode === "3d"} className={workspaceViewMode === "3d" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("3d"); setMeasurementMode("off"); }}><BuilderActionIcon name="view3d" size={14} />3D</button>
+              <button aria-pressed={workspaceViewMode === "2d"} className={workspaceViewMode === "2d" ? "active" : ""} onClick={() => { setWorkspaceViewMode("2d"); setMeasurementMode("off"); }}><BuilderActionIcon name="view2d" size={14} />2D</button>
+              <button aria-pressed={workspaceViewMode === "split"} className={workspaceViewMode === "split" ? "active" : ""} disabled={!data || !Object.keys(nodes).length} onClick={() => { setThreeDActivated(true); setWorkspaceViewMode("split"); setMeasurementMode("off"); }}><BuilderIcon name="splitView" size={12} />分屏</button>
           </div>
             <label className="builder-level-select">
               <span className="sr-only">楼层</span>
@@ -487,8 +517,9 @@ function App() {
               </select>
             </label>
           </div>
+          {!data && <div className="builder-empty-state"><BuilderIcon name="build" size={44} /><h1>打开施工项目</h1><p>导入 Project JSON，查看建筑并编辑施工系统。</p><button className="primary" onClick={() => input.current?.click()}><BuilderIcon name="import" size={16} />导入 JSON</button><small>建筑、系统和施工图保存在同一份项目文件中</small></div>}
           <div className={`workspace-views mode-${workspaceViewMode}`} style={{ "--split-ratio": `${splitRatio}%` } as React.CSSProperties}>
-          <div className={`workspace-view-pane workspace-view-pane-2d ${workspaceViewMode === "3d" ? "workspace-view-pane-hidden" : ""}`}>
+          <div className={`workspace-view-pane workspace-view-pane-2d ${workspaceViewMode === "3d" ? "workspace-view-pane-hidden" : ""}`} inert={workspaceViewMode === "3d"}>
           <div className={`canvas-grid count-${Math.min(displayedCanvases.length, 4)}`}>
             {displayedCanvases.map((canvas) => (
               <CanvasPanel
@@ -555,30 +586,30 @@ function App() {
               }
             }}
           />}
-          {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`}>
-            <ThreeDWorkspace key={threeDOverlayVersion} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} keyboardActive={workspaceViewMode !== "2d"} selectedBuilderSystem={selectedBuilderSystem} onAuthoringSystemChange={system => { setSelectedBuilderSystem(system); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }} />
+          {data && threeDActivated && <div className={`workspace-view-pane workspace-view-pane-3d ${workspaceViewMode === "2d" ? "workspace-view-pane-hidden" : ""}`} inert={workspaceViewMode === "2d"}>
+            <ThreeDWorkspace key={threeDOverlayVersion} buildingLayers={threeDBuildingLayers} onBuildingLayersChange={setThreeDBuildingLayers} scene={threeDScene} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={selectCanvasObject} sourceFile={file} sourceSha={sourceSha} projectId={readProjectIdentity(data?.raw)} authorCommand={builderAuthorCommand} panelHost={builderPanelHost} activeLevelId={activeLevelId} keyboardActive={workspaceViewMode !== "2d"} selectedBuilderSystem={selectedBuilderSystem} onActiveToolChange={setBuilderActiveTool} onAuthoringSystemChange={system => { setSelectedBuilderSystem(system); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }} />
           </div>}
           </div>
           <div className="builder-toolbar-stack">
             {workspaceViewMode !== "3d" && <div className="builder-construction-legend-host" ref={setConstructionLegendHost} />}
-            {builderSubmenu === "systems" && <div className="builder-subtoolbar" role="group" aria-label="系统分类">{BUILDER_SYSTEMS.map((item) => <button key={item.id} className={selectedBuilderSystem === item.id ? "active" : ""} aria-pressed={selectedBuilderSystem === item.id} onClick={() => { setSelectedBuilderSystem(item.id); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><span aria-hidden="true">{item.icon}</span><b>{item.label}</b></button>)}</div>}
-            {builderSubmenu === "build" && <div className="builder-subtoolbar builder-build-subtoolbar" role="group" aria-label="建造工具"><button onClick={() => openBuilderTool({ tool: "beam" })} disabled={!data} aria-label="梁"><span aria-hidden="true">▰</span><b>梁</b></button><span className="builder-unavailable-caption">其他建筑工具将在 Builder 合并后接入</span></div>}
+            {builderSubmenu === "systems" && <div className="builder-subtoolbar" role="group" aria-label="系统分类">{BUILDER_SYSTEMS.map((item) => <button key={item.id} className={selectedBuilderSystem === item.id ? "active" : ""} aria-pressed={selectedBuilderSystem === item.id} onClick={() => { setSelectedBuilderSystem(item.id); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><BuilderIcon name={systemIcon(item.id)} size={20} /><b>{item.label}</b></button>)}</div>}
+            {builderSubmenu === "build" && <div className="builder-subtoolbar builder-build-subtoolbar" role="group" aria-label="建造工具"><button onClick={() => openBuilderTool({ tool: "beam" })} disabled={!data} aria-label="梁"><BuilderIcon name="beam" size={20} /><b>梁</b></button><span className="builder-unavailable-caption">其他建筑工具将在 Builder 合并后接入</span></div>}
             <nav className="builder-main-toolbar" aria-label="Builder 主操作栏">
-              <button aria-label="选择" title="选择" onClick={() => sendBuilderTool("select")}><span>➤</span><small>选择</small></button>
-              <button disabled title="暂不可用：框选"><span>⬚</span><small>框选</small></button>
-              <button disabled title="暂不可用：编辑场地"><span>♧</span><small>场地</small></button>
-              <button className={builderSubmenu === "build" ? "active" : ""} aria-expanded={builderSubmenu === "build"} onClick={() => setBuilderSubmenu((current) => current === "build" ? null : "build")}><span>⚒</span><small>建造</small></button>
-              <button disabled title="暂不可用：布置普通 Item"><span>▰</span><small>布置</small></button>
-              <button className={builderSubmenu === "systems" ? "active" : ""} aria-expanded={builderSubmenu === "systems"} onClick={() => { setBuilderSubmenu((current) => current === "systems" ? null : "systems"); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><span>⌁</span><small>系统</small></button>
-              <button disabled title="暂不可用：绘制 Zone"><span>⬡</span><small>区域</small></button>
-              <button title="删除网络对象" onClick={() => sendBuilderTool("delete")} disabled={!data}><span>⌫</span><small>删除</small></button>
+              <button className={builderActiveTool === "select" ? "active" : ""} aria-pressed={builderActiveTool === "select"} aria-label="选择" title="选择（V）" onClick={() => sendBuilderTool("select")}><BuilderActionIcon name="select" size={28} /><small>选择</small></button>
+              <button disabled title="暂不可用：框选"><BuilderActionIcon name="boxSelect" size={28} /><small>框选</small></button>
+              <button disabled title="暂不可用：编辑场地"><BuilderActionIcon name="site" size={28} /><small>场地</small></button>
+              <button className={builderSubmenu === "build" ? "active" : ""} aria-expanded={builderSubmenu === "build"} onClick={() => setBuilderSubmenu((current) => current === "build" ? null : "build")}><BuilderActionIcon name="build" size={28} /><small>建造</small></button>
+              <button disabled title="暂不可用：布置普通 Item"><BuilderActionIcon name="arrange" size={28} /><small>布置</small></button>
+              <button className={builderSubmenu === "systems" ? "active" : ""} aria-expanded={builderSubmenu === "systems"} onClick={() => { setBuilderSubmenu((current) => current === "systems" ? null : "systems"); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><BuilderActionIcon name="system" size={28} /><small>系统</small></button>
+              <button disabled title="暂不可用：绘制 Zone"><BuilderActionIcon name="zone" size={28} /><small>区域</small></button>
+              <button className={builderActiveTool === "delete" ? "active" : ""} aria-pressed={builderActiveTool === "delete"} title="删除网络对象" onClick={() => sendBuilderTool("delete")} disabled={!data}><BuilderActionIcon name="delete" size={28} /><small>删除</small></button>
               <i aria-hidden="true" />
-              <button disabled title="暂不可用：网络吸附"><span>⊞</span><small>吸附</small></button>
-              <button disabled title="暂不可用：参考图"><span>▧</span><small>参考图</small></button>
+              <button disabled title="暂不可用：网络吸附"><BuilderActionIcon name="snap" size={28} /><small>吸附</small></button>
+              <button disabled title="暂不可用：参考图"><BuilderActionIcon name="reference" size={28} /><small>参考图</small></button>
               <i aria-hidden="true" />
-              <button disabled={workspaceViewMode === "3d" || !displayedCanvases.length} title="顺时针旋转 2D 图纸" onClick={() => { const canvas = displayedCanvases[0]; if (canvas) updateCanvas(canvas.id, { rotation: (canvas.rotation + 90) % 360 }); }}><span>↻</span><small>顺时针</small></button>
-              <button disabled={workspaceViewMode === "3d" || !displayedCanvases.length} title="逆时针旋转 2D 图纸" onClick={() => { const canvas = displayedCanvases[0]; if (canvas) updateCanvas(canvas.id, { rotation: (canvas.rotation + 270) % 360 }); }}><span>↺</span><small>逆时针</small></button>
-              <button disabled={!data} title="3D 顶视图" onClick={showBuilderTopView}><span>⬆</span><small>顶视图</small></button>
+              <button disabled={!data} title={workspaceViewMode === "2d" ? "顺时针旋转 2D 图纸" : "向右环绕 3D 视角"} onClick={() => rotateWorkspaceView("cw")}><BuilderActionIcon name="rotateCw" size={28} /><small>顺时针</small></button>
+              <button disabled={!data} title={workspaceViewMode === "2d" ? "逆时针旋转 2D 图纸" : "向左环绕 3D 视角"} onClick={() => rotateWorkspaceView("ccw")}><BuilderActionIcon name="rotateCcw" size={28} /><small>逆时针</small></button>
+              <button disabled={!data} title="3D 顶视图" onClick={showBuilderTopView}><BuilderActionIcon name="topView" size={28} /><small>顶视图</small></button>
             </nav>
           </div>
         </section>
@@ -789,6 +820,9 @@ function Plan({
   onUpdatePointPositionDimensionLabel: (id: string, position: number, lineOffset: number) => void;
   onUpdateConstructionAnnotationLabel: (id: string, label: [number, number], signature: string) => void;
 }) {
+  const spacePan = useRef(false);
+  const rotationRef = useRef(rotation);
+  rotationRef.current = rotation;
   const drag = useRef<{ x: number; y: number; box: ViewBox; moved: boolean } | null>(null), suppressClick = useRef(false), planRef = useRef<HTMLDivElement>(null), svgRef = useRef<SVGSVGElement>(null), sceneRef = useRef<SVGGElement>(null), viewBoxRef = useRef(viewBox), setViewBoxRef = useRef(setViewBox), safariGesture = useRef<{ scale: number } | null>(null),
     [measurementStart, setMeasurementStart] = useState<MeasurementSnap | null>(null),
     [measurementHover, setMeasurementHover] = useState<MeasurementSnap | null>(null),
@@ -797,7 +831,7 @@ function Plan({
     [autoEditCalloutId,setAutoEditCalloutId]=useState<string|null>(null),
     [calloutDrag,setCalloutDrag]=useState<{id:string;label:[number,number];pointerId:number}|null>(null),
     [drawingSelectionClearVersion,setDrawingSelectionClearVersion]=useState(0),
-    rendered = objectsOnLevel(nodes, levelId).filter((node) => !hiddenNodeIds.has(node.id)),
+    rendered = objectsOnLevel(nodes, levelId).filter((node) => sourceNodeIsVisible(node.id, nodes) && !hiddenNodeIds.has(node.id)),
     items = rendered.filter((n) => n.type === "item"),
     zones = rendered.filter((n) => n.type === "zone"),
     wallNodes = rendered.filter((n) => n.type === "wall") as PascalWall[],
@@ -821,13 +855,18 @@ function Plan({
   useEffect(() => { setMeasurementStart(null); setMeasurementHover(null); setOrthogonalLock(false); }, [measurementMode, levelId]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!planRef.current?.getClientRects().length) return;
+      if (event.code === "Space" && shouldEnableSpacePan(event.target as HTMLElement | null)) { event.preventDefault(); spacePan.current = true; return; }
       if(event.target instanceof HTMLElement&&(event.target.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(event.target.tagName)))return;
       if (event.key === "Shift" && !event.repeat) setOrthogonalLock((locked) => !locked);
       if (event.key === "Escape") { setMeasurementStart(null); setMeasurementHover(null); setDrawingSelectionClearVersion(version=>version+1); onSelect(null); }
       if ((event.key === "Delete" || event.key === "Backspace") && selectedManualId) { event.preventDefault(); onDeleteManual(selectedManualId); }
       else if ((event.key === "Delete" || event.key === "Backspace") && selectedCalloutId) { event.preventDefault(); onDeleteCallout(selectedCalloutId); }
     };
-    window.addEventListener("keydown", onKeyDown); return () => { window.removeEventListener("keydown", onKeyDown); };
+    const resetPanKey = () => { spacePan.current = false; };
+    const onKeyUp = (event: KeyboardEvent) => { if (event.code === "Space") resetPanKey(); };
+    window.addEventListener("keydown", onKeyDown); window.addEventListener("keyup", onKeyUp); window.addEventListener("blur", resetPanKey);
+    return () => { window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp); window.removeEventListener("blur", resetPanKey); };
   }, [selectedManualId, selectedCalloutId, onDeleteManual, onDeleteCallout]);
   useEffect(() => {
     const plan = planRef.current, svg = svgRef.current;
@@ -847,6 +886,10 @@ function Plan({
       const gesture = canvasWheelGesture(event);
       if (gesture === "zoom") {
         zoomAt(event.clientX, event.clientY, canvasWheelZoomFactor(event.deltaY, event.deltaMode, svg.clientHeight, event.ctrlKey ? TRACKPAD_PINCH_ZOOM_SENSITIVITY : undefined));
+      } else {
+        const current = viewBoxRef.current;
+        const pan = canvasWheelPanDelta(event.deltaX, event.deltaY, event.deltaMode, svg.clientWidth, svg.clientHeight, current, rotationRef.current);
+        setViewBoxRef.current({ ...current, minX: current.minX + pan.x, minZ: current.minZ + pan.z });
       }
     };
     const gestureCenter = (event: Event) => {
@@ -900,12 +943,14 @@ function Plan({
       ref={planRef}
       className={`plan ${measurementMode !== "off" ? "measuring" : ""}`}
       style={{ userSelect: "none", WebkitUserSelect: "none" }}
-      onPointerDown={(e) => {
-        if (measurementMode !== "off" || calloutTargetId || e.button !== 0) return;
+      onPointerDownCapture={(e) => {
+        if (e.button !== 2 && e.button !== 1 && !(e.button === 0 && spacePan.current)) return;
+        e.preventDefault(); e.stopPropagation();
+        e.currentTarget.setPointerCapture?.(e.pointerId);
+        suppressClick.current = true;
         drag.current = { x: e.clientX, y: e.clientY, box: viewBox, moved: false };
       }}
       onPointerMove={(e) => {
-        if (measurementMode !== "off" || calloutTargetId) return;
         if (!drag.current) return;
         const screenDx = e.clientX - drag.current.x, screenDz = e.clientY - drag.current.y;
         if (!drag.current.moved && Math.hypot(screenDx, screenDz) < 3) return;
@@ -928,19 +973,18 @@ function Plan({
       }}
       onPointerUp={(e) => {
         if (!drag.current) return;
-        if (drag.current?.moved) {
-          suppressClick.current = true;
-          window.setTimeout(() => { suppressClick.current = false; }, 0);
-        }
+        if (e.button === 2 && !drag.current.moved && measurementMode !== "off") { setMeasurementStart(null); setMeasurementHover(null); }
+        suppressClick.current = true;
+        window.setTimeout(() => { suppressClick.current = false; }, 0);
         drag.current = null;
         if (e.currentTarget.hasPointerCapture?.(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
       }}
-      onPointerCancel={() => { drag.current = null; }}
+      onPointerCancel={() => { drag.current = null; suppressClick.current = false; }}
     >
       <svg ref={svgRef} viewBox={vb}
         onPointerMove={(event) => { const point=eventWorldPoint(event);if(calloutTargetId){setCalloutHover(point);return;}if (measurementMode !== "off") { const snap = snapAtEvent(event); if (snap) setMeasurementHover(snap); } }}
         onPointerLeave={() => { if (!measurementStart) setMeasurementHover(null); }}
-        onContextMenu={(event) => { if (measurementMode !== "off") { event.preventDefault(); setMeasurementStart(null); setMeasurementHover(null); } }}
+        onContextMenu={(event) => event.preventDefault()}
         onClickCapture={(event) => {
           if (suppressClick.current) { event.preventDefault(); event.stopPropagation(); suppressClick.current = false; return; }
           const target = event.target as Element, deleteId = target.closest("[data-delete-measurement]")?.getAttribute("data-delete-measurement"), measurementId = target.closest("[data-manual-measurement]")?.getAttribute("data-manual-measurement");
@@ -974,13 +1018,13 @@ function Plan({
           y={viewBox.minZ}
           width={viewBox.width}
           height={viewBox.height}
-          fill="#fdfdfc"
+          fill={BUILDER_PLAN_COLORS.surface}
         />
         <g ref={sceneRef} style={{ transform: `rotate(${rotation}deg)`, transformOrigin: `${cx}px ${cz}px`, transition: "transform 240ms cubic-bezier(.2,.8,.2,1)" }}>
           {visibility.slabs && rendered.filter((n) => n.type === "slab" && n.visible !== false).map((n) => <Slab key={n.id} node={n} selected={selectedId === n.id} onSelect={onSelect} />)}
           {visibility.zones &&
             zones.map((n) => <Polygon key={n.id} node={n} onSelect={onSelect} />)}
-          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={n.id} node={n} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} />)}
+          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={n.id} node={n as BeamNode} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} />)}
           {visibility.walls &&
             exactWalls.map((n) => (
                 <Wall
@@ -1024,11 +1068,12 @@ function Plan({
               onSelect={onSelect}
             />
           ))}
+          {visibility.structures && <BuilderStructures nodes={nodes} levelId={levelId} hiddenNodeIds={hiddenNodeIds} selectedId={selectedId} onSelect={onSelect} />}
           {visibility.zones && zones.map((n) => <ZoneLabel key={`zone-label-${n.id}`} node={n} viewRotation={rotation} />)}
           {visibility.dimensions && <ExteriorDimensions report={exteriorDimensions} viewRotation={rotation} unit={measurementUnit} onSelect={onSelectDimension} />}
           <ConstructionDrawingLayoutPersistence plan={constructionPlan} />
           <ConduitPlanOverlay overlay={conduitOverlay} levelId={levelId} selectedId={selectedId} onSelect={onSelect} context={constructionPlan.context} scale={constructionPlan.scale} rotation={rotation} devicesVisible={visibility.devices} conduitsVisible={visibility.conduits} hvacVisible={visibility.conduitHvac} annotationScale={pointAnnotationScale} deviceVariants={constructionPlan.deviceVariants} />
-          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={`visual-${n.id}`} node={n} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} visualOnly />)}
+          {visibility.beams && rendered.filter((n) => n.type === "beam" && validateBeam(n, nodes).valid).map((n) => <BeamFootprint key={`visual-${n.id}`} node={n as BeamNode} selected={selectedId === n.id} penetrations={(conduitOverlay?.penetrations ?? []).filter((item) => item.hostKind === "beam" && item.hostId === n.id)} onSelect={onSelect} visualOnly />)}
           {visibility.pointPositionDimensions && <PointPositionDimensions dimensions={constructionPlan.positionDimensions} unit={measurementUnit} viewRotation={rotation} annotationScale={pointAnnotationScale} onSelect={onSelect} labelPositions={conduitOverlay?.pointPositionDimensionLabelPositions} lineOffsets={conduitOverlay?.pointPositionDimensionLineOffsets} onPositionChange={onUpdatePointPositionDimensionLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} selectionClearVersion={drawingSelectionClearVersion} />}
           {visibility.constructionAnnotations && <ConstructionAnnotations plan={constructionPlan} rotation={rotation} onSelect={onSelect} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})} selectionClearVersion={drawingSelectionClearVersion} />}
           {conduitOverlay && visibility.conduitHvac && <HvacSectionCallouts overlay={conduitOverlay} levelId={levelId} rotation={rotation} annotationScale={pointAnnotationScale} labelPositions={conduitOverlay.constructionAnnotationLabelPositions} onLabelPositionChange={onUpdateConstructionAnnotationLabel} toPlanPoint={(clientX,clientY)=>eventWorldPoint({clientX,clientY})}/>}
@@ -1096,16 +1141,9 @@ function SnapIndicator({ snap, active }: { snap: MeasurementSnap; active: boolea
 function Slab({ node, selected, onSelect }: { node: NodeData; selected: boolean; onSelect: (id: string) => void }) {
   const geometry = buildSlabPlanGeometry(node);
   if (!geometry) return null;
-  return <path data-selectable d={geometry.path} fill={selected ? "#dbe8dc" : "#fafaf9"} fillRule="evenodd" clipRule="evenodd" stroke={selected ? "#e75c3c" : "#d2d2cf"} strokeWidth={selected ? ".04" : ".018"} opacity=".78" onClick={() => onSelect(node.id)} />;
+  return <path data-selectable d={geometry.path} fill={selected ? BUILDER_PLAN_COLORS.selectedSlab : BUILDER_PLAN_COLORS.slab} fillRule="evenodd" clipRule="evenodd" stroke={selected ? BUILDER_PLAN_COLORS.selected : BUILDER_PLAN_COLORS.slabStroke} strokeWidth={selected ? ".04" : ".018"} onClick={() => onSelect(node.id)} />;
 }
-function BeamFootprint({ node, selected, penetrations, onSelect, visualOnly = false }: { node: NodeData; selected: boolean; penetrations: ConduitOverlayDocument["penetrations"]; onSelect: (id: string) => void; visualOnly?: boolean }) {
-  const start = Array.isArray(node.start) ? node.start : [], end = Array.isArray(node.end) ? node.end : [], width = Number(node.width);
-  if (!Number.isFinite(start[0]) || !Number.isFinite(start[1]) || !Number.isFinite(end[0]) || !Number.isFinite(end[1]) || !Number.isFinite(width) || width <= 0) return null;
-  const dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz);
-  if (length < 1e-8) return null;
-  const x = (start[0] + end[0]) / 2, z = (start[1] + end[1]) / 2, rotation = Math.atan2(dz, dx) * 180 / Math.PI;
-  return <g data-selectable={visualOnly ? undefined : "beam"} transform={`translate(${x} ${z}) rotate(${rotation})`} pointerEvents={visualOnly ? "none" : undefined} onClick={visualOnly ? undefined : (event) => { event.stopPropagation(); onSelect(node.id); }}><rect x={-length / 2} y={-width / 2} width={length} height={width} fill={selected ? "#fb923c" : "#818894"} stroke={selected ? "#c2410c" : "#525a65"} strokeWidth={selected ? ".06" : ".025"} opacity=".76" />{penetrations.map((penetration) => { const px = penetration.entry.position[0] - x, pz = penetration.entry.position[2] - z, localX = px * Math.cos(-rotation * Math.PI / 180) - pz * Math.sin(-rotation * Math.PI / 180), localZ = px * Math.sin(-rotation * Math.PI / 180) + pz * Math.cos(-rotation * Math.PI / 180); return <g key={penetration.id}><circle cx={localX} cy={localZ} r={penetration.diameterMm / 2000} fill="#f8fafc" stroke="#111827" strokeWidth=".02" />{selected && <text x={localX} y={localZ - .12} textAnchor="middle" fontSize=".12" fill="#111827">Ø{penetration.diameterMm} · {penetration.segmentId}</text>}</g>; })}</g>;
-}
+
 function Wall({
   node,
   footprint,
@@ -1127,8 +1165,8 @@ function Wall({
       <polygon
         data-selectable
         points={footprint.map((point) => `${point.x},${point.y}`).join(" ")}
-        fill={selected ? "#e75c3c" : "#dededb"}
-        stroke="#454545"
+        fill={selected ? "#ffffff" : BUILDER_PLAN_COLORS.wall}
+        stroke={selected ? BUILDER_PLAN_COLORS.selected : BUILDER_PLAN_COLORS.wallStroke}
         strokeWidth="1.3"
         vectorEffect="non-scaling-stroke"
         onClick={() => onSelect(node.id)}
@@ -1507,4 +1545,6 @@ function CoverageReport({
     </section>
   );
 }
-createRoot(document.getElementById("root")!).render(<DebugErrorBoundary><App /></DebugErrorBoundary>);
+const applicationRoot = import.meta.hot?.data.applicationRoot ?? createRoot(document.getElementById("root")!);
+if (import.meta.hot) import.meta.hot.data.applicationRoot = applicationRoot;
+applicationRoot.render(<DebugErrorBoundary><App /></DebugErrorBoundary>);

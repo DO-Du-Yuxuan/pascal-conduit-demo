@@ -1,3 +1,6 @@
+import { Euler, Matrix4, Vector3 } from "three";
+import { buildBuilderOpeningGeometry, resolveBuilderOpeningWallTransform } from "../three/builder-opening-geometry";
+import { resolveEffectiveBuildingParameters, resolveSlabVerticalRange } from "../geometry/effective-building";
 import earcut from "earcut";
 import { finalDimensions, resolveItemPlanTransform, resolveWallOpeningTransform } from "../geometry/transform";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
@@ -7,6 +10,23 @@ import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 
 export type PositioningTriangle = { objectId: string; objectKind: string; vertices: readonly [Vec3, Vec3, Vec3] };
 export type PhysicalPositioningHit = { distance: number; objectId: string; objectKind: string; point: Vec3 };
+
+/** Same source-driven door/window parts used by the read-only renderer. */
+function pushOpeningSurfaces(out: PositioningTriangle[], node: NodeData, origin: Vec3, wallPlanAngle: number) {
+  const rotation = Array.isArray(node.rotation) ? node.rotation : [0, 0, 0];
+  const world = new Matrix4().makeTranslation(...origin).multiply(new Matrix4().makeRotationY(-wallPlanAngle)).multiply(new Matrix4().makeRotationFromEuler(new Euler(rotation[0] ?? 0, rotation[1] ?? 0, rotation[2] ?? 0)));
+  const generated = buildBuilderOpeningGeometry(node);
+  for (const part of generated.parts) {
+    const local = new Matrix4().makeRotationY(part.rotationY).setPosition(...part.position);
+    const matrix = world.clone().multiply(local);
+    const position = part.geometry.getAttribute("position"), index = part.geometry.getIndex();
+    const count = index?.count ?? position.count;
+    const point = (i: number): Vec3 => { const p = new Vector3().fromBufferAttribute(position, index ? index.getX(i) : i).applyMatrix4(matrix); return [p.x, p.y, p.z]; };
+    for (let i = 0; i < count; i += 3) out.push({ objectId: node.id, objectKind: node.type, vertices: [point(i), point(i + 1), point(i + 2)] });
+    part.geometry.dispose();
+  }
+  generated.cutGeometry.dispose();
+}
 
 const subtract3 = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const dot3 = (a: Vec3, b: Vec3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -120,6 +140,7 @@ function pushWallSection(out: PositioningTriangle[], node: NodeData, center: Vec
  * are included. Hidden presentation layers do not change physical witnesses.
  */
 export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>): PositioningTriangle[] {
+  const effective = resolveEffectiveBuildingParameters(nodes);
   const out: PositioningTriangle[] = [], nodesByWall = new Map<string, NodeData[]>(), floorTops = new Map<string, NodeData[]>();
   for (const node of Object.values(nodes)) {
     if ((node.type === "door" || node.type === "window") && (node.wallId || node.parentId)) {
@@ -137,7 +158,7 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
     if (node.type === "wall") {
       const frame = wallDimensions(node);
       if (!frame) continue;
-      const height = Math.max(0.1, number(node.height, 2.7)), thickness = Math.max(0.05, number(node.thickness, DEFAULT_WALL_THICKNESS));
+      const height = Math.max(0.1, effective[node.id]?.height?.value ?? 2.5), thickness = Math.max(0.001, effective[node.id]?.thickness?.value ?? DEFAULT_WALL_THICKNESS);
       const segments = isCurvedWall(node as any) ? Math.max(12, Math.min(32, Math.ceil(frame.length * 3))) : 1;
       for (let segment = 0; segment < segments; segment += 1) {
         const t0 = segment / segments, t1 = (segment + 1) / segments;
@@ -145,7 +166,7 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
         if (segmentLength < 1e-8) continue;
         const segmentYaw = -Math.atan2(dz, dx), center: Vec3 = [(a.point.x + b.point.x) / 2, y + height / 2, (a.point.y + b.point.y) / 2];
         const openings = (nodesByWall.get(node.id) ?? []).flatMap(opening => {
-          const width = Math.max(0.05, number(opening.width, 0.9)), openingHeight = Math.max(0.05, number(opening.height, 2)), openingCenter = number(Array.isArray(opening.position) ? opening.position[0] : undefined, 0), centerY = number(Array.isArray(opening.position) ? opening.position[1] : undefined, openingHeight / 2);
+          const width = Math.max(0.001, effective[opening.id]?.width?.value ?? 0.9), openingHeight = Math.max(0.001, effective[opening.id]?.height?.value ?? 2.1), openingCenter = number(Array.isArray(opening.position) ? opening.position[0] : undefined, 0), centerY = number(Array.isArray(opening.position) ? opening.position[1] : undefined, openingHeight / 2);
           const from = Math.max(t0, (openingCenter - width / 2) / frame.length), to = Math.min(t1, (openingCenter + width / 2) / frame.length);
           if (to <= from) return [];
           return [{ left: (from - t0) / (t1 - t0) * segmentLength, right: (to - t0) / (t1 - t0) * segmentLength, bottom: Math.max(0, centerY - openingHeight / 2), top: Math.min(height, centerY + openingHeight / 2) }];
@@ -157,9 +178,9 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
     if (node.type === "door" || node.type === "window") {
       const transform = resolveWallOpeningTransform(node, nodes);
       if (!transform) continue;
-      const width = Math.max(0.2, number(node.width, 0.9)), height = Math.max(0.2, number(node.height, 2)), depth = Math.max(0.04, number(node.depth, 0.08));
+      const width = Math.max(0.001, effective[node.id]?.width?.value ?? 0.9), height = Math.max(0.001, effective[node.id]?.height?.value ?? 2.1), depth = Math.max(0.04, number(node.depth, 0.08));
       const centerY = y + number(Array.isArray(node.position) ? node.position[1] : undefined, height / 2);
-      pushBox(out, node.id, node.type, [transform.x, centerY, transform.z], [width, height, depth], -transform.rotationY);
+      pushOpeningSurfaces(out, node, [transform.x, centerY, transform.z], transform.rotationY);
       continue;
     }
     if (node.type === "beam") {
@@ -178,7 +199,8 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
       const flat: number[] = [...outer.flatMap(point => point)];
       const holeIndices: number[] = [];
       for (const hole of holes) { holeIndices.push(flat.length / 2); flat.push(...hole.flatMap(point => point)); }
-      const indices = earcut(flat, holeIndices, 2), thickness = node.type === "slab" ? Math.max(0.01, Math.abs(number(node.elevation, 0.05))) : 0.04, baseY = node.type === "ceiling" ? y + number(node.height, 2.7) : y;
+      const slabRange = resolveSlabVerticalRange(node);
+      const indices = earcut(flat, holeIndices, 2), thickness = node.type === "slab" ? slabRange.thickness : 0.04, baseY = node.type === "ceiling" ? y + (effective[node.id]?.height?.value ?? 2.5) : y + slabRange.bottom;
       const pointAt = (index: number, surfaceY: number): Vec3 => [flat[index * 2]!, surfaceY, flat[index * 2 + 1]!];
       for (let index = 0; index < indices.length; index += 3) {
         const a = indices[index]!, b = indices[index + 1]!, c = indices[index + 2]!;

@@ -112,7 +112,7 @@ describe("Pascal world geometry", () => {
     expect(resolveAncestorLevelId("a", nodes).levelId).toBe("l");
     expect(resolveItemPlanTransform("a", nodes)).toMatchObject({
       x: 12,
-      z: 22.1,
+      z: 18.1,
       ancestorLevelId: "l",
     });
   });

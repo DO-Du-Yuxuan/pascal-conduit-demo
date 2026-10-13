@@ -1,4 +1,4 @@
-import { type ViewBox, zoomViewBoxAtPoint } from "./transform";
+import { rotatedPanDelta, type ViewBox, zoomViewBoxAtPoint } from "./transform";
 
 export type CanvasWheelGesture = "zoom" | "pan";
 
@@ -23,4 +23,21 @@ export function canvasWheelZoomFactor(deltaY: number, deltaMode: number, viewpor
 export function zoomCanvasViewBox(viewBox: ViewBox, point: { x: number; z: number }, requestedFactor: number): ViewBox {
   const minFactor = MIN_VIEWBOX_SPAN / Math.min(viewBox.width, viewBox.height), maxFactor = MAX_VIEWBOX_SPAN / Math.max(viewBox.width, viewBox.height);
   return zoomViewBoxAtPoint(viewBox, point, Math.max(minFactor, Math.min(maxFactor, requestedFactor)));
+}
+
+/** Convert a horizontal trackpad scroll into the same rotated world pan as a canvas drag. */
+export function canvasWheelPanDelta(
+  deltaX: number,
+  deltaY: number,
+  deltaMode: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  viewBox: ViewBox,
+  rotationDegrees: number,
+): { x: number; z: number } {
+  const pixelX = deltaX * (deltaMode === 1 ? LINE_HEIGHT_PX : deltaMode === 2 ? viewportWidth : 1);
+  const pixelY = deltaY * (deltaMode === 1 ? LINE_HEIGHT_PX : deltaMode === 2 ? viewportHeight : 1);
+  const screenX = pixelX * viewBox.width / Math.max(viewportWidth, 1);
+  const screenZ = pixelY * viewBox.height / Math.max(viewportHeight, 1);
+  return rotatedPanDelta(screenX, screenZ, rotationDegrees);
 }

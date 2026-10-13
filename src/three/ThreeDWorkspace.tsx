@@ -1,8 +1,7 @@
-import { CameraControls, CameraControlsImpl } from "@react-three/drei";
-import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
+import { Canvas, type ThreeEvent, type RootStore, useThree } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { BackSide, Box3, Plane, Raycaster, Vector2, Vector3 } from "three";
+import { ACESFilmicToneMapping, BackSide, Matrix4, PCFShadowMap, Plane, Raycaster, Vector2, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
 import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
 import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, inspectHvacControlConnection, isHvacObjectId, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
@@ -16,7 +15,7 @@ import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurem
 import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from "../domain/physical-positioning-surfaces";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { circuitRouteElementIds, connectedRouteElementIds } from "../domain/route-selection";
-import { resolveWorldAxisSurfacePoint, projectRoutePointToDirection, projectRoutePointToWorldAxis, resolveDeviceTargetDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
+import { projectRoutePointToDirection, resolveDeviceTargetDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
 import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
 import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
@@ -27,7 +26,17 @@ import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview"
 import { overlayForProject, synchronizedOverlay } from './overlay-sync';
 import { routeCursorFromActiveWall } from "./active-host";
 import { resolveHostSurfaceCursor } from "./route-surface-cursor";
-import { cameraMouseButtons, type CameraProjection } from "./camera-navigation";
+import { resolveWorldAxisHostSurface } from "../domain/world-axis-surface";
+import { builderCanvasEvents, isBuilderNavigationEvent } from "./camera-navigation";
+import { BuilderNavigation } from "./BuilderNavigation";
+import { builderDisplayPoint, resolveBuilderDisplayTransform } from "./builder-display-transform";
+import { BuilderInk } from "./BuilderInk";
+import { BuilderGround } from "./BuilderGround";
+import { BuilderLighting } from "./BuilderLighting";
+import { beamNodeDefinition } from "../nodes/beam/definition";
+import { DetailsPopoverGroup } from "../ui/DetailsPopoverGroup";
+import { getBuilderPresentation } from "./builder-presentation";
+import { BuilderIcon } from "../ui/BuilderIcons";
 import { syncExternalDeviceSelection } from "./device-selection";
 import { canToggleRouteOrthogonal, hvacEmptyCanvasRouteAction, routeModeAfterAxisButton, routeModeAfterShift, shouldHandleWorldAxisArrow } from "./routing-shortcuts";
 import { strongPanelRouteSystem } from "./route-start-chooser";
@@ -37,7 +46,7 @@ import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 import { canUseCatalogSystem, canUseCatalogTool, type BuilderAuthorTool, type BuilderCatalogLock, type BuilderSystemId } from "../builder-workbench";
 
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
-import { applyViewPresetRequest, DEFAULT_3D_LAYERS, type ThreeDViewPreset, type ThreeDWallMode } from "./view-state";
+import { applyViewPresetRequest, type ThreeDViewPreset, type ThreeDWallMode } from "./view-state";
 import { DEFAULT_PROJECT_SYSTEM_LAYER_VISIBILITY, PROJECT_SYSTEM_LAYER_OPTIONS, type ProjectSystemLayer, type ProjectSystemLayerVisibility } from "./system-layer-visibility";
 
 export type ThreeDLayerVisibility = { walls: boolean; floors: boolean; ceilings: boolean; beams: boolean; roofs: boolean; openings: boolean; furniture: boolean; zones: boolean };
@@ -56,8 +65,6 @@ const PERSPECTIVE_CAMERA = { position: [10, 10, 10] as [number, number, number],
 const ORTHOGRAPHIC_CAMERA = { position: [10, 10, 10] as [number, number, number], zoom: 30 };
 const CANVAS_DPR: [number, number] = [1, 1.25];
 const CANVAS_GL = { antialias: true, powerPreference: "high-performance" as const };
-const NO_CAMERA_COLLIDERS: never[] = [];
-const GROUND_CAMERA_CLEARANCE = .04;
 const parseBendRadiusMm = (value: string) => {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 50 && parsed <= 1000 ? parsed : null;
@@ -109,52 +116,6 @@ function useRafCoalescedDevicePreview(initial: DevicePreview | null) {
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); }, []);
   return [value, setImmediate, schedule, latest] as const;
 }
-function Navigation({ bounds, preset, presetRevision, projection, onCameraRight }: { bounds: ThreeDBounds; preset: ViewPreset; presetRevision: number; projection: CameraProjection; onCameraRight: (right: Vec3) => void }) {
-  const controls = useRef<CameraControlsImpl>(null!);
-  const camera = useThree((state) => state.camera);
-  const reportCameraRight = useCallback(() => {
-    const right = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
-    onCameraRight([right.x, right.y, right.z]);
-  }, [camera, onCameraRight]);
-  useEffect(() => { reportCameraRight(); }, [reportCameraRight]);
-  const latestBounds = useRef(bounds);
-  latestBounds.current = bounds;
-  const canvas = useThree((state) => state.gl.domElement);
-  useEffect(() => {
-    const suppressBrowserZoom = (event: WheelEvent) => {
-      if (!event.ctrlKey) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-    };
-    canvas.addEventListener("wheel", suppressBrowserZoom, { capture: true, passive: false });
-    return () => canvas.removeEventListener("wheel", suppressBrowserZoom, true);
-  }, [canvas]);
-  useEffect(() => {
-    if (!controls.current) return;
-    const extent = Number.MAX_SAFE_INTEGER;
-    controls.current.setBoundary(new Box3(new Vector3(-extent, GROUND_CAMERA_CLEARANCE, -extent), new Vector3(extent, extent, extent)));
-  }, [bounds]);
-  useEffect(() => {
-    if (!controls.current) return;
-    const currentBounds = latestBounds.current;
-    const [x, y, z] = currentBounds.center, distance = currentBounds.span * 1.35;
-    const viewpoints: Record<ViewPreset, [number, number, number, number, number, number]> = {
-      exterior: [x + distance, y + distance * .72, z + distance, x, y, z], interior: [x + distance * .55, Math.max(1.6, y), z + distance * .55, x, Math.max(1.35, y), z], floor: [x, y + distance * 1.6, z, x, 0, z], ceiling: [x, Math.max(.7, y - distance * .15), z, x, y + distance * .55, z], top: [x, y + distance * 1.6, z, x, y, z], front: [x, y + distance * .45, z + distance, x, y, z], back: [x, y + distance * .45, z - distance, x, y, z], left: [x - distance, y + distance * .45, z, x, y, z], right: [x + distance, y + distance * .45, z, x, y, z], isometric: [x + distance, y + distance, z + distance, x, y, z],
-    };
-    const [cameraX, cameraY, cameraZ, targetX, targetY, targetZ] = viewpoints[preset];
-    void controls.current.setLookAt(cameraX, cameraY, cameraZ, targetX, targetY, targetZ, false);
-  }, [preset, presetRevision]);
-  // `infinityDolly` deliberately moves the orbit target after reaching the
-  // closest distance. No scene geometry is registered as a collider, so the
-  // camera can pass through walls, ceilings, furniture and conduit. The only
-  // boundary is the world ground plane configured above.
-  // Infinity dolly only advances the target after minDistance is reached. A
-  // near-zero minimum makes wheel motion decay until it feels blocked at the
-  // orbit target, so enter pass-through mode at a practical scene-relative
-  // distance instead. Hidden or visible scene meshes are never colliders.
-  return <CameraControls ref={controls} makeDefault smoothTime={0} draggingSmoothTime={0} dollyToCursor infinityDolly minDistance={Math.max(.12, bounds.span * .01)} maxDistance={Infinity} minZoom={.001} maxZoom={Infinity} boundaryFriction={0} boundaryEnclosesCamera colliderMeshes={NO_CAMERA_COLLIDERS} mouseButtons={cameraMouseButtons(projection)} onChange={reportCameraRight} />;
-}
-
 function PointerCapture({ bounds, onRay, onEmptyClick, onEmptyDoubleClick }: { bounds: ThreeDBounds; onRay: (origin: [number, number, number], direction: [number, number, number], shiftKey: boolean, ctrlKey: boolean) => void; onEmptyClick: (shiftKey: boolean, ctrlKey: boolean) => void; onEmptyDoubleClick: () => void }) {
   const radius = Math.max(10, bounds.span * 4);
   return <mesh position={bounds.center} onPointerMove={(event: ThreeEvent<PointerEvent>) => onRay([event.ray.origin.x, event.ray.origin.y, event.ray.origin.z], [event.ray.direction.x, event.ray.direction.y, event.ray.direction.z], event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey)} onClick={(event) => { if (event.nativeEvent.button !== 0) return; event.stopPropagation(); onEmptyClick(event.nativeEvent.shiftKey, event.nativeEvent.ctrlKey || event.nativeEvent.metaKey); }} onDoubleClick={(event) => { event.stopPropagation(); onEmptyDoubleClick(); }}>
@@ -180,24 +141,25 @@ function LayoutPlane({ bounds, y, onPreview, onPlace, confirmOnPointerDown = fal
  * Beam placement cannot depend on which visible mesh wins R3F's hit-test:
  * the Layout plane is the authoring coordinate system, not a scene object.
  */
-function BeamPlanePointerCapture({ y, onPlace }: { y: number; onPlace: (position: [number, number, number], ctrlKey: boolean) => void }) {
+function BeamPlanePointerCapture({ y, onPlace, worldToEditing }: { y: number; worldToEditing: Matrix4; onPlace: (position: [number, number, number], ctrlKey: boolean) => void }) {
   const { camera, gl } = useThree();
   const latestPlace = useRef(onPlace);
   useEffect(() => { latestPlace.current = onPlace; }, [onPlace]);
   useEffect(() => {
     const canvas = gl.domElement, raycaster = new Raycaster(), pointer = new Vector2(), plane = new Plane(new Vector3(0, 1, 0), -y), intersection = new Vector3();
     const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || isBuilderNavigationEvent(event)) return;
       const bounds = canvas.getBoundingClientRect();
       pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -((event.clientY - bounds.top) / bounds.height * 2 - 1));
       raycaster.setFromCamera(pointer, camera);
+      raycaster.ray.applyMatrix4(worldToEditing);
       if (!raycaster.ray.intersectPlane(plane, intersection)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       latestPlace.current([intersection.x, y, intersection.z], event.ctrlKey || event.metaKey);
     };
     canvas.addEventListener("pointerdown", onPointerDown, true);
     return () => canvas.removeEventListener("pointerdown", onPointerDown, true);
-  }, [camera, gl, y]);
+  }, [camera, gl, y, worldToEditing]);
   return null;
 }
 
@@ -274,8 +236,8 @@ const branchAttachment = (segment: RouteSegment, t: number): HostAttachment | un
   return { ...start, localPosition: start.localPosition && end.localPosition ? start.localPosition.map((value, axis) => value + (end.localPosition![axis] - value) * t) as [number, number, number] : start.localPosition, curveT: start.curveT !== undefined && end.curveT !== undefined ? start.curveT + (end.curveT - start.curveT) * t : start.curveT };
 };
 
-export type ThreeDAuthorCommand = { id: number; tool: BuilderAuthorTool | null; system?: RoutingSystem; deviceType?: NetworkDeviceType; viewPreset?: "top"; catalogLock?: BuilderCatalogLock };
-export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId, authorCommand, panelHost, activeLevelId, keyboardActive = true, selectedBuilderSystem = null, onAuthoringSystemChange }: { scene: ThreeDSceneInput | null; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null; authorCommand?: ThreeDAuthorCommand | null; panelHost?: HTMLElement | null; activeLevelId: string; keyboardActive?: boolean; selectedBuilderSystem?: BuilderSystemId | null; onAuthoringSystemChange?: (system: BuilderSystemId) => void }) {
+export type ThreeDAuthorCommand = { id: number; tool: BuilderAuthorTool | null; system?: RoutingSystem; deviceType?: NetworkDeviceType; viewPreset?: "top"; cameraOrbit?: "cw" | "ccw"; catalogLock?: BuilderCatalogLock };
+export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSelect, sourceFile, sourceSha, projectId, authorCommand, panelHost, activeLevelId, keyboardActive = true, selectedBuilderSystem = null, onAuthoringSystemChange, onActiveToolChange, buildingLayers, onBuildingLayersChange }: { scene: ThreeDSceneInput | null; buildingLayers: ThreeDLayerVisibility; onBuildingLayersChange: (layers: ThreeDLayerVisibility) => void; hiddenNodeIds: ReadonlySet<string>; selectedId: string | null; onSelect: (id: string | null) => void; sourceFile: string; sourceSha: string; projectId: string | null; authorCommand?: ThreeDAuthorCommand | null; panelHost?: HTMLElement | null; activeLevelId: string; keyboardActive?: boolean; selectedBuilderSystem?: BuilderSystemId | null; onAuthoringSystemChange?: (system: BuilderSystemId) => void; onActiveToolChange?: (tool: Tool) => void }) {
   const publishOverlay = useOverlayStore((state) => state.publish);
   const loadSharedWorkspace = useOverlayStore((state) => state.loadWorkspace);
   const commitSharedOverlay = useOverlayStore((state) => state.commit);
@@ -291,13 +253,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const initialSharedState = useRef(useOverlayStore.getState()).current;
   const matchingOverlay = overlayForProject(initialSharedState.overlay, sourceSha, projectId);
   const sharedOverlayMatchesProject = projectId ? sharedOverlay?.source.projectId === projectId : sharedOverlay?.source.sha256 === sourceSha;
-  const [presetRequest, setPresetRequest] = useState(() => ({ preset: "exterior" as ViewPreset, commandId: -1, revision: 0 })), [layers, setLayers] = useState<ThreeDLayerVisibility>(DEFAULT_3D_LAYERS), [wallMode] = useState<WallMode>("up"), [projection] = useState<"perspective" | "orthographic">("perspective");
+  const displayTransform = useMemo(() => resolveBuilderDisplayTransform(scene?.nodes ?? {}, activeLevelId), [scene?.nodes, activeLevelId]);
+  const canvasEvents = useMemo(() => (store: RootStore) => builderCanvasEvents(store, displayTransform.worldToEditing), [displayTransform.worldToEditing]);
+  const [gridVisible, setGridVisible] = useState(true);
+  const [shadowsEnabled, setShadowsEnabled] = useState(false);
+  const [presetRequest, setPresetRequest] = useState(() => ({ preset: "exterior" as ViewPreset, commandId: -1, revision: 0 })), [wallMode] = useState<WallMode>("up"), [projection, setProjection] = useState<"perspective" | "orthographic">("perspective");
   const preset = presetRequest.preset;
+  const layers = buildingLayers;
   const [systemLayerVisibility, setSystemLayerVisibility] = useState<ProjectSystemLayerVisibility>(() => ({ ...DEFAULT_PROJECT_SYSTEM_LAYER_VISIBILITY }));
   const [cameraRight, setCameraRight] = useState<Vec3>([1, 0, 0]);
   const updateCameraRight = useCallback((right: Vec3) => setCameraRight((current) => current.every((value, axis) => Math.abs(value - right[axis]!) < 1e-4) ? current : right), []);
   const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
-  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [universalRouteMode, setUniversalRouteMode] = useState(false), [routeStartChooser, setRouteStartChooser] = useState(false), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [bendRadiusInput, setBendRadiusInput] = useState(() => String(overlay.settings.bendRadiusMm)), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState({ widthMm: 300, heightMm: 500 }), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
+  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [universalRouteMode, setUniversalRouteMode] = useState(false), [routeStartChooser, setRouteStartChooser] = useState(false), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [bendRadiusInput, setBendRadiusInput] = useState(() => String(overlay.settings.bendRadiusMm)), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState(() => ({ widthMm: beamNodeDefinition.defaults().width * 1000, heightMm: beamNodeDefinition.defaults().height * 1000 })), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
   const catalogLock = universalRouteMode ? undefined : authorCommand?.catalogLock;
   const buildingLayerOptions: Array<[keyof ThreeDLayerVisibility, string]> = [
     ["walls", "墙体"],
@@ -306,17 +273,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     ["ceilings", "天花"],
     ["roofs", "屋顶"],
     ["openings", "门窗"],
-    ["furniture", "家具与楼梯"],
+    ["furniture", "家具、楼梯、柱与栏杆"],
     ["zones", "空间名称"],
   ];
   const toggleBuildingLayer = (layer: keyof ThreeDLayerVisibility) =>
-    setLayers((current) => ({ ...current, [layer]: !current[layer] }));
+    onBuildingLayersChange({ ...layers, [layer]: !layers[layer] });
   const toggleSystemLayer = (key: ProjectSystemLayer) =>
     setSystemLayerVisibility((current) => ({ ...current, [key]: !current[key] }));
   const allowedSystems = catalogLock?.systems;
   const allowedDeviceTypes = catalogLock?.deviceTypes;
   const availableDeviceTypes = allowedDeviceTypes ?? (["strong-panel", "weak-panel", "socket", "switch", "luminaire", "network-outlet", "sprinkler-head", "smoke-detector", "sensor", "rfid-reader"] satisfies NetworkDeviceType[]);
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
+  const [axisSurfaceHint, setAxisSurfaceHint] = useState<string | null>(null);
   const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [sprinklerRouteStart, setSprinklerRouteStart] = useState<SprinklerRouteStart | null>(null), [fireSignalStart, setFireSignalStart] = useState<{ deviceId: string; portId: string } | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [thermostatPositionDraft, setThermostatPositionDraft] = useState<{ horizontal?: number; vertical?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
   const [activeTargetPortId, setActiveTargetPortId] = useState<string | null>(null);
@@ -335,6 +303,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const chooseRouteWorldAxis = (axis: WorldAxis) => {
     orthogonalDirection.current = null;
     const next = routeModeAfterAxisButton(axis, worldAxis);
+    setAxisSurfaceHint(null);
     setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal);
   };
   const [appliedConstruction, setAppliedConstruction] = useState<AppliedConstruction>({ surfaceChases: [], penetrations: [] });
@@ -490,7 +459,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             : { tool: "other" });
       if (shouldIgnoreEditableKeydown(event.key, editable, escapeAction !== "none")) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); if (event.shiftKey) redoSharedWorkspace(); else undoSharedWorkspace(); const restored = useOverlayStore.getState(); if (restored.overlay) { setOverlay(restored.overlay); setOverlayDirty(restored.dirty); } return; }
-      if (event.code === "Space") { event.preventDefault(); if (event.repeat) return; setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
+      if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "v") { event.preventDefault(); if (event.repeat) return; setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setStatus("已切换到选择模式。"); return; }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "l") {
         setUniversalRouteMode(true);
         setRouteStartChooser(true);
@@ -672,6 +641,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const diagnostics = [...collisionChecked.diagnostics, ...beamRouteDiagnostics(scene?.nodes ?? {}, collisionChecked, penetrationSession?.host.hostId)];
     return { ...collisionChecked, diagnostics, canCommit: diagnostics.length === 0 };
   };
+  const resolveLockedHostCursor = (start: RoutePoint, hit: RoutePoint, axis: WorldAxis) => resolveWorldAxisHostSurface(start, hit, axis, devicePositioningContext.physicalSurfaces ?? []);
+  const scheduleLockedHostCursor = (start: RoutePoint, hit: RoutePoint, axis: WorldAxis) => {
+    const resolved = resolveLockedHostCursor(start, hit, axis);
+    const hostLabel = hit.attachment?.hostKind === "beam" ? "梁" : hit.attachment?.hostKind === "ceiling" ? "天花" : hit.attachment?.hostKind === "wall" ? "墙" : "楼板";
+    setAxisSurfaceHint(resolved.kind === "arrival" ? `表面对齐 · ${hostLabel}` : resolved.kind === "alignment" ? "辅助对齐 · 锁定轴未与该面相交" : null);
+    scheduleCursor(resolved.point);
+  };
   const resolveEffectiveCursor = (raw: RoutePoint | null): RoutePoint | null => {
     if (!raw || !draft.length) return raw;
     if (fireSignalRouteActive && !worldAxis && raw.attachment?.hostKind === "wall") return raw;
@@ -698,8 +674,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       ? preserveSlabHostForWorldAxisPoint(draft[draft.length - 1], snapped.point.position, worldAxis, diameterMm, bridgeSlabContext)
       : snapped.point;
     if (worldAxis) {
-      const anchor = draft[draft.length - 1], projected = projectRoutePointToWorldAxis(anchor, raw, worldAxis);
-      return preserveSlabHostForWorldAxisPoint(anchor, projected.position, worldAxis, diameterMm, bridgeSlabContext);
+      return resolveLockedHostCursor(draft[draft.length - 1], raw, worldAxis).point;
     }
     const routeCursor = resolveHostSurfaceCursor(scene?.nodes ?? {}, draft[draft.length - 1], raw, orthogonal, orthogonalDirection.current);
     const points = displayedRoutePoints(draft, routeCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource });
@@ -825,14 +800,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     : null;
   const hoveredHvacControlCheck = useMemo(() => hoveredHvacTarget?.kind === "control" && hoveredHvacResolution?.kind === "connect" && hvacControlThermostatId
     ? inspectHvacControlConnection(overlay, hvacControlThermostatId, hoveredHvacTarget.unitId, hvacControlWaypoints, { nodes: scene?.nodes, bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm })
-    : null, [overlay, hoveredHvacTarget, hoveredHvacResolution?.kind, hvacControlThermostatId, hvacControlWaypoints, bendRadiusInput]);
+    : null, [overlay, hoveredHvacTarget, hoveredHvacResolution?.kind, hvacControlThermostatId, hvacControlWaypoints, bendRadiusInput, scene?.nodes]);
   const hoveredHvacAssist = hoveredHvacResolution?.kind === "connect" || hoveredHvacResolution?.kind === "confirm-alignment" ? { point: hoveredHvacResolution.point.position, mode: hoveredHvacResolution.kind === "connect" ? "connect" as const : "alignment" as const } : null;
   const activeBeamSnap = beamSnapTarget;
   const snapStatus = hoveredHvacAssist && hoveredHvacTarget
     ? hoveredHvacControlCheck && "reason" in hoveredHvacControlCheck ? `FCU 控制端口 · 暂不能连接：${hoveredHvacControlCheck.reason}` : `FCU ${hoveredHvacTarget.kind === "power" ? "电源" : "控制"}端口 · ${hoveredHvacAssist.mode === "connect" ? "连接后结束" : "辅助对齐"}`
-    : (tool === "beam" || selectedBeam) && activeBeamSnap ? `梁表面捕捉 · ${activeBeamSnap.target.kind} · ${activeBeamSnap.target.id}` : !draft.length ? null : activeTargetDevice && activeTargetPort
+    : (tool === "beam" || selectedBeam) && activeBeamSnap ? `梁表面捕捉 · ${activeBeamSnap.target.kind} · ${activeBeamSnap.target.id}` : !draft.length ? worldAxis ? axisSurfaceHint : null : activeTargetDevice && activeTargetPort
     ? `设备端口 · ${deviceTargetMode === "connect" ? "连接后结束" : "辅助对齐"}`
-    : branchPreview?.valid ? "分支捕捉" : hoverId?.startsWith("open-end:") ? "开放管端 · 捕捉" : null;
+    : branchPreview?.valid ? "分支捕捉" : hoverId?.startsWith("open-end:") ? "开放管端 · 捕捉" : worldAxis ? axisSurfaceHint : null;
   const previewPoints = useMemo(() => displayedRoutePoints(draft, effectiveCursor, "free", { worldAxis, penetration: penetrationSession, allowUnhostedCursor: canDrawWithoutSource }), [draft, effectiveCursor, penetrationSession, worldAxis, canDrawWithoutSource]);
   const displayDraft = draft.length ? previewPoints : cursor ? [cursor] : [];
   const previewPlan = useMemo(() => displayDraft.length >= 2 && (tool === "draw" || tool === "branch" && branchStart) ? validatedPlan(displayDraft, branchStart?.segmentId) : null, [displayDraft, tool, branchStart, overlay, system, diameterMm, surfaceMode, bendRadiusInput, constructionParameters, explicitPenetrations, deviceRouteStart]);
@@ -859,7 +834,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setStatus(`${first?.message ?? "当前路径无效。"}${ids}`);
   }, [previewPlan?.canCommit, previewPlan?.diagnostics[0]?.code, previewPlan?.diagnostics[0]?.objectIds?.join(":")]);
   const beamCandidate = (start: ThreeDSurfaceHit, hit: BeamPointer, id = "beam-preview") => scene && start.attachment.hostKind === "ceiling"
-    ? (() => { const levelId = start.attachment.levelId ?? "", rawStart: [number, number] = [start.point[0], start.point[2]], constrainedEnd = constrainBeamEnd(rawStart, [hit.point[0], hit.point[2]], orthogonal), snappedStart = snapBeamPoint(scene.nodes, levelId, rawStart), snappedEnd = snapBeamPoint(scene.nodes, levelId, constrainedEnd); return createBeam(scene.nodes, { id, name: "预览梁", levelId, start: snappedStart?.point ?? rawStart, end: snappedEnd?.point ?? constrainedEnd, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000, explicitCeilingCrossing: hit.ctrlKey }); })()
+    ? (() => { const levelId = start.attachment.levelId ?? "", rawStart: [number, number] = [start.point[0], start.point[2]], constrainedEnd = constrainBeamEnd(rawStart, [hit.point[0], hit.point[2]], orthogonal), snappedStart = snapBeamPoint(scene.nodes, levelId, rawStart), snappedEnd = snapBeamPoint(scene.nodes, levelId, constrainedEnd); return beamNodeDefinition.create(scene.nodes, { id, name: "预览梁", levelId, start: snappedStart?.point ?? rawStart, end: snappedEnd?.point ?? constrainedEnd, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000, explicitCeilingCrossing: hit.ctrlKey }); })()
     : null;
   const commitBeam = (end: BeamPointer) => {
     if (!beamStart) return;
@@ -882,11 +857,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   }
   const previewBeamEdit = (edit: BeamEdit) => {
     if (!selectedBeam || !scene) return;
-    setBeamEditPreview(editBeam(scene.nodes, selectedBeam, edit).beam);
+    setBeamEditPreview(beamNodeDefinition.edit(scene.nodes, selectedBeam, edit).beam);
   };
   const commitBeamEdit = (edit: BeamEdit) => {
     if (!selectedBeam || !scene) return;
-    const result = editBeam(scene.nodes, selectedBeam, edit);
+    const result = beamNodeDefinition.edit(scene.nodes, selectedBeam, edit);
     setBeamEditPreview(null);
     if (!result.valid || !result.beam) { setStatus(result.diagnostics[0] ?? "Beam 编辑无效。"); return; }
     const current = useOverlayStore.getState(), project = current.project;
@@ -905,8 +880,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const anchor = hvacControlRouteAnchor(), candidate = routePoint(hit);
       if (!hvacControlThermostatId || !anchor) { scheduleCursor(candidate); return; }
       if (worldAxis) {
-        const projected = projectRoutePointToWorldAxis(anchor, candidate, worldAxis);
-        scheduleCursor(preserveSlabHostForWorldAxisPoint(anchor, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
+        scheduleLockedHostCursor(anchor, candidate, worldAxis); return;
       }
       const resolved = resolveHostSurfaceCursor(scene?.nodes ?? {}, anchor, candidate, orthogonal, orthogonalDirection.current);
       if (orthogonal) orthogonalDirection.current = resolveOrthogonalDirection(anchor, resolved, orthogonalDirection.current);
@@ -918,7 +892,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const activeDuct = activeHvacDuctId ? overlay.hvac.ducts.find(duct => duct.id === activeHvacDuctId) : undefined, activeSegmentId = activeDuct?.segmentIds[activeDuct.segmentIds.length - 1], activeSegment = activeSegmentId ? overlay.hvac.segments.find(segment => segment.id === activeSegmentId) : undefined;
       const routeUnit = hvacRouteStart ? overlay.hvac.indoorUnits.find(unit => unit.id === hvacRouteStart.unitId) : undefined;
       const hvacStart = activeSegment?.end ?? (routeUnit && hvacRouteStart ? indoorUnitPort(routeUnit, hvacRouteStart.system) : undefined);
-      if (hvacStart && worldAxis) { scheduleCursor(projectRoutePointToWorldAxis(hvacStart, routePoint(hit), worldAxis)); return; }
+      if (hvacStart && worldAxis) { scheduleLockedHostCursor(hvacStart, routePoint(hit), worldAxis); return; }
       if (hvacStart && orthogonal && !worldAxis) {
         const target = routePoint(hit), direction = activeSegment ? resolveOrthogonalDirection(hvacStart, target, orthogonalDirection.current) : indoorUnitPortDirection(routeUnit!, hvacRouteStart!.system);
         orthogonalDirection.current = direction;
@@ -930,6 +904,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool === "point" || tool === "hvac-unit" || tool === "hvac-thermostat") { scheduleCursor(routePoint(hit)); return; }
     if (tool === "draw" && !fireSignalStart && !deviceRouteStart && !junctionRouteStart && !endpointRouteStart && !canDrawWithoutSource) { scheduleCursor(null); return; }
     if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : hit.attachment.hostId === penetrationSession.host.hostId ? null : projectPenetrationExit(penetrationSession, routePoint(hit))); return; }
+    if (worldAxis && active) { scheduleLockedHostCursor(active, routePoint(hit), worldAxis); return; }
     if (orthogonal && active) orthogonalDirection.current = resolveOrthogonalDirection(active, routePoint(hit), orthogonalDirection.current);
     if (!worldAxis && (tool === "draw" || (tool === "branch" && branchStart)) && (!active?.attachment || active.attachment.hostKind !== "wall")) scheduleCursor(routePoint(hit));
   };
@@ -949,7 +924,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (!hvacControlThermostatId) { setStatus("先点击控温器的绿色控制端口起画。"); return; }
       const previous = hvacControlRouteAnchor();
       const point = previous && worldAxis
-        ? preserveSlabHostForWorldAxisPoint(previous, resolveWorldAxisSurfacePoint(previous, latestCursor.current, routePoint(hit), worldAxis).position, worldAxis, diameterMm, bridgeSlabContext)
+        ? resolveLockedHostCursor(previous, routePoint(hit), worldAxis).point
         : previous && (hit.attachment.hostKind === "beam" || !latestCursor.current)
           ? resolveHostSurfaceCursor(scene?.nodes ?? {}, previous, routePoint(hit), orthogonal, orthogonalDirection.current)
           : latestCursor.current ?? routePoint(hit);
@@ -978,7 +953,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       const activeSegment = lastSegmentId ? overlay.hvac.segments.find(segment => segment.id === lastSegmentId) : undefined;
       const routeUnit = hvacRouteStart ? overlay.hvac.indoorUnits.find(unit => unit.id === hvacRouteStart.unitId) : undefined;
       const anchor = activeSegment?.end ?? (routeUnit && hvacRouteStart ? indoorUnitPort(routeUnit, hvacRouteStart.system) : undefined);
-      const target = anchor && worldAxis ? resolveWorldAxisSurfacePoint(anchor, latestCursor.current, routePoint(hit), worldAxis) : latestCursor.current ?? routePoint(hit);
+      const target = anchor && worldAxis ? resolveLockedHostCursor(anchor, routePoint(hit), worldAxis).point : latestCursor.current ?? routePoint(hit);
       if (!activeHvacDuctId) {
         const result = createHvacDuct(overlay, hvacRouteStart!.unitId, system, { position: [...target.position] }, target);
         if ('reason' in result) { setStatus(result.reason); return; }
@@ -1003,9 +978,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const clickedPoint = routePoint(hit);
     const fireSignalWallHit = fireSignalRouteActive && !worldAxis && hit.attachment.hostKind === "wall";
     const axisAnchor = draft[draft.length - 1];
-    const lockedPoint = worldAxis && axisAnchor ? resolveWorldAxisSurfacePoint(axisAnchor, latestCursor.current, clickedPoint, worldAxis) : null;
+    const lockedPoint = worldAxis && axisAnchor ? resolveLockedHostCursor(axisAnchor, clickedPoint, worldAxis).point : null;
     const point = lockedPoint
-      ? preserveSlabHostForWorldAxisPoint(axisAnchor, lockedPoint.position, worldAxis!, diameterMm, bridgeSlabContext)
+      ? lockedPoint
       : resolveConfirmedRoutePoint(fireSignalWallHit ? clickedPoint : resolveEffectiveCursor(hit.attachment.hostKind === "beam" ? clickedPoint : latestCursor.current), hit.attachment.hostKind === "beam" && orthogonal && !fireSignalWallHit ? null : clickedPoint);
     if (!point) return;
     if (penetrationSession) { const exit = penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : projectPenetrationExit(penetrationSession, point); if (!exit) return; setDraft((points) => [...points, penetrationSession.entry, exit]); setExplicitPenetrations((items) => [...items, penetrationRequest(penetrationSession, exit)]); setOrthogonal(penetrationSession.orthogonal); setWorldAxis(null); setPenetrationSession(null); setCursor(null); setStatus("已确认穿透出口并恢复目标宿主约束；继续画管或按 Enter 直接生成。"); return; }
@@ -1190,17 +1165,19 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     onSelect(null); setHoverId(null); setStatus("已删除对象及孤立施工特征。");
   };
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setHvacOutletPreview(null); orthogonalDirection.current = null; };
+  useEffect(() => { onActiveToolChange?.(tool); }, [tool, onActiveToolChange]);
   const canUseTool = (next: Tool) => next === "hvac-supply" || next === "hvac-return" ? canUseCatalogTool(catalogLock, "hvac-duct") : canUseCatalogTool(catalogLock, next);
   const chooseTool = (next: Tool) => { if (!canUseTool(next)) { setStatus("当前 Builder 卡片不允许切换到该工具。"); return; } setUniversalRouteMode(false); setRouteStartChooser(false); setTool(next); resetRouteSession(); if (['draw', 'branch', 'hvac-supply', 'hvac-return', 'hvac-control'].includes(next)) resetRouteConstraints(); setHvacControlThermostatId(null); setHvacControlWaypoints([]); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-control'].includes(next)) onSelect(null); };
   const handledAuthorCommand = useRef<number | null>(null);
   useEffect(() => {
     if (!authorCommand || handledAuthorCommand.current === authorCommand.id) return;
     handledAuthorCommand.current = authorCommand.id;
+    if (authorCommand.viewPreset) { setPresetRequest(current => applyViewPresetRequest(current, authorCommand.id, authorCommand.viewPreset!)); return; }
+    if (authorCommand.cameraOrbit) return;
     if (authorCommand.tool || authorCommand.catalogLock) { setUniversalRouteMode(false); setRouteStartChooser(false); }
     if (authorCommand.system) selectSystem(authorCommand.system);
     if (authorCommand.deviceType) setDeviceType(authorCommand.deviceType);
     if (authorCommand.tool) chooseTool(authorCommand.tool);
-    if (authorCommand.viewPreset) setPresetRequest((current) => applyViewPresetRequest(current, authorCommand.id, authorCommand.viewPreset!));
   }, [authorCommand]);
   const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart);
   const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
@@ -1223,6 +1200,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (tool === "hvac-control" && hvacControlThermostatId && worldAxis) {
       const start = hvacControlRouteAnchor();
       if (start) {
+        if (surfaceHit) { scheduleLockedHostCursor(start, routePoint(surfaceHit), worldAxis); return; }
+        setAxisSurfaceHint(null);
         const projected = pointOnWorldAxis(start, worldAxis, origin, direction);
         scheduleCursor(preserveSlabHostForWorldAxisPoint(start, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
       }
@@ -1230,10 +1209,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if ((tool === 'hvac-supply' || tool === 'hvac-return') && worldAxis) {
       const duct = activeHvacDuctId ? overlay.hvac.ducts.find(item => item.id === activeHvacDuctId) : undefined, endId = duct?.segmentIds[duct.segmentIds.length - 1], segment = endId ? overlay.hvac.segments.find(item => item.id === endId) : undefined, unit = hvacRouteStart ? overlay.hvac.indoorUnits.find(item => item.id === hvacRouteStart.unitId) : undefined;
       const start = segment?.end ?? (unit && hvacRouteStart ? indoorUnitPort(unit, hvacRouteStart.system) : undefined);
-      if (start) { scheduleCursor(pointOnWorldAxis(start, worldAxis, origin, direction)); return; }
+      if (start) { if (surfaceHit) { scheduleLockedHostCursor(start, routePoint(surfaceHit), worldAxis); return; } setAxisSurfaceHint(null); scheduleCursor(pointOnWorldAxis(start, worldAxis, origin, direction)); return; }
     }
     if (worldAxis && draft.length) {
-      const start = draft[draft.length - 1]!, projected = pointOnWorldAxis(start, worldAxis, origin, direction);
+      const start = draft[draft.length - 1]!;
+      if (surfaceHit) { scheduleLockedHostCursor(start, routePoint(surfaceHit), worldAxis); return; }
+      setAxisSurfaceHint(null);
+      const projected = pointOnWorldAxis(start, worldAxis, origin, direction);
       scheduleCursor(preserveSlabHostForWorldAxisPoint(start, projected.position, worldAxis, diameterMm, bridgeSlabContext)); return;
     }
     if ((canDrawWithoutSource || fireSignalStart) && !surfaceHit) {
@@ -1245,7 +1227,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const active = draft[draft.length - 1];
     if (penetrationSession) { scheduleCursor(penetrationSession.host.hostKind === "beam" ? projectBeamPenetrationExit(scene?.nodes ?? {}, penetrationSession) : surfaceHit && surfaceHit.attachment.hostId !== penetrationSession.host.hostId ? projectPenetrationExit(penetrationSession, routePoint(surfaceHit)) : null); return; }
     if ((tool === "draw" || tool === "branch" && branchStart) && active?.attachment?.hostKind === "wall") {
-      const projected = routeCursorFromActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction, surfaceHit ? routePoint(surfaceHit) : null);
+      const projected = routeCursorFromActiveWall(scene?.nodes[active.attachment.hostId], active, origin, direction, surfaceHit ? routePoint(surfaceHit) : null, scene?.nodes);
       if (projected) { scheduleCursor(projected); return; }
       if (surfaceHit) scheduleCursor(routePoint(surfaceHit));
       else scheduleCursor(null);
@@ -1292,8 +1274,19 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   return (
     <section className="three-d-workspace">
     <div className="three-d-canvas">
+      <DetailsPopoverGroup>
+        <details className="builder-camera-popover">
+          <summary aria-label="3D 视角"><BuilderIcon name="view3d" size={16} />视角</summary>
+          <div className="builder-camera-content">
+            <b>相机投影</b><div className="builder-camera-projection"><button aria-pressed={projection === "perspective"} onClick={() => setProjection("perspective")}>透视</button><button aria-pressed={projection === "orthographic"} onClick={() => setProjection("orthographic")}>正交</button></div>
+            <label><input type="checkbox" checked={gridVisible} onChange={event => setGridVisible(event.target.checked)} />显示地面与网格</label>
+            <label><input type="checkbox" checked={shadowsEnabled} onChange={event => setShadowsEnabled(event.target.checked)} />显示阴影</label>
+            <b>标准视角</b><div className="builder-camera-presets">{([["isometric", "等轴"], ["top", "顶视"], ["front", "前视"], ["back", "后视"], ["left", "左视"], ["right", "右视"]] as const).map(([view, label]) => <button key={view} onClick={() => setPresetRequest(current => ({ ...current, preset: view, revision: current.revision + 1 }))}>{label}</button>)}</div>
+            <small>右键旋转 · 中键或空格拖动平移 · 滚轮缩放</small>
+          </div>
+        </details>
         <details className="three-d-layer-popover">
-          <summary aria-label="3D 图层" title="显示或隐藏 3D 内容">图层</summary>
+          <summary aria-label="3D 图层" title="显示或隐藏 3D 内容"><BuilderIcon name="layers" size={16} />图层</summary>
           <div className="three-d-layer-popover-content">
             <section aria-label="建筑图层">
               <b>建筑</b>
@@ -1319,6 +1312,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             </section>
           </div>
         </details>
+      </DetailsPopoverGroup>
         {panelHost && createPortal(<aside
           className={`conduit-panel ${panelCollapsed ? "collapsed" : ""}`}
           aria-label="系统创作工具"
@@ -1768,7 +1762,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 </summary>
                 <div className="conduit-details-body">
                   <small>
-                    空格选择 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D
+                    V 选择 · 空格拖动平移 · Ctrl/Command 多选 · 双击整条管道 · L 画管 · D
                     点位
                   </small>
                   <small>
@@ -1931,7 +1925,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           defaultValue={clearance.meters * 1000}
                           onKeyDown={(event) => {
                             if (event.key !== "Enter") return;
-                            const result = editBeamPlanarClearance(scene.nodes, selectedBeam, clearance, Number(event.currentTarget.value) / 1000);
+                            const result = beamNodeDefinition.parametrics.editPlanClearance(scene.nodes, selectedBeam, clearance, Number(event.currentTarget.value) / 1000);
                             if (result.beam) commitBeamEdit({ start: result.beam.start, end: result.beam.end });
                             else setStatus(result.diagnostics[0] ?? "梁位置编辑无效。");
                           }}
@@ -2383,6 +2377,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         <Canvas
           key={projection}
           frameloop="demand"
+          events={canvasEvents}
+          shadows={shadowsEnabled ? "percentage" : false}
+          onCreated={({ gl }) => { gl.toneMapping = ACESFilmicToneMapping; gl.toneMappingExposure = getBuilderPresentation().toneMappingExposure; gl.shadowMap.type = PCFShadowMap; }}
           orthographic={projection === "orthographic"}
           camera={
             projection === "orthographic"
@@ -2393,11 +2390,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           gl={CANVAS_GL}
           onPointerMissed={() => selectWhileBrowsing(null)}
         >
-          <color attach="background" args={["#dfe6e9"]} />
+          <color attach="background" args={[getBuilderPresentation().background]} />
+          <BuilderLighting shadowsEnabled={shadowsEnabled} />
+          <group matrix={displayTransform.displayMatrix} matrixAutoUpdate={false} matrixWorldNeedsUpdate>
           {tool === "beam" && layoutReferencePlane?.visible && (
             <>
               <BeamPlanePointerCapture
                 y={layoutReferencePlaneY}
+                worldToEditing={displayTransform.worldToEditing}
                 onPlace={onLayoutReferenceHit}
               />
               <LayoutPlane
@@ -2638,11 +2638,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onEmptyClick={onEmptyCanvasClick}
             onEmptyDoubleClick={() => finishCurrentRoute("include-preview")}
           />
-          <Navigation bounds={scene.bounds} preset={preset} presetRevision={presetRequest.revision} projection={projection} onCameraRight={updateCameraRight} />
+          </group>
+          {gridVisible && <BuilderGround y={builderDisplayPoint([0, Number(scene.nodes[activeLevelId ?? ""]?.level ?? 0) * 3.2, 0], displayTransform.displayMatrix)[1]} />}
+          <BuilderInk />
+          <BuilderNavigation bounds={scene.bounds} preset={preset} presetRevision={presetRequest.revision} projection={projection} onCameraRight={updateCameraRight} displayTransform={displayTransform} keyboardActive={keyboardActive} interactionActive={tool !== "select"} orbitRequest={authorCommand?.cameraOrbit ? { id: authorCommand.id, direction: authorCommand.cameraOrbit } : undefined} />
         </Canvas>
         {snapStatus && <div className={`conduit-snap-status${hoveredHvacControlCheck && "reason" in hoveredHvacControlCheck ? " blocked" : ""}`}>{snapStatus}</div>}
         <div className="three-d-walkthrough-hint">
-          空格选择 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z
+          V 选择 · 空格拖动平移 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z
           悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成
         </div>
     </div>

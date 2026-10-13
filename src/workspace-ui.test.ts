@@ -7,7 +7,9 @@ const source = readFileSync(resolve(process.cwd(), "src/main.tsx"), "utf8");
 const planSource = readFileSync(resolve(process.cwd(), "src/plan/ConduitPlan.tsx"), "utf8");
 const hvacPlanSource = readFileSync(resolve(process.cwd(), "src/plan/HvacPlan.tsx"), "utf8");
 const threeDSource = readFileSync(resolve(process.cwd(), "src/three/ThreeDWorkspace.tsx"), "utf8");
+const navigationSource = readFileSync(resolve(process.cwd(), "src/three/BuilderNavigation.tsx"), "utf8");
 const compactThreeDSource = threeDSource.replace(/\s+/g, " ");
+const beamRendererSource = readFileSync(resolve(process.cwd(), "src/nodes/beam/BeamRenderer.tsx"), "utf8");
 const pascalSceneSource = readFileSync(resolve(process.cwd(), "src/three/PascalScenePreview.tsx"), "utf8");
 const conduitSceneSource = readFileSync(resolve(process.cwd(), "src/components/ConduitScene.tsx"), "utf8");
 const hvacSceneSource = readFileSync(resolve(process.cwd(), "src/components/HvacScene.tsx"), "utf8");
@@ -28,6 +30,15 @@ describe("conduit workspace UI contract", () => {
     expect(source).toContain("视图与楼层");
     expect(source).toContain("builder-view-toggle");
     expect(source).toContain("selectWorkspaceLevel");
+  });
+
+  it("matches the Builder view switcher order and compact icon sizing", () => {
+    const viewControls = source.match(/<div className="workspace-view-toggle builder-view-toggle"[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(viewControls.indexOf('name="view3d" size={14}')).toBeLessThan(viewControls.indexOf('name="view2d" size={14}'));
+    expect(viewControls.indexOf('name="view2d" size={14}')).toBeLessThan(viewControls.indexOf('name="splitView" size={12}'));
+    expect(styles).toContain(".builder-view-toggle { align-items: stretch;");
+    expect(styles).toContain("height: 32px;");
+    expect(styles).toContain("border-radius: 12px;");
   });
 
   it("shows the immutable build label in the top bar and crash report", () => {
@@ -174,18 +185,19 @@ describe("conduit workspace UI contract", () => {
     expect(styles).toContain("contain:layout paint");
   });
 
-  it("keeps Canvas camera and controls configuration stable across drawing renders", () => {
+  it("keeps Canvas configuration stable and delegates camera-only input to Builder navigation", () => {
     expect(compactThreeDSource).toContain("camera={ projection === \"orthographic\" ? ORTHOGRAPHIC_CAMERA : PERSPECTIVE_CAMERA }");
     expect(threeDSource).toContain("dpr={CANVAS_DPR}");
     expect(threeDSource).toContain("gl={CANVAS_GL}");
-    expect(threeDSource).toContain("mouseButtons={cameraMouseButtons(projection)}");
-    expect(threeDSource).toContain("colliderMeshes={NO_CAMERA_COLLIDERS}");
-    expect(threeDSource).toContain("GROUND_CAMERA_CLEARANCE");
-    expect(threeDSource).toContain("boundaryEnclosesCamera");
-    expect(threeDSource).toContain("boundaryFriction={0}");
-    expect(threeDSource).toContain("minDistance={Math.max(.12, bounds.span * .01)}");
-    expect(threeDSource).toContain("}, [preset, presetRevision]);");
-    expect(threeDSource).not.toContain("}, [bounds, preset]);");
+    expect(threeDSource).toContain("events={canvasEvents}");
+    expect(threeDSource).toContain("<BuilderNavigation");
+    expect(threeDSource).toContain("builderCanvasEvents(store, displayTransform.worldToEditing)");
+    expect(navigationSource).toContain("colliderMeshes={NO_CAMERA_COLLIDERS}");
+    expect(navigationSource).toContain("boundaryEnclosesCamera");
+    expect(navigationSource).toContain("boundaryFriction={0}");
+    expect(navigationSource).toContain("minDistance={Math.max(0.12, bounds.span * 0.01)}");
+    expect(navigationSource).toContain("}, [preset, presetRevision, invalidate]);");
+    expect(navigationSource).not.toContain("}, [bounds, preset]);");
   });
 
   it("coalesces live pointer work and renders the 3D canvas only on demand", () => {
@@ -228,7 +240,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain('className="three-d-layer-popover"');
     expect(threeDSource).toContain('aria-label="3D 图层"');
     expect(threeDSource).toContain('["ceilings", "天花"]');
-    expect(threeDSource).toContain('["furniture", "家具与楼梯"]');
+    expect(threeDSource).toContain('["furniture", "家具、楼梯、柱与栏杆"]');
     expect(threeDSource).toContain('aria-label="系统图层"');
     expect(threeDSource).toContain("PROJECT_SYSTEM_LAYER_OPTIONS.map(([key, label])");
     expect(threeDSource).toContain("checked={systemLayerVisibility[key]} onChange={() => toggleSystemLayer(key)}");
@@ -237,8 +249,10 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).not.toContain('onChange={toggleSensorLayer}');
     expect(threeDSource).toContain('checked={layers[layer]} onChange={() => toggleBuildingLayer(layer)}');
     expect(threeDSource).toContain("setSystemLayerVisibility((current) => ({ ...current, [key]: !current[key] }))");
-    expect(styles).toContain(".three-d-layer-popover{position:absolute;right:12px;top:12px");
-    expect(styles).toContain(".three-d-layer-popover-content");
+    expect(styles).toContain(".three-d-view-controls { align-items: flex-start; display: flex;");
+    expect(styles).toContain(".three-d-view-controls > .builder-camera-popover, .three-d-view-controls > .three-d-layer-popover { flex: 0 0 auto;");
+    expect(styles).toContain("position: absolute; right: 0; top: calc(100% + 6px)");
+    expect(styles).not.toContain(".three-d-layer-popover>summary::before");
     expect(conduitSceneSource).toContain("overlay.devices.filter(deviceVisible)");
     expect(conduitSceneSource).toContain("systemLayerVisibility ? isDeviceSystemLayerVisible");
     expect(hvacSceneSource).toContain("if (!(systemVisible ?? overlay.hvac.visible)) return null");
@@ -258,7 +272,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain('className="conduit-panel conduit-selection-panel"');
     expect(threeDSource).toContain('aria-label={selectedObjectPanelTitle}');
     expect(threeDSource).toContain('hasSelectedObject && (');
-    expect(styles).toContain('.conduit-selection-panel{left:auto;right:12px;top:58px;width:min(260px');
+    expect(styles).toContain('.conduit-selection-panel { left: auto;');
+    expect(styles).toContain('width: min(280px, calc(100% - 24px))');
   });
 
   it("keeps an explicit indoor-unit placement action inside the HVAC tool group", () => {
@@ -344,10 +359,23 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("applies route cursor constraints to HVAC control pipe previews and terminal alignment", () => {
-    expect(threeDSource).toContain("projectRoutePointToWorldAxis(anchor, candidate, worldAxis)");
+    expect(threeDSource).toContain("scheduleLockedHostCursor(anchor, candidate, worldAxis)");
     expect(threeDSource).toContain("resolveHostSurfaceCursor(scene?.nodes ?? {}, anchor, candidate, orthogonal, orthogonalDirection.current)");
     expect(threeDSource).toContain("当前方向尚未对准 FCU；已确认辅助对齐点");
     expect(threeDSource).toContain("tool === \"hvac-control\" && hvacControlThermostatId && worldAxis");
+  });
+
+  it("keeps finite host intersections authoritative for every world-axis route", () => {
+    expect(threeDSource).toContain("resolveWorldAxisHostSurface(start, hit, axis, devicePositioningContext.physicalSurfaces ?? [])");
+    expect(threeDSource).toContain("scheduleLockedHostCursor(hvacStart, routePoint(hit), worldAxis)");
+    expect(threeDSource).toContain("scheduleLockedHostCursor(active, routePoint(hit), worldAxis)");
+    const rayHandler = threeDSource.slice(threeDSource.indexOf("const onPointerRay ="), threeDSource.indexOf("const onEmptyCanvasClick ="));
+    expect(rayHandler.match(/if \(surfaceHit\) \{ scheduleLockedHostCursor\(start, routePoint\(surfaceHit\), worldAxis\); return; \}/g)).toHaveLength(3);
+    expect(threeDSource).toContain("resolveLockedHostCursor(previous, routePoint(hit), worldAxis).point");
+    expect(threeDSource).toContain("resolveLockedHostCursor(anchor, routePoint(hit), worldAxis).point");
+    expect(threeDSource).toContain("resolveLockedHostCursor(axisAnchor, clickedPoint, worldAxis).point");
+    expect(threeDSource).toContain("表面对齐 · ${hostLabel}");
+    expect(threeDSource).toContain("辅助对齐 · 锁定轴未与该面相交");
   });
 
   it("confirms active HVAC world-axis points in empty space and keeps panel modes exclusive", () => {
@@ -416,18 +444,12 @@ describe("conduit workspace UI contract", () => {
 
   it("keeps shallow-cut fallback internal instead of showing a diagnostics panel", () => {
     expect(pascalSceneSource).toContain("subtractHorizontalChases");
-    expect(pascalSceneSource).toContain("subtractWallChases");
+    expect(pascalSceneSource).toContain("buildBuilderWallGeometry");
     expect(threeDSource).toContain("onChaseFallback={reportChaseFallback}");
     expect(threeDSource).not.toContain("<b>诊断</b>");
     expect(threeDSource).not.toContain("deviceDiagnostics(overlay)");
   });
 
-  it("renders a quiet non-interactive edge overlay for 3D building geometry", () => {
-    expect(pascalSceneSource).toContain("function MeshEdges");
-    expect(pascalSceneSource).toContain("const EDGE_OPACITY = .24");
-    expect(pascalSceneSource).toContain('raycast={() => null}');
-    expect(pascalSceneSource).toContain("<MeshEdges geometry={geometry}");
-  });
 
   it("keeps Beam authoring isolated from Overlay editing while exposing both view layers", () => {
     expect(threeDSource).toContain('beam: "梁"');
@@ -443,7 +465,7 @@ describe("conduit workspace UI contract", () => {
   it("gives Beam reference-plane confirmation an obstacle-independent Canvas pointer-down path", () => {
     expect(threeDSource).toContain('function BeamPlanePointerCapture');
     expect(threeDSource).toContain('canvas.addEventListener("pointerdown", onPointerDown, true)');
-    expect(compactThreeDSource).toContain('<BeamPlanePointerCapture y={layoutReferencePlaneY} onPlace={onLayoutReferenceHit} />');
+    expect(compactThreeDSource).toContain('<BeamPlanePointerCapture y={layoutReferencePlaneY} worldToEditing={displayTransform.worldToEditing} onPlace={onLayoutReferenceHit} />');
     expect(threeDSource).toContain('data-beam-authoring-status');
     expect(threeDSource).not.toContain('const setStatus = (_message: string) => undefined;');
   });
@@ -458,8 +480,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("beamEditPreview ?? beamPreview");
     expect(threeDSource).toContain("selectedBeam.start.join");
     expect(threeDSource).not.toContain('addEventListener("beam-drag"');
-    expect(pascalSceneSource).toContain("function BeamPlanarDimensionGuides");
-    expect(pascalSceneSource).toContain('name="beam-planar-dimension:cross-axis"');
+    expect(beamRendererSource).toContain("function BeamPlanarDimensionGuides");
+    expect(beamRendererSource).toContain('name="beam-planar-dimension:cross-axis"');
     expect(pascalSceneSource).not.toContain("setBodyDrag");
     expect(pascalSceneSource).not.toContain("data-beam-handle");
     expect(pascalSceneSource).toContain("const rendered = beamPreview?.id === node.id ? beamPreview : node");

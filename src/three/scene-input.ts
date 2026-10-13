@@ -1,3 +1,4 @@
+import { resolveEffectiveBuildingParameters } from "../geometry/effective-building";
 import { BUILTIN_KINDS } from "../coverage/pascalCoreManifest";
 import { finalDimensions, resolveItemPlanTransform } from "../geometry/transform";
 import type { NodeData, Parsed } from "../types";
@@ -57,15 +58,16 @@ function extendPoint(bounds: { minX: number; maxX: number; minY: number; maxY: n
 }
 
 function sceneBounds(nodes: Record<string, NodeData>): ThreeDBounds {
+  const effective = resolveEffectiveBuildingParameters(nodes);
   const raw = { minX: Infinity, maxX: -Infinity, minY: 0, maxY: 0, minZ: Infinity, maxZ: -Infinity };
   for (const node of Object.values(nodes)) {
     if (node.type === "wall") {
       for (const point of [node.start, node.end]) if (Array.isArray(point) && finite(point[0]) && finite(point[1])) extendPoint(raw, point[0], 0, point[1]);
-      const height = finite(node.height) && node.height > 0 ? node.height : 2.5;
+      const height = effective[node.id]?.height?.value ?? 2.5;
       raw.maxY = Math.max(raw.maxY, height);
     }
     if (["slab", "ceiling", "zone"].includes(node.type) && Array.isArray(node.polygon)) {
-      for (const point of node.polygon) if (Array.isArray(point) && finite(point[0]) && finite(point[1])) extendPoint(raw, point[0], node.type === "ceiling" && finite(node.height) ? node.height : 0, point[2] ?? point[1]);
+      for (const point of node.polygon) if (Array.isArray(point) && finite(point[0]) && finite(point[1])) extendPoint(raw, point[0], node.type === "ceiling" ? effective[node.id]?.height?.value ?? 2.5 : 0, point[2] ?? point[1]);
     }
     if (node.type === "beam" && Array.isArray(node.start) && Array.isArray(node.end) && finite(node.start[0]) && finite(node.start[1]) && finite(node.end[0]) && finite(node.end[1])) {
       const top = typeof node.effectiveCeilingElevation === "object" && node.effectiveCeilingElevation && finite(node.effectiveCeilingElevation.meters) ? node.effectiveCeilingElevation.meters : 0;

@@ -51,6 +51,14 @@ Status columns: `P` parse recognition, `R` raw preservation, `T` transform, `F` 
 | pipe-fitting | `schema/nodes/pipe-fitting.ts` / `pipe-fitting/definition.ts` FP | elbow/wye/sanitary-tee/cross | standalone | partial | complete | none | none | partial/partial/none | fitting ports/shape |
 | pipe-trap | `schema/nodes/pipe-trap.ts` / `pipe-trap/definition.ts` FP | material | standalone | partial | complete | none | none | partial/partial/none | trap symbol/footprint |
 
+## Demo-local Builder plan adapter increment
+
+The matrix above remains the pinned upstream/manifest baseline; this note records the current Demo-local presentation adapter and does not change the manifest statuses or claim Pascal Core support. `src/plan/BuilderStructures.tsx` renders read-only, selectable 2D footprints for column and fence nodes on the active level. It applies the installed `ColumnNode` / `FenceNode` schema defaults to missing presentation fields without writing them back to source nodes.
+
+- Columns project their saved cross-section, plan dimensions, rotation, Builder base/capital width and depth scales, and brace-support spread. Cluster style shows the central shaft and four satellite shaft footprints, with the expanded tier outline when it extends beyond those shafts. This is a plan footprint adapter; it does not reproduce the full 3D ornamentation or assert structural behavior.
+- Fences project the saved straight or curved centerline using the shared wall-curve helpers. Post markers follow the saved spacing, inset, style, and infill visibility controls. The symbol remains a display/selection footprint; it does not add a construction host, editing workflow, or measurement target.
+- `src/plan/BuilderStructures.test.tsx` covers defaulted column dimensions and yaw, cluster footprint, curved fence sampling and post placement, source immutability, level/visibility filtering, and stable-ID selection. These tests evidence this local adapter only; they do not upgrade the table's upstream Schema, transform, or renderer support statuses.
+
 ## Evidence and invariants
 
 - Raw preservation is complete because `nodeSchema.passthrough()` and `parseProject()` copy every recognized object field; unknown plugin nodes are retained rather than rejected.

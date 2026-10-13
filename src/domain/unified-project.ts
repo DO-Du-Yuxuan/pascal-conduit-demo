@@ -4,7 +4,7 @@ import { createHvacThermostatPort, ensureHvacThermostatPort, ensureHvacUnitPorts
 type Node = Record<string, any> & { id: string; type: string; parentId?: string | null; children?: string[] };
 type Project = Record<string, any> & { nodes: Record<string, Node> };
 const SYSTEM_TYPES = ["ElectricalSystem", "PlumbingSystem", "LightingSystem", "HVACSystem", "SmartSystem", "WaterPurificationSystem", "BathroomSystem", "FireProtectionSystem", "IrrigationSystem", "GasSystem"] as const;
-const BUILDING_TYPES = ["Site", "Building", "Level", "Wall", "Door", "Window", "Item", "Shelf", "Slab", "Ceiling", "Column", "Fence", "Beam", "Roof", "RoofSegment", "Stair", "StairSegment", "Guide", "Spawn", "Zone", "Elevator"];
+const BUILDING_TYPES = ["Site", "Building", "Level", "Wall", "Door", "Window", "Item", "Shelf", "Slab", "Ceiling", "Column", "Fence", "Beam", "Roof", "RoofSegment", "Stair", "StairSegment", "Guide", "Spawn", "Zone", "Elevator", "Skylight", "Scan", "BoxVent", "RidgeVent", "Chimney", "SolarPanel", "Dormer"];
 const BUILDING_SET = new Set(BUILDING_TYPES);
 const DEVICE_TYPES: Record<string, string> = {
   StrongCurrentBox: "strong-panel",

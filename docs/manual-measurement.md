@@ -16,6 +16,8 @@ The **点位图例及安装高度表** is a collapsed control immediately above 
 - Holding `Shift` dynamically locks the preview to the dominant world axis: horizontal for the larger X delta or vertical for the larger Z delta.
 - A horizontal lock measures the world X projection; a vertical lock measures the world Z projection. The second clicked point receives an extension line to the orthogonal dimension line.
 
+Right-button, middle-button, or Space + left-button drags pan the 2D drawing without cancelling an unfinished measurement. A right-button click without a drag still cancels its unfinished preview. Left-button input remains reserved for selection and measurement.
+
 The first click fixes the starting snap. Pointer movement continuously resolves and previews the second snap. The second click commits the dimension. `Esc` exits the tool; right-click cancels only the unfinished measurement. A retained line can be selected and removed with its × control or `Delete` / `Backspace`.
 
 ## Snapping

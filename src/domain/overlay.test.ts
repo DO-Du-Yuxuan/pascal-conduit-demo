@@ -487,10 +487,12 @@ describe("Conduit overlay", () => {
     expect(plan.penetrations).toHaveLength(0);
   });
 
-  it("creates 100 penetration pairs only at final route planning time", () => {
+  it("records each real hosted penetration point once at final route planning time", () => {
     const points = Array.from({ length: 101 }, (_, index) => ({ position: [index, 2, 0] as [number, number, number], attachment: { hostId: `host-${index}`, hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0" } }));
     const plan = planRoute("sprinkler", 50, "penetrate", points);
-    expect(plan.penetrations).toHaveLength(200);
+    expect(plan.penetrations).toHaveLength(101);
+    expect(new Set(plan.penetrations.map(p => p.hostId))).toEqual(new Set(points.map(p => p.attachment.hostId)));
+    expect(plan.penetrations.every(p => p.entry.attachment?.hostId === p.hostId)).toBe(true);
     expect(plan.segments).toHaveLength(100);
   });
 });

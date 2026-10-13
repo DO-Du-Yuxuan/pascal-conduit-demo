@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canvasWheelGesture, canvasWheelZoomFactor, TRACKPAD_PINCH_ZOOM_SENSITIVITY, zoomCanvasViewBox } from "./canvas-navigation";
+import { canvasWheelGesture, canvasWheelPanDelta, canvasWheelZoomFactor, TRACKPAD_PINCH_ZOOM_SENSITIVITY, zoomCanvasViewBox } from "./canvas-navigation";
 
 describe("canvas navigation input", () => {
   it("always uses vertical wheel motion for zoom, including small high-resolution mouse deltas", () => {
@@ -15,6 +15,16 @@ describe("canvas navigation input", () => {
     expect(zoomed.width).toBeLessThan(view.width);
     expect((5 - zoomed.minX) / zoomed.width).toBeCloseTo(.25);
     expect((5 - zoomed.minZ) / zoomed.height).toBeCloseTo(.5);
+  });
+
+  it("converts trackpad pan deltas to rotated world coordinates at the current canvas scale", () => {
+    const view = { minX: 0, minZ: 0, width: 20, height: 10 };
+    const horizontal = canvasWheelPanDelta(40, 0, 0, 400, 200, view, 0);
+    expect(horizontal.x).toBeCloseTo(-2);
+    expect(horizontal.z).toBeCloseTo(0);
+    const rotated = canvasWheelPanDelta(40, 0, 0, 400, 200, view, 90);
+    expect(rotated.x).toBeCloseTo(0);
+    expect(rotated.z).toBeCloseTo(2);
   });
 
   it("uses a stronger response for trackpad pinch zoom than a physical mouse wheel", () => {

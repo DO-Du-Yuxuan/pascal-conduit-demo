@@ -1,3 +1,4 @@
+import { resolveEffectiveHeight } from "../geometry/effective-building";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
 import type { RoutePoint, Vec3 } from "../domain/overlay";
 import type { NodeData } from "../types";
@@ -27,13 +28,13 @@ function wallBaseY(point: RoutePoint) {
  * Openings are intentionally ignored here: they are render holes, not permission
  * for a floor behind the wall to steal the active drawing host.
  */
-export function projectRayToActiveWall(node: NodeData | undefined, active: RoutePoint, origin: Vec3, direction: Vec3): RoutePoint | null {
+export function projectRayToActiveWall(node: NodeData | undefined, active: RoutePoint, origin: Vec3, direction: Vec3, nodes: Record<string, NodeData> = {}): RoutePoint | null {
   const attachment = active.attachment;
   if (!node || node.type !== "wall" || attachment?.hostKind !== "wall") return null;
   const start = Array.isArray(node.start) ? [numeric(node.start[0]), numeric(node.start[1])] as const : null;
   const end = Array.isArray(node.end) ? [numeric(node.end[0]), numeric(node.end[1])] as const : null;
   if (!start || !end) return null;
-  const height = Math.max(.1, numeric(node.height, 2.7)), baseY = wallBaseY(active);
+  const height = Math.max(.1, resolveEffectiveHeight(node, nodes).height?.value ?? 2.5), baseY = wallBaseY(active);
   const sideNormal = normalize(attachment.normal);
 
   if (!isCurvedWall(node as any)) {
@@ -78,7 +79,7 @@ export function projectRayToActiveWall(node: NodeData | undefined, active: Route
  * cannot steal a wall-mounted route. This seam makes an explicitly hit Beam
  * face an intentional host transition instead of projecting it back to wall.
  */
-export function routeCursorFromActiveWall(node: NodeData | undefined, active: RoutePoint, origin: Vec3, direction: Vec3, surfaceHit: RoutePoint | null): RoutePoint | null {
+export function routeCursorFromActiveWall(node: NodeData | undefined, active: RoutePoint, origin: Vec3, direction: Vec3, surfaceHit: RoutePoint | null, nodes: Record<string, NodeData> = {}): RoutePoint | null {
   if (surfaceHit?.attachment?.hostKind === "beam") return surfaceHit;
-  return projectRayToActiveWall(node, active, origin, direction);
+  return projectRayToActiveWall(node, active, origin, direction, nodes);
 }

@@ -6,7 +6,7 @@ export type ThreeDLevelMode = "stacked" | "exploded" | "solo";
 export type ThreeDWallMode = "up" | "cutaway" | "down" | "translucent";
 
 export const DEFAULT_3D_LAYERS: ThreeDLayerVisibility = {
-  walls: true, floors: true, ceilings: false, beams: true, roofs: false, openings: false, furniture: false, zones: false,
+  walls: true, floors: true, ceilings: false, beams: true, roofs: false, openings: true, furniture: true, zones: false,
 };
 
 export type ThreeDViewState = Pick<
@@ -27,3 +27,16 @@ export function viewStateForPreset(current: ThreeDViewState, preset: Extract<Thr
   if (preset === "floor") return { ...current, preset, layers: { ...current.layers, roofs: false, ceilings: false, floors: true }, wallMode: "up", walkthrough: false };
   return { ...current, preset, layers: { ...current.layers, roofs: false, ceilings: true, walls: true }, wallMode: "cutaway", levelMode: "solo", walkthrough: false };
 }
+
+
+export const buildingLayerForType = (type: string): keyof ThreeDLayerVisibility | null => {
+  if (type === "wall") return "walls";
+  if (type === "slab") return "floors";
+  if (type === "ceiling") return "ceilings";
+  if (type === "beam") return "beams";
+  if (type === "roof" || type === "roof-segment") return "roofs";
+  if (type === "door" || type === "window") return "openings";
+  if (["item", "shelf", "stair", "stair-segment", "column", "fence", "cabinet", "cabinet-module"].includes(type)) return "furniture";
+  if (type === "zone") return "zones";
+  return null;
+};

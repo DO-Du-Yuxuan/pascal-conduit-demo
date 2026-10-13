@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { createSceneVisibilityHistory, hideSceneNode, isHideableSceneNode, redoSceneVisibility, restoreAllSceneNodes, undoSceneVisibility } from "./scene-visibility";
+import { createSceneVisibilityHistory, sourceNodeIsVisible, hideSceneNode, restoreSceneNode, isHideableSceneNode, redoSceneVisibility, restoreAllSceneNodes, undoSceneVisibility } from "./scene-visibility";
 
 describe("session-scoped canvas object visibility", () => {
+  it("restores one node without exposing other hidden nodes and preserves undo/redo", () => {
+    const hidden = hideSceneNode(hideSceneNode(createSceneVisibilityHistory(), "chair"), "wall");
+    const restored = restoreSceneNode(hidden, "chair");
+    expect(restored.hiddenNodeIds).toEqual(["wall"]);
+    expect(undoSceneVisibility(restored).hiddenNodeIds).toEqual(["wall", "chair"]);
+    expect(redoSceneVisibility(undoSceneVisibility(restored)).hiddenNodeIds).toEqual(["wall"]);
+    expect(restoreSceneNode(restored, "chair")).toBe(restored);
+  });
+  it("honors saved ancestor visibility without rewriting imported objects", () => {
+    const nodes = { parent: { id: "parent", type: "wall", visible: false }, child: { id: "child", type: "window", parentId: "parent", visible: true } };
+    const before = JSON.stringify(nodes);
+    expect(sourceNodeIsVisible("child", nodes)).toBe(false);
+    expect(JSON.stringify(nodes)).toBe(before);
+    expect(sourceNodeIsVisible("child", { ...nodes, parent: { ...nodes.parent, visible: true } })).toBe(true);
+  });
   it("hides only the requested canvas node without changing its source object", () => {
     const source = { id: "chair", type: "item", name: "Chair" }, state = hideSceneNode(createSceneVisibilityHistory(), source.id);
     expect(state.hiddenNodeIds).toEqual(["chair"]);

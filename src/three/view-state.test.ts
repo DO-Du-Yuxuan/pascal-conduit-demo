@@ -1,9 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { applyViewPresetRequest, DEFAULT_3D_LAYERS, viewStateForPreset } from "./view-state";
+import { applyViewPresetRequest, buildingLayerForType, DEFAULT_3D_LAYERS, viewStateForPreset } from "./view-state";
 
 const state = () => ({ preset: "top" as const, layers: { ...DEFAULT_3D_LAYERS }, levelMode: "exploded" as const, wallMode: "translucent" as const, walkthrough: true });
 
 describe("3D view presentation presets", () => {
+  it("uses the same building layer ownership for scene eyes and rendered geometry", () => {
+    expect(buildingLayerForType("wall")).toBe("walls");
+    expect(buildingLayerForType("window")).toBe("openings");
+    expect(buildingLayerForType("slab")).toBe("floors");
+    expect(buildingLayerForType("ceiling")).toBe("ceilings");
+    expect(buildingLayerForType("beam")).toBe("beams");
+    expect(buildingLayerForType("roof-segment")).toBe("roofs");
+    for (const type of ["item", "stair", "shelf", "column", "fence"]) expect(buildingLayerForType(type)).toBe("furniture");
+    expect(buildingLayerForType("zone")).toBe("zones");
+    expect(buildingLayerForType("future-node")).toBeNull();
+  });
   it("reapplies repeated camera preset commands even when the preset value is unchanged", () => {
     const first = applyViewPresetRequest({ preset: "exterior", commandId: -1, revision: 0 }, 10, "top");
     const repeated = applyViewPresetRequest(first, 11, "top");

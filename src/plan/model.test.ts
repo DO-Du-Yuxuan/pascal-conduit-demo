@@ -226,7 +226,8 @@ describe('2D point annotations', () => {
     overlay.devices=[{...device('surface',1),position:{position:[1,.3,0] as [number,number,number],attachment:host()}}];
     const [from,to]=buildPointPositionDimensions(wallNodes,overlay,'l0');
     expect(from.reference).toEqual([.1,.1]);
-    expect(to.reference).toEqual([3.8,.1]);
+    expect(to.reference[0]).toBeCloseTo(3.8, 10);
+    expect(to.reference[1]).toBeCloseTo(.1, 10);
     expect(from.valueMeters).toBeCloseTo(.9);
     expect(to.valueMeters).toBeCloseTo(2.8);
   });

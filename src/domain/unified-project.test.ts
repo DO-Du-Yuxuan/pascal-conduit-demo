@@ -280,6 +280,25 @@ it("rejects 3.0 and each retired public type instead of guessing a 4.0 replaceme
   }
 });
 
+it("normalizes the supported public building aliases internally and exports their original public types", () => {
+  const raw = project();
+  const types = ["Skylight", "Scan", "BoxVent", "RidgeVent", "Chimney", "SolarPanel", "Dormer"];
+  raw.nodes.level.children = ["wall", ...types.map((type) => type.toLowerCase())];
+  for (const type of types) {
+    const id = type.toLowerCase();
+    raw.nodes[id] = { id, type, parentId: "level", children: [], futureField: { keep: true } };
+  }
+  const loaded = decodeUnifiedProject(raw, "aliases.json", "sha");
+  for (const type of types) {
+    const id = type.toLowerCase();
+    expect(loaded.projectRaw.nodes[id]?.type).toBe(type.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase());
+  }
+  expect(encodeUnifiedProject(loaded.projectRaw, loaded.overlay).nodes).toMatchObject(
+    Object.fromEntries(types.map((type) => [type.toLowerCase(), { type, futureField: { keep: true } }])),
+  );
+  expect(raw.nodes.skylight.type).toBe("Skylight");
+});
+
 it("enforces the approved system owner for each implemented 4.0 entity", () => {
   const raw = project();
   raw.nodes.bad = { ...raw.nodes.socket, id: "bad", type: "RFIDReader", parentId: "ElectricalSystem" };

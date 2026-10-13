@@ -15,6 +15,9 @@ export default defineConfig({
     __BUILD_LABEL__: JSON.stringify(`v${packageVersion} · ${revision} · ${buildTime}`),
   },
   test: {
+    // The published core package uses extensionless internal ESM imports.
+    // Transform it with Vite so tests exercise the same resolver as the browser.
+    server: { deps: { inline: ["@pascal-app/core", "@pascal-app/viewer"] } },
     exclude: ["node_modules/**", "src/evaluation/**", "src/evaluation-report/**", "src/evaluation-ui/**", "src/parser/evaluation-handoff.test.ts", "src/requirements/**", "src/space-functions/**", "scripts/**"],
   },
 });

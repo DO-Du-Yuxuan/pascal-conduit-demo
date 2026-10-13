@@ -6,7 +6,8 @@ import type { NodeData } from "./types";
  */
 export type SceneVisibilityCommand =
   | { kind: "hide"; nodeIds: string[] }
-  | { kind: "restore-all"; nodeIds: string[] };
+  | { kind: "restore-all"; nodeIds: string[] }
+  | { kind: "restore"; nodeIds: string[] };
 
 export type SceneVisibilityHistory = {
   hiddenNodeIds: string[];
@@ -14,7 +15,7 @@ export type SceneVisibilityHistory = {
   redoStack: SceneVisibilityCommand[];
 };
 
-const CANVAS_NODE_TYPES = new Set(["item", "shelf", "slab", "zone", "wall", "door", "window", "stair"]);
+const CANVAS_NODE_TYPES = new Set(["item", "shelf", "slab", "zone", "wall", "door", "window", "stair", "column", "fence"]);
 
 const unique = (nodeIds: readonly string[]) => [...new Set(nodeIds.filter(Boolean))];
 const without = (source: readonly string[], removed: readonly string[]) => source.filter((id) => !removed.includes(id));
@@ -23,6 +24,18 @@ const withIds = (source: readonly string[], added: readonly string[]) => unique(
 export const createSceneVisibilityHistory = (): SceneVisibilityHistory => ({ hiddenNodeIds: [], undoStack: [], redoStack: [] });
 
 export const isHideableSceneNode = (node: NodeData | undefined | null): node is NodeData => Boolean(node && CANVAS_NODE_TYPES.has(node.type));
+
+/** Saved visibility belongs to the imported scene hierarchy, never to its UI overrides. */
+export function sourceNodeIsVisible(nodeId: string, nodes: Record<string, NodeData>): boolean {
+  const visited = new Set<string>();
+  let node: NodeData | undefined = nodes[nodeId];
+  while (node && !visited.has(node.id)) {
+    visited.add(node.id);
+    if (node.visible === false) return false;
+    node = node.parentId ? nodes[node.parentId] : undefined;
+  }
+  return true;
+}
 
 const commit = (history: SceneVisibilityHistory, command: SceneVisibilityCommand): SceneVisibilityHistory => ({
   hiddenNodeIds: command.kind === "hide" ? withIds(history.hiddenNodeIds, command.nodeIds) : without(history.hiddenNodeIds, command.nodeIds),
@@ -33,6 +46,11 @@ const commit = (history: SceneVisibilityHistory, command: SceneVisibilityCommand
 export const hideSceneNode = (history: SceneVisibilityHistory, nodeId: string): SceneVisibilityHistory => {
   if (!nodeId || history.hiddenNodeIds.includes(nodeId)) return history;
   return commit(history, { kind: "hide", nodeIds: [nodeId] });
+};
+
+export const restoreSceneNode = (history: SceneVisibilityHistory, nodeId: string): SceneVisibilityHistory => {
+  if (!history.hiddenNodeIds.includes(nodeId)) return history;
+  return commit(history, { kind: "restore", nodeIds: [nodeId] });
 };
 
 export const restoreAllSceneNodes = (history: SceneVisibilityHistory): SceneVisibilityHistory => {
