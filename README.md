@@ -14,7 +14,7 @@
 
 - [Builder 工作区对齐](docs/builder-workspace-alignment.md)：界面与导航基准、建筑拼接和踏步/屋面渲染、屏幕轮廓、材质与施工数据边界。
 
-- [dsphr / Pascal Editor 整合交接](docs/dsphr-integration-handoff.md)：目标代码定位、数据边界、实例核对、迁移顺序、待决策事项与 Demo 清理记录。
+- [dsphr / Pascal Editor 整合交接](docs/dsphr-integration-handoff.md)：当前实现基线、十系统能力与代码入口、数据/坐标边界、施工基准和完成面、样例覆盖限制、迁移顺序及目标端验收清单。
 - [3D Viewer 边界](docs/3d-readonly-viewer.md)与[Pascal 节点支持范围](docs/pascal-core-support-matrix.md)。
 - [手工 CAD 测量](docs/manual-measurement.md)、[外部尺寸](docs/exterior-dimensions.md)和[平面素材透明边裁切](docs/floorplan-image-crop.md)。
 - [旧项目导入兼容决策](docs/adr/0014-backward-compatible-project-import.md)：导入时转换，统一保存 4.0；保留身份、建筑参数和插件数据。
