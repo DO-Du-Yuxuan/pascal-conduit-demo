@@ -1,5 +1,5 @@
 import type { NodeData } from "../types";
-import { validateBeam, type BeamNode } from "./beams";
+import { beamTopElevationMeters, validateBeam, type BeamNode } from "./beams";
 import type { RouteDiagnostic } from "./routing";
 import type { PlannedRoute } from "./routing";
 import type { RoutePoint, Vec3 } from "./overlay";
@@ -28,7 +28,7 @@ export function validBeamVolumes(nodes: Record<string, NodeData>): BeamVolume[] 
   return Object.values(nodes).flatMap((node) => {
     const checked = node.type === "beam" ? validateBeam(node, nodes) : null;
     if (!checked?.valid || !checked.beam) return [];
-    const beam = checked.beam, delta: Vec3 = [beam.end[0] - beam.start[0], 0, beam.end[1] - beam.start[1]], span = length(delta), axis = normalize(delta), side: Vec3 = [-axis[2], 0, axis[0]], base = levelElevation(nodes, beam), top = base + beam.effectiveCeilingElevation.meters;
+    const beam = checked.beam, delta: Vec3 = [beam.end[0] - beam.start[0], 0, beam.end[1] - beam.start[1]], span = length(delta), axis = normalize(delta), side: Vec3 = [-axis[2], 0, axis[0]], base = levelElevation(nodes, beam), top = base + beamTopElevationMeters(beam);
     return [{ beam, origin: [(beam.start[0] + beam.end[0]) / 2, 0, (beam.start[1] + beam.end[1]) / 2], axis, side, bottom: top - beam.height, top, halfLength: span / 2, halfWidth: beam.width / 2 }];
   });
 }

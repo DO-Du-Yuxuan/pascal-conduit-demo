@@ -5,7 +5,7 @@ import earcut from "earcut";
 import { finalDimensions, resolveItemPlanTransform, resolveWallOpeningTransform } from "../geometry/transform";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
 import type { NodeData, Vec3 } from "../types";
-import { validateBeam } from "./beams";
+import { beamTopElevationMeters, validateBeam } from "./beams";
 import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
 
 export type PositioningTriangle = { objectId: string; objectKind: string; vertices: readonly [Vec3, Vec3, Vec3] };
@@ -186,9 +186,9 @@ export function buildPhysicalPositioningSurfaces(nodes: Record<string, NodeData>
     if (node.type === "beam") {
       const beam = validateBeam(node, nodes).beam;
       if (!beam) continue;
-      const start = beam.start, end = beam.end, dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz), ceiling = beam.effectiveCeilingElevation;
-      if (length < 1e-8 || !ceiling) continue;
-      const top = ceiling.meters, center: Vec3 = [(start[0] + end[0]) / 2, y + top - beam.height / 2, (start[1] + end[1]) / 2];
+      const start = beam.start, end = beam.end, dx = end[0] - start[0], dz = end[1] - start[1], length = Math.hypot(dx, dz), top = beamTopElevationMeters(beam);
+      if (length < 1e-8 || !Number.isFinite(top)) continue;
+      const center: Vec3 = [(start[0] + end[0]) / 2, y + top - beam.height / 2, (start[1] + end[1]) / 2];
       pushBox(out, beam.id, "beam", center, [beam.width, beam.height, length], Math.atan2(dx, dz));
       continue;
     }

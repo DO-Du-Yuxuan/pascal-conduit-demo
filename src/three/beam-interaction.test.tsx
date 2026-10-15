@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NodeData } from "../types";
+import { beamDraftPreview } from "./beam-draft-preview";
 import type { BeamNode } from "../domain/beams";
 import { PascalScenePreview } from "./PascalScenePreview";
 import type { ThreeDSceneInput } from "./scene-input";
@@ -40,4 +41,15 @@ describe("Beam 3D interaction", () => {
     act(() => body.dispatchEvent(pointer("pointerdown", 1.5, 1)));
     act(() => body.dispatchEvent(pointer("pointerup", 1.6, 1.1)));
   });
+  it("renders an unsupported mouse-following draft with invalid preview feedback", () => {
+    const preview=beamDraftPreview({ levelId:"level", start:[0,1], end:[2,2], topElevation:{meters:2.7,basis:"wall-top",sourceWallId:"wall",measurementBasis:"explicit"}, width:.3,height:.5,orthogonal:false })!;
+    const container=document.createElement("div");document.body.append(container);
+    const root=createRoot(container);roots.push(root);
+    vi.spyOn(console,"error").mockImplementation(()=>undefined);vi.spyOn(console,"warn").mockImplementation(()=>undefined);
+    act(()=>root.render(<PascalScenePreview scene={scene} layers={layers} hiddenNodeIds={new Set()} levelMode="stacked" wallMode="up" selectedId={null} onSelect={()=>undefined} beamPreview={preview} beamPreviewValid={false}/>));
+    const body=container.querySelector('[name="beam-body:beam-preview"]');
+    expect(body).not.toBeNull();
+    expect(body!.querySelector('meshstandardmaterial')?.getAttribute('color')).toBe('#ef4444');
+  });
+
 });

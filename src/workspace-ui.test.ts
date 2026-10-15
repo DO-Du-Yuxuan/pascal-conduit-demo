@@ -78,7 +78,8 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("gives wall thermostats the same four-direction center positioning as other points", () => {
-    expect(threeDSource).toContain('aria-label="空调控温器中心定位"');
+    expect(threeDSource).toContain('aria-label="空调控温器施工定位"');
+    expect(threeDSource).toContain('summary>实体净距</summary>');
     expect(threeDSource).toContain("thermostatPositionDraft.planar");
     expect(threeDSource).toContain("applyThermostatPosition");
     expect(threeDSource).toContain("thermostatPositioningProxy");
@@ -271,7 +272,7 @@ describe("conduit workspace UI contract", () => {
   it("shows selected object properties in a narrow right-side system panel", () => {
     expect(threeDSource).toContain('className="conduit-panel conduit-selection-panel"');
     expect(threeDSource).toContain('aria-label={selectedObjectPanelTitle}');
-    expect(threeDSource).toContain('hasSelectedObject && (');
+    expect(threeDSource).toContain('hasSelectedObject && boxSelectedIds.length <= 1 && (');
     expect(styles).toContain('.conduit-selection-panel { left: auto;');
     expect(styles).toContain('width: min(280px, calc(100% - 24px))');
   });
@@ -462,12 +463,11 @@ describe("conduit workspace UI contract", () => {
     expect(source).not.toContain("BeamFootprint.*尺寸");
   });
 
-  it("gives Beam reference-plane confirmation an obstacle-independent Canvas pointer-down path", () => {
-    expect(threeDSource).toContain('function BeamPlanePointerCapture');
-    expect(threeDSource).toContain('canvas.addEventListener("pointerdown", onPointerDown, true)');
-    expect(compactThreeDSource).toContain('<BeamPlanePointerCapture y={layoutReferencePlaneY} worldToEditing={displayTransform.worldToEditing} onPlace={onLayoutReferenceHit} />');
+  it("draws Beams from physical supports without rendering a Beam helper plane", () => {
+    expect(threeDSource).toContain('<BeamSurfacePointerCapture nodes={scene.nodes}');
+    expect(threeDSource).not.toContain('BeamPlanePointerCapture');
+    expect(threeDSource).not.toContain('onLayoutReferenceHit');
     expect(threeDSource).toContain('data-beam-authoring-status');
-    expect(threeDSource).not.toContain('const setStatus = (_message: string) => undefined;');
   });
 
   it("exposes 3D-only Beam numeric geometry controls and scene dimensions", () => {
@@ -490,7 +490,7 @@ describe("conduit workspace UI contract", () => {
   });
 
   it("keeps physical Beam snap identities for creation and numeric clearance inputs for selection", () => {
-    expect(threeDSource).toContain("snapBeamPoint");
+    expect(threeDSource).toContain("snapSupportedBeamPoint");
     expect(threeDSource).toContain("梁表面捕捉");
     expect(threeDSource).not.toContain("snapBeamEdit");
     expect(threeDSource).toContain("selectedBeamPlanarClearances");
@@ -518,7 +518,7 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("aria-pressed={orthogonal}");
     expect(threeDSource).toContain('data-beam-pointer-state={beamPointerState}');
     expect(threeDSource).not.toContain('data-beam-reticle-state={state}');
-    expect(threeDSource).toContain("Explicit Ceiling elevation crossing");
+    expect(threeDSource).toContain("梁顶与起点墙顶齐平");
     expect(threeDSource).toContain("event.nativeEvent.ctrlKey || event.nativeEvent.metaKey");
     expect(styles).toContain(".beam-pointer-feedback");
   });
@@ -527,8 +527,8 @@ describe("conduit workspace UI contract", () => {
     expect(threeDSource).toContain("function confirmBeamEndpoint");
     expect(threeDSource).toContain('if (tool === "beam" && event.key === "Enter")');
     expect(threeDSource).toContain("confirmBeamEndpoint();");
-    expect(threeDSource).toContain("confirmBeamEndpoint({ point: hit.point");
-    expect(threeDSource).toContain("confirmBeamEndpoint({ point, shiftKey: false, ctrlKey })");
+    expect(threeDSource).toContain("confirmBeamEndpoint(pointer)");
+    expect(threeDSource).toContain("const endpoint = fallback ?? beamPointer;");
   });
 
   it("routes Escape through active-route undo before editable-focus suppression", () => {

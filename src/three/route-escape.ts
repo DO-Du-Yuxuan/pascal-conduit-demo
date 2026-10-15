@@ -5,11 +5,13 @@ export type RouteEscapeState =
       hasFixedStart: boolean;
       penetrationActive?: boolean;
     }
+  | { tool: "point-placement" }
   | { tool: "hvac-control"; waypointCount: number; hasStart: boolean }
   | { tool: "hvac-duct"; segmentCount: number; hasStart: boolean }
   | { tool: "other" };
 
 export type RouteEscapeAction =
+  | "cancel-placement"
   | "cancel-penetration"
   | "pop-draft-point"
   | "cancel-fixed-start"
@@ -19,9 +21,10 @@ export type RouteEscapeAction =
   | "cancel-hvac-duct-start"
   | "none";
 
-/** Selects exactly one route-editing undo step for a single Escape press. */
+/** Selects one placement cancellation or route-editing undo step for Escape. */
 export function routeEscapeAction(state: RouteEscapeState): RouteEscapeAction {
   if (state.tool === "other") return "none";
+  if (state.tool === "point-placement") return "cancel-placement";
 
   if (state.tool === "hvac-control") {
     if (state.waypointCount > 0) return "pop-hvac-control-waypoint";
@@ -43,7 +46,7 @@ export function routeEscapeAction(state: RouteEscapeState): RouteEscapeAction {
   return state.draftPointCount > 0 ? "pop-draft-point" : "none";
 }
 
-/** Editable controls suppress shortcuts, except Escape for an active route. */
+/** Editable controls suppress shortcuts, except Escape for placement cancel or route undo. */
 export function shouldIgnoreEditableKeydown(key: string, targetIsEditable: boolean, routeEscapeActive: boolean): boolean {
   return targetIsEditable && !(key === "Escape" && routeEscapeActive);
 }

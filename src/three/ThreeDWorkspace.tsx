@@ -1,25 +1,35 @@
-import { Canvas, type ThreeEvent, type RootStore, useThree } from "@react-three/fiber";
+import { beamDraftPreview } from "./beam-draft-preview";
+import { supportedBeamDependents, unsupportedDependentsAfterEdit } from "../domain/beam-dependents";
+import { BeamSurfacePointerCapture, type BeamPointer } from "./BeamSurfacePointerCapture";
+import { snapSupportedBeamPoint, type BeamSnap } from "../domain/beam-positioning";
+import { resolveEffectiveHeight } from "../geometry/effective-building";
+import { Canvas, type ThreeEvent, type RootStore } from "@react-three/fiber";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ACESFilmicToneMapping, BackSide, Matrix4, PCFShadowMap, Plane, Raycaster, Vector2, Vector3 } from "three";
+import { ACESFilmicToneMapping, BackSide, Matrix4, PCFShadowMap, Vector3 } from "three";
 import { ConduitScene, type BranchPreview, type ConduitTool, type DevicePreview } from "../components/ConduitScene";
+import { nearestWallDimensionFrame, type WallDimensionFace } from "../components/wall-dimension-placement";
+import { describeGroundPositionReferences } from "../components/ground-positioning-guides";
 import { HvacScene, type HvacOutletPreview } from "../components/HvacScene";
 import { addHvacOutlet, addHvacWallPenetration, createHvacControlConduit, createHvacThermostatPort, deleteHvacControlConduit, createHvacDuct, deleteHvacObject, editHvacOutlet, editIndoorUnit, ensureHvacThermostatPort, ensureHvacUnitPorts, hvacAxisPlanarReferences, hvacOutletEdgeClearances, hvacUnitConnected, HVAC_DEFAULT_OUTLET_MM, indoorUnitPort, indoorUnitPortDirection, inspectHvacControlConnection, isHvacObjectId, placeIndoorUnit, placeThermostat, projectFirstDuctSegmentFromPort, appendHvacDuctSegment, resizeHvacTerminalSegment, selectHvacThermostatPort } from "../domain/hvac";
-import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
+import { createEmptyOverlay, parseOverlay, SYSTEM_DEFAULTS, type Circuit, type ConduitOverlayDocument, type ConstructionDatum, type HostAttachment, type HvacSystem, type HvacThermostat, type NetworkDevice, type NetworkDeviceType, type NetworkPort, type Penetration, type RoutePoint, type RouteSegment, type RoutingSystem, type SurfaceChase, type SurfaceMode, type Vec3 } from "../domain/overlay";
+import { constructionDatumElevationMm, constructionDatumFinishedFloorY, constructionDatumLabel, constructionDatumRegionAt, constructionDatumRegionLevelId, constructionDatumWorldY, deviceBottomOffsetFromDatumMm, replaceRegionFinishOffset } from "../domain/construction-datum";
 import { commitBranchRoute, commitJunctionBoxRoute, commitPlannedRoute, deleteNetworkObject, deleteNetworkObjects, junctionBoxPortCanStart, planBranchContinuation, planRoute, startRouteFromJunctionBox, type ConstructionVisualParameters, type JunctionBoxRouteStart, type PenetrationRequest, type PlannedRoute } from "../domain/routing";
 import { preserveSlabHostForWorldAxisPoint, validateBranchCandidate, withCollisionDiagnostics } from "../domain/routing-collision";
-import { DEVICE_DEFAULTS, commitDeviceRoute, commitEndpointRoute, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, commitFireSignalRoute, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeSmokeDetector, resizeSmokeDetectorDepth, resizeSmokeDetectorDiameter, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, SPRINKLER_BRANCH_MIN_LENGTH_METERS, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS, type OpenRouteEndpoint, type SprinklerRouteStart } from "../domain/devices";
+import { DEVICE_DEFAULTS, alignDeviceToFinishedFloor, commitDeviceRoute, commitEndpointRoute, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, commitFireSignalRoute, createFinishedFloorDevice, createNetworkDevice, createReferencePlaneDevice, deviceFrame, deviceStartPorts, deviceTargetPorts, insertDeviceOnSegment, isFloorMountedDevice, isReferencePlaneEligibleDeviceType, nearestDeviceTargetPort, openRouteEndpoints, placeDeviceAtEndpoint, placeSmokeDetector, resizeSmokeDetectorDepth, resizeSmokeDetectorDiameter, rootLegacyNetwork, setSprinklerDirection, startRouteFromDevice, SPRINKLER_BRANCH_MIN_LENGTH_METERS, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS, type OpenRouteEndpoint, type SprinklerRouteStart } from "../domain/devices";
+import { buildFinishedFloorSurfaces, finishedFloorAt, type FinishedFloorSurface } from "../domain/finished-floor";
 import { beginPenetration, directionStateForArrow, displayedRoutePoints, penetrationRequest, pointOnViewPlane, pointOnWorldAxis, previewRoutePoints, projectPenetrationExit, resolveConfirmedRoutePoint, routePointsForCompletion, type DirectionArrow, type PenetrationSession, type RouteCompletionMode, type WorldAxis } from "../domain/drawing";
 import { describeDevicePosition, editDevicePosition, ensureInstallationReferencePlane, resizeDevicePoint, resizeSpotlight, type DevicePositionDescription, type DevicePositioningContext } from "../domain/device-positioning";
 import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
+import { resolveEffectiveBuildingParameters, resolveSlabVerticalRange } from "../geometry/effective-building";
 import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from "../domain/physical-positioning-surfaces";
 import { formatRouteLengthMm, routeSegmentLengthMm, routeSweepLengthMm } from "../domain/route-length";
 import { circuitRouteElementIds, connectedRouteElementIds } from "../domain/route-selection";
 import { projectRoutePointToDirection, resolveDeviceTargetDirection, resolveOrthogonalDirection, resolveSnapCandidate, resolveTargetClick, type SnapCandidate } from "../domain/snapping";
 import { useOverlayStore } from "../domain/store";
-import { constrainBeamEnd, createBeam, editBeam, resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
-import { beamSourceExistsAt, layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
-import { beamPlanarClearances, editBeamPlanarClearance, snapBeamPoint } from "../domain/beam-positioning";
+import { resizeBeamLength, validateBeam, type BeamEdit, type BeamNode } from "../domain/beams";
+import { layoutReferencePlaneFor, replaceLayoutReferencePlane } from "../domain/layout-reference-plane";
+import { beamPlanarClearances, editBeamPlanarClearance } from "../domain/beam-positioning";
 import { beamRouteDiagnostics, isValidBeamAttachment, revalidateBeamAttachments, revalidateBeamPenetrations } from "../domain/beam-routing";
 import { projectBeamPenetrationExit } from "../domain/beam-routing";
 import { PascalScenePreview, type ThreeDSurfaceHit } from "./PascalScenePreview";
@@ -27,8 +37,11 @@ import { overlayForProject, synchronizedOverlay } from './overlay-sync';
 import { routeCursorFromActiveWall } from "./active-host";
 import { resolveHostSurfaceCursor } from "./route-surface-cursor";
 import { resolveWorldAxisHostSurface } from "../domain/world-axis-surface";
-import { builderCanvasEvents, isBuilderNavigationEvent } from "./camera-navigation";
+import { builderCanvasEvents } from "./camera-navigation";
 import { BuilderNavigation } from "./BuilderNavigation";
+import { BoxSelectTool } from "./BoxSelectTool";
+import { mergeBoxSelection } from "./box-select";
+import { BuilderAxisIndicator } from "./BuilderAxisIndicator";
 import { builderDisplayPoint, resolveBuilderDisplayTransform } from "./builder-display-transform";
 import { BuilderInk } from "./BuilderInk";
 import { BuilderGround } from "./BuilderGround";
@@ -43,6 +56,8 @@ import { strongPanelRouteSystem } from "./route-start-chooser";
 import { overlayForLevel } from "./level-overlay";
 import { routeEscapeAction, shouldIgnoreEditableKeydown } from "./route-escape";
 import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
+import { sourceNodeIsVisible } from "../scene-visibility";
+import { FinishedFloorScene } from "./FinishedFloorScene";
 import { canUseCatalogSystem, canUseCatalogTool, type BuilderAuthorTool, type BuilderCatalogLock, type BuilderSystemId } from "../builder-workbench";
 
 import type { ThreeDBounds, ThreeDSceneInput } from "./scene-input";
@@ -52,8 +67,8 @@ import { DEFAULT_PROJECT_SYSTEM_LAYER_VISIBILITY, PROJECT_SYSTEM_LAYER_OPTIONS, 
 export type ThreeDLayerVisibility = { walls: boolean; floors: boolean; ceilings: boolean; beams: boolean; roofs: boolean; openings: boolean; furniture: boolean; zones: boolean };
 type ViewPreset = ThreeDViewPreset;
 type WallMode = ThreeDWallMode;
-type Tool = ConduitTool | "beam" | "hvac-unit" | "hvac-duct" | "hvac-supply" | "hvac-return" | "hvac-outlet" | "hvac-thermostat" | "hvac-control";
-type BeamPointer = { point: [number, number, number]; shiftKey: boolean; ctrlKey?: boolean; levelId?: string | null };
+type Tool = ConduitTool | "box-select" | "beam" | "construction-datum" | "hvac-unit" | "hvac-duct" | "hvac-supply" | "hvac-return" | "hvac-outlet" | "hvac-thermostat" | "hvac-control";
+type BeamAnchor = { snap: BeamSnap; levelId: string; topY: number };
 type BranchStart = { segmentId: string; point: RoutePoint };
 type DeviceRouteStart = { circuit: Circuit; port: NetworkPort; overlay: ConduitOverlayDocument };
 type AppliedConstruction = { surfaceChases: SurfaceChase[]; penetrations: Penetration[] };
@@ -137,32 +152,6 @@ function LayoutPlane({ bounds, y, onPreview, onPlace, confirmOnPointerDown = fal
   </mesh>;
 }
 
-/**
- * Beam placement cannot depend on which visible mesh wins R3F's hit-test:
- * the Layout plane is the authoring coordinate system, not a scene object.
- */
-function BeamPlanePointerCapture({ y, onPlace, worldToEditing }: { y: number; worldToEditing: Matrix4; onPlace: (position: [number, number, number], ctrlKey: boolean) => void }) {
-  const { camera, gl } = useThree();
-  const latestPlace = useRef(onPlace);
-  useEffect(() => { latestPlace.current = onPlace; }, [onPlace]);
-  useEffect(() => {
-    const canvas = gl.domElement, raycaster = new Raycaster(), pointer = new Vector2(), plane = new Plane(new Vector3(0, 1, 0), -y), intersection = new Vector3();
-    const onPointerDown = (event: PointerEvent) => {
-      if (event.button !== 0 || isBuilderNavigationEvent(event)) return;
-      const bounds = canvas.getBoundingClientRect();
-      pointer.set((event.clientX - bounds.left) / bounds.width * 2 - 1, -((event.clientY - bounds.top) / bounds.height * 2 - 1));
-      raycaster.setFromCamera(pointer, camera);
-      raycaster.ray.applyMatrix4(worldToEditing);
-      if (!raycaster.ray.intersectPlane(plane, intersection)) return;
-      event.preventDefault(); event.stopImmediatePropagation();
-      latestPlace.current([intersection.x, y, intersection.z], event.ctrlKey || event.metaKey);
-    };
-    canvas.addEventListener("pointerdown", onPointerDown, true);
-    return () => canvas.removeEventListener("pointerdown", onPointerDown, true);
-  }, [camera, gl, y, worldToEditing]);
-  return null;
-}
-
 /** A semantic scene reticle; the panel counterpart remains readable over dense geometry. */
 function BeamAuthoringMarker({ pointer, state }: { pointer: BeamPointer | null; state: "free" | "surface-snap" | "crossing" | "invalid" | null }) {
   if (!pointer || !state) return null;
@@ -192,12 +181,16 @@ const positioningContext = (scene: ThreeDSceneInput | null): DevicePositioningCo
   }
   return { levelFloorY, wallSpans, wallOpenings, wallFaces, physicalSurfaces: buildPhysicalPositioningSurfaces(scene.nodes) };
 };
+const nodeLevelId = (nodes: ThreeDSceneInput["nodes"], nodeId: string): string | null => {
+  let cursor: ThreeDSceneInput["nodes"][string] | undefined = nodes[nodeId], guard = new Set<string>();
+  while (cursor && !guard.has(cursor.id)) { guard.add(cursor.id); if (cursor.type === "level") return cursor.id; cursor = cursor.parentId ? nodes[cursor.parentId] : undefined; }
+  return null;
+};
 const devicePositionDirectionLabel = (device: NetworkDevice, key: string, direction: Vec3, cameraRight?: Vec3) => {
   if (device.position.attachment?.hostKind === "wall") {
     if (Math.abs(direction[1]) > 0.9) return direction[1] > 0 ? "上" : "下";
     const normal = device.position.attachment.normal, wallRight: Vec3 = [normal[2], 0, -normal[0]];
-    const screenProjection = cameraRight ? direction[0] * cameraRight[0] + direction[1] * cameraRight[1] + direction[2] * cameraRight[2] : 0;
-    const projection = Math.abs(screenProjection) > .05 ? screenProjection : direction[0] * wallRight[0] + direction[2] * wallRight[2];
+    const projection = direction[0] * wallRight[0] + direction[2] * wallRight[2];
     return projection > 0 ? "右" : "左";
   }
   if (Math.abs(direction[0]) > 0.999) return direction[0] > 0 ? "+X" : "−X";
@@ -212,6 +205,10 @@ const devicePositionTargetLabel = (reference: NonNullable<DevicePositionDescript
     return `${device?.name || (device ? DEVICE_DEFAULTS[device.deviceType].label : "点位")}${witness.objectKind === "device-envelope" ? "外壳边" : "中心"}`;
   }
   const wallMounted = device.position.attachment?.hostKind === "wall";
+  if (wallMounted && (reference.key === "u+" || reference.key === "u-") && (witness.objectKind === "wall" || witness.objectKind === "opening")) {
+    const side = reference.key === "u-" ? "左侧" : "右侧", target = witness.objectKind === "opening" ? "洞口边" : "墙角/墙端";
+    return `${side}垂直基准线（${target}）`;
+  }
   if (wallMounted && reference.key === "v+" && witness.objectKind === "wall") return "墙顶";
   if (wallMounted && reference.key === "v-" && witness.objectKind === "slab") return "地面";
   if (wallMounted && (reference.key === "u+" || reference.key === "u-") && witness.objectKind === "wall") {
@@ -229,6 +226,17 @@ const devicePositionTargetLabel = (reference: NonNullable<DevicePositionDescript
     return witness.objectId === device.position.attachment?.hostId ? "墙边" : "墙面";
   }
   return ({ wall: "墙面", slab: "楼板", ceiling: "天花", beam: "梁面", door: "门", window: "窗", item: "家具", shelf: "家具", stair: "楼梯" } as Record<string, string>)[witness.objectKind] ?? "实体";
+};
+const devicePositionReferenceLabel = (reference: NonNullable<DevicePositionDescription["planar"]>[number], overlay: ConduitOverlayDocument, device: NetworkDevice, context: DevicePositioningContext) => {
+  const wallDatumWitness = device.position.attachment?.hostKind === "wall" && (reference.key === "u+" || reference.key === "u-") && (reference.witness?.objectKind === "wall" || reference.witness?.objectKind === "opening");
+  if (wallDatumWitness) return `${["strong-panel", "weak-panel"].includes(device.deviceType) ? "外壳边缘" : "中心"}至${reference.key === "u-" ? "左侧" : "右侧"}垂直基准线`;
+  return `${devicePositionDirectionLabel(device, reference.key, reference.direction)} · 至${devicePositionTargetLabel(reference, overlay, device, context)}`;
+};
+const devicePositionReferenceHint = (reference: NonNullable<DevicePositionDescription["planar"]>[number], device: NetworkDevice) => {
+  if (reference.witness?.objectKind === "opening") return "洞口边";
+  if (reference.witness?.objectKind === "wall") return reference.witness.objectId === device.position.attachment?.hostId ? "墙角或墙端" : "墙面交点";
+  if (reference.witness?.objectKind === "device" || reference.witness?.objectKind === "device-envelope") return reference.witness.objectId;
+  return undefined;
 };
 const branchAttachment = (segment: RouteSegment, t: number): HostAttachment | undefined => {
   const start = segment.start.attachment, end = segment.end.attachment;
@@ -264,7 +272,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const [cameraRight, setCameraRight] = useState<Vec3>([1, 0, 0]);
   const updateCameraRight = useCallback((right: Vec3) => setCameraRight((current) => current.every((value, axis) => Math.abs(value - right[axis]!) < 1e-4) ? current : right), []);
   const [overlay, setOverlay] = useState(() => normalizeOverlay(matchingOverlay, sourceFile, sourceSha, projectId)), [overlayDirty, setOverlayDirty] = useState(() => Boolean(matchingOverlay && initialSharedState.dirty));
-  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [universalRouteMode, setUniversalRouteMode] = useState(false), [routeStartChooser, setRouteStartChooser] = useState(false), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [bendRadiusInput, setBendRadiusInput] = useState(() => String(overlay.settings.bendRadiusMm)), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<ThreeDSurfaceHit | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState(() => ({ widthMm: beamNodeDefinition.defaults().width * 1000, heightMm: beamNodeDefinition.defaults().height * 1000 })), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
+  const [datumRawElevationMm, setDatumRawElevationMm] = useState(""), [datumRawReferenceSource, setDatumRawReferenceSource] = useState<{ kind: "level-base" | "slab-top"; sourceObjectId: string } | null>(null), [choosingDatumReference, setChoosingDatumReference] = useState(false), [datumHeightMm, setDatumHeightMm] = useState(""), [datumFinishOffsetMm, setDatumFinishOffsetMm] = useState(""), [datumRegionFinishOffsetMm, setDatumRegionFinishOffsetMm] = useState(""), [deviceDatumOffsetDraft, setDeviceDatumOffsetDraft] = useState(""), [deviceDatumAbove, setDeviceDatumAbove] = useState(true), [floorTopOffsetDraft, setFloorTopOffsetDraft] = useState("");
+  const [selectedFloorRegionId, setSelectedFloorRegionId] = useState<string | null>(null);
+  const [tool, setTool] = useState<Tool>("select"), [system, setSystem] = useState<RoutingSystem>("receptacle"), [universalRouteMode, setUniversalRouteMode] = useState(false), [routeStartChooser, setRouteStartChooser] = useState(false), [diameterMm, setDiameterMm] = useState(20), [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("surface"), [bendRadiusInput, setBendRadiusInput] = useState(() => String(overlay.settings.bendRadiusMm)), [constructionParameters, setConstructionParameters] = useState<ConstructionVisualParameters>({ chaseWidthMm: 30, chaseDepthMm: 25, penetrationDiameterMm: 30 }), [draft, setDraft] = useState<RoutePoint[]>([]), [orthogonal, setOrthogonal] = useState(true), [worldAxis, setWorldAxis] = useState<WorldAxis | null>(null), [panelCollapsed, setPanelCollapsed] = useState(false), [branchStart, setBranchStart] = useState<BranchStart | null>(null), [branchEnd, setBranchEnd] = useState<RoutePoint | null>(null), [branchPreview, setBranchPreview] = useState<BranchPreview | null>(null), [penetrationSession, setPenetrationSession] = useState<PenetrationSession | null>(null), [explicitPenetrations, setExplicitPenetrations] = useState<PenetrationRequest[]>([]), [hoverId, setHoverId] = useState<string | null>(null), [chaseFallbacks, setChaseFallbacks] = useState<Set<string>>(() => new Set()), [beamStart, setBeamStart] = useState<BeamAnchor | null>(null), [beamPointer, setBeamPointer] = useState<BeamPointer | null>(null), [beamSection, setBeamSection] = useState(() => ({ widthMm: beamNodeDefinition.defaults().width * 1000, heightMm: beamNodeDefinition.defaults().height * 1000 })), [beamEditPreview, setBeamEditPreview] = useState<BeamNode | null>(null), [authoringStatus, setStatus] = useState("");
   const catalogLock = universalRouteMode ? undefined : authorCommand?.catalogLock;
   const buildingLayerOptions: Array<[keyof ThreeDLayerVisibility, string]> = [
     ["walls", "墙体"],
@@ -286,7 +296,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const [cursor, setCursor, scheduleCursor, latestCursor] = useRafCoalescedCursor(null);
   const [axisSurfaceHint, setAxisSurfaceHint] = useState<string | null>(null);
   const [deviceType, setDeviceType] = useState<NetworkDeviceType>("strong-panel"), [deviceRouteStart, setDeviceRouteStart] = useState<DeviceRouteStart | null>(null), [sprinklerRouteStart, setSprinklerRouteStart] = useState<SprinklerRouteStart | null>(null), [fireSignalStart, setFireSignalStart] = useState<{ deviceId: string; portId: string } | null>(null), [junctionRouteStart, setJunctionRouteStart] = useState<JunctionBoxRouteStart | null>(null), [endpointRouteStart, setEndpointRouteStart] = useState<OpenRouteEndpoint | null>(null), [inlineDevicePreview, setInlineDevicePreview, scheduleInlineDevicePreview, latestDevicePreview] = useRafCoalescedDevicePreview(null);
-  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [thermostatPositionDraft, setThermostatPositionDraft] = useState<{ horizontal?: number; vertical?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]), [selectedSegmentIds, setSelectedSegmentIds] = useState<string[]>([]), [boxSelectedIds, setBoxSelectedIds] = useState<string[]>([]), [positionDraft, setPositionDraft] = useState<{ horizontal?: number; vertical?: number; elevation?: number; planar?: Record<string, number> }>({}), [thermostatPositionDraft, setThermostatPositionDraft] = useState<{ horizontal?: number; vertical?: number; planar?: Record<string, number> }>({}), [departingSegments, setDepartingSegments] = useState<RouteSegment[]>([]);
   const [activeTargetPortId, setActiveTargetPortId] = useState<string | null>(null);
   const [hoveredHvacTarget, setHoveredHvacTarget] = useState<{ unitId: string; portId: string; kind: "power" | "control" } | null>(null);
   const [activeHvacDuctId, setActiveHvacDuctId] = useState<string | null>(null), [hvacRouteStart, setHvacRouteStart] = useState<{ unitId: string; system: HvacSystem } | null>(null), [hvacOutletPreview, setHvacOutletPreview] = useState<HvacOutletPreview | null>(null), [hvacControlThermostatId, setHvacControlThermostatId] = useState<string | null>(null), [hvacControlWaypoints, setHvacControlWaypoints] = useState<RoutePoint[]>([]);
@@ -336,12 +346,39 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const selectedThermostatConnected = Boolean(selectedThermostat && overlay.hvac.controlConduits.some(route => route.thermostatId === selectedThermostat.id));
   const hvacPanelOpen = tool.startsWith('hvac-') || Boolean(selectedHvacUnit || selectedHvacSegment || selectedHvacControlSegment || selectedHvacControlFitting || selectedHvacOutlet || selectedThermostat);
   const selectedBeam = scene && selectedId ? validateBeam(scene.nodes[selectedId], scene.nodes).beam : null;
+  const activeConstructionDatum = overlay.constructionDatums.find((datum) => datum.levelId === activeLevelId);
+  const selectedConstructionDatum = overlay.constructionDatums.find((datum) => datum.id === selectedId);
+  const selectedDatumRegion = scene?.nodes[selectedId ?? ""]?.type === "zone" && constructionDatumRegionLevelId(scene.nodes, selectedId!) === activeLevelId ? scene.nodes[selectedId!] : null;
+  const selectedFloorRegionCandidate = selectedDatumRegion ?? (selectedFloorRegionId ? scene?.nodes[selectedFloorRegionId] ?? null : null);
+  const selectedFloorRegion = selectedFloorRegionCandidate && constructionDatumRegionLevelId(scene?.nodes ?? {}, selectedFloorRegionCandidate.id) === activeLevelId ? selectedFloorRegionCandidate : null;
+  const selectedDatumSlab = scene?.nodes[selectedId ?? ""]?.type === "slab" ? scene.nodes[selectedId!] : null;
+  useEffect(() => {
+    if (!activeConstructionDatum) { setDatumRawElevationMm(""); setDatumRawReferenceSource(null); setDatumHeightMm(""); setDatumFinishOffsetMm(""); setChoosingDatumReference(false); return; }
+    setDatumRawElevationMm(String(activeConstructionDatum.rawReference.elevationMm));
+    setDatumRawReferenceSource({ kind: activeConstructionDatum.rawReference.kind, sourceObjectId: activeConstructionDatum.rawReference.sourceObjectId });
+    setDatumHeightMm(String(activeConstructionDatum.heightAboveRawMm));
+    setDatumFinishOffsetMm(activeConstructionDatum.finishedFloorOffsetMm === undefined ? "" : String(activeConstructionDatum.heightAboveRawMm - activeConstructionDatum.finishedFloorOffsetMm));
+  }, [activeConstructionDatum]);
+  useEffect(() => {
+    if (!selectedFloorRegion || !activeConstructionDatum) { setDatumRegionFinishOffsetMm(""); return; }
+    const saved = activeConstructionDatum.localRegionFinishOffsets.find(item => item.regionId === selectedFloorRegion.id);
+    setDatumRegionFinishOffsetMm(saved ? String(saved.offsetMm) : "0");
+  }, [selectedFloorRegion?.id, activeConstructionDatum]);
+  useEffect(() => {
+    if (selectedFloorRegionId && constructionDatumRegionLevelId(scene?.nodes ?? {}, selectedFloorRegionId) !== activeLevelId) setSelectedFloorRegionId(null);
+  }, [selectedFloorRegionId, activeLevelId, scene?.nodes]);
+  useEffect(() => { setChoosingDatumReference(false); }, [tool, activeLevelId]);
   const selectedBeamPlanarClearances = selectedBeam && scene ? beamPlanarClearances(scene.nodes, beamEditPreview ?? selectedBeam) : [];
   const selectedBeamPositionLabel = selectedBeam ? (() => {
     const dx = Math.abs(selectedBeam.end[0] - selectedBeam.start[0]), dz = Math.abs(selectedBeam.end[1] - selectedBeam.start[1]);
     return dz < 1e-7 ? "Z 向净距" : dx < 1e-7 ? "X 向净距" : "垂直梁净距";
   })() : "梁位置净距";
   const selectedDevices = selectedDeviceIds.map((id) => overlay.devices.find((device) => device.id === id)).filter((device): device is NetworkDevice => Boolean(device));
+  const selectedDeviceLevelId = selectedDevice?.position.attachment?.levelId ?? (selectedDevice?.mount?.kind === "reference-plane" || selectedDevice?.mount?.kind === "finished-floor" ? selectedDevice.mount.levelId : selectedDevice?.mount?.kind === "host" ? selectedDevice.mount.attachment.levelId : selectedDevice?.mount?.kind === "segment" ? selectedDevice.mount.levelId : null);
+  const selectedDeviceDatum = overlay.constructionDatums.find((datum) => datum.levelId === selectedDeviceLevelId);
+  const selectedDeviceDatumOffsetMm = selectedDevice && selectedDeviceDatum ? deviceBottomOffsetFromDatumMm(selectedDeviceDatum, scene?.nodes ?? {}, selectedDevice.position.position[1], deviceVerticalHalfExtentMeters(selectedDevice)) : undefined;
+  const selectedDeviceDatumMeasurement = selectedDevice && !isFloorMountedDevice(selectedDevice) && selectedDeviceDatum ? { start: [selectedDevice.position.position[0], selectedDevice.position.position[1] - deviceVerticalHalfExtentMeters(selectedDevice), selectedDevice.position.position[2]] as Vec3, end: [selectedDevice.position.position[0], constructionDatumWorldY(selectedDeviceDatum, scene?.nodes ?? {}), selectedDevice.position.position[2]] as Vec3, label: `下缘${selectedDeviceDatumOffsetMm! >= 0 ? "高于" : "低于"} ${selectedDeviceDatum.label} ${Math.abs(selectedDeviceDatumOffsetMm!)} mm` } : undefined;
+  useEffect(() => { setDeviceDatumOffsetDraft(selectedDeviceDatumOffsetMm === undefined ? "" : String(Math.abs(selectedDeviceDatumOffsetMm))); setDeviceDatumAbove(selectedDeviceDatumOffsetMm === undefined || selectedDeviceDatumOffsetMm >= 0); }, [selectedDevice?.id, selectedDeviceDatum?.id, selectedDeviceDatumOffsetMm]);
   const selectedSizeDevices = selectedDevice ? (selectedDevices.some((device) => device.id === selectedDevice.id) ? selectedDevices : [selectedDevice]) : [];
   const sizeSelectionHasSameType = Boolean(selectedDevice && selectedSizeDevices.length && selectedSizeDevices.every((device) => device.deviceType === selectedDevice.deviceType));
   const sizeSelectionHasConnections = selectedSizeDevices.some((device) => device.ports.some((port) => port.connectedSegmentIds.length > 0));
@@ -358,13 +395,52 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     return "电气";
   })();
   const selectedObjectPanelTitle = selectedObjectSystem === "建筑" ? "建筑面板" : `${selectedObjectSystem}系统面板`;
-  const devicePositioningContext = useMemo(() => positioningContext(scene), [scene]);
+  const baseDevicePositioningContext = useMemo(() => positioningContext(scene), [scene]);
+  const devicePositioningContext = useMemo<DevicePositioningContext>(() => ({
+    ...baseDevicePositioningContext,
+    finishedFloorAt: (levelId, x, z) => finishedFloorAt(overlay.constructionDatums, scene?.nodes ?? {}, levelId, x, z),
+  }), [baseDevicePositioningContext, overlay.constructionDatums, scene?.nodes]);
+  const dimensionFaces: WallDimensionFace[] = useMemo(() => {
+    if (!scene) return [];
+    const nodes = scene.nodes, effective = resolveEffectiveBuildingParameters(nodes), levelY = (levelId: string | null) => levelId ? (Number(nodes[levelId]?.level) || 0) * 3.2 : 0;
+    return Object.values(nodes).flatMap(wall => {
+      if (wall.type !== "wall" || !Array.isArray(wall.start) || !Array.isArray(wall.end)) return [];
+      const id = wall.id, levelId = nodeLevelId(nodes, id), baseY = levelY(levelId), height = effective[id]?.height?.value ?? (typeof wall.height === "number" ? wall.height : 2.5), thickness = effective[id]?.thickness?.value ?? DEFAULT_WALL_THICKNESS;
+      const start: Vec3 = [Number(wall.start[0]), baseY, Number(wall.start[1])], end: Vec3 = [Number(wall.end[0]), baseY, Number(wall.end[1])], length = Math.hypot(end[0] - start[0], end[2] - start[2]);
+      const openings = Object.values(nodes).flatMap(opening => {
+        if ((opening.type !== "door" && opening.type !== "window") || (opening.wallId ?? opening.parentId) !== id) return [];
+        const center = Number(Array.isArray(opening.position) ? opening.position[0] : NaN), width = effective[opening.id]?.width?.value ?? Number(opening.width), openingHeight = effective[opening.id]?.height?.value ?? Number(opening.height), centerY = Number(Array.isArray(opening.position) ? opening.position[1] ?? 0 : 0), bottom = baseY + centerY - openingHeight / 2;
+        return Number.isFinite(center) && Number.isFinite(width) && Number.isFinite(bottom) && Number.isFinite(openingHeight) ? [{ id: opening.id, type: opening.type, start: center - width / 2, end: center + width / 2, bottomY: bottom, topY: bottom + openingHeight }] : [];
+      });
+      return length > 1e-8 ? [{ id, levelId: levelId ?? undefined, start, end, halfThickness: thickness / 2, bottomY: baseY, topY: baseY + height, openings }] : [];
+    });
+  }, [scene]);
+  const selectedDeviceWallFrame = selectedDevice?.position.attachment?.hostKind === "wall" ? nearestWallDimensionFrame(selectedDevice.position.attachment.hostId, selectedDevice.position.position, selectedDevice.position.attachment.normal, dimensionFaces) : undefined;
+  const selectedThermostatWallFrame = selectedThermostat?.position.attachment?.hostKind === "wall" ? nearestWallDimensionFrame(selectedThermostat.position.attachment.hostId, selectedThermostat.position.position, selectedThermostat.position.attachment.normal, dimensionFaces) : undefined;
+  const selectedDeviceFinishedFloorY = selectedDeviceDatum && selectedDevice ? constructionDatumFinishedFloorY(selectedDeviceDatum, scene?.nodes ?? {}, selectedDevice.position.position[0], selectedDevice.position.position[2]) : undefined;
+  const selectedDeviceHeightAboveFinishedFloorMm = selectedDeviceFinishedFloorY !== undefined && selectedDevice ? Math.round((selectedDevice.position.position[1] - deviceVerticalHalfExtentMeters(selectedDevice) - selectedDeviceFinishedFloorY) * 1000) : undefined;
+  const activeLevelSlabs = useMemo(() => Object.values(scene?.nodes ?? {}).filter(node => node.type === "slab" && nodeLevelId(scene?.nodes ?? {}, node.id) === activeLevelId), [scene, activeLevelId]);
+  const inferredDatumReference = useMemo(() => {
+    if (!scene || !activeLevelId) return null;
+    if (activeConstructionDatum) return { reference: activeConstructionDatum.rawReference, label: activeConstructionDatum.rawReference.kind === "slab-top" ? scene.nodes[activeConstructionDatum.rawReference.sourceObjectId]?.name ?? "毛坯地面" : "已保存的参考地面" };
+    const slabs = activeLevelSlabs.filter(slab => Array.isArray(slab.polygon) && slab.polygon.length >= 3).map(slab => ({ slab, topMm: Math.round(resolveSlabVerticalRange(slab).top * 1000) })).sort((a, b) => a.slab.id.localeCompare(b.slab.id));
+    if (!slabs.length) return null;
+    const first = slabs[0]!;
+    if (slabs.every(item => item.topMm === first.topMm)) return { reference: { kind: "slab-top" as const, sourceObjectId: first.slab.id, elevationMm: first.topMm, basis: "explicit" as const }, label: first.slab.name ?? first.slab.id };
+    return null;
+  }, [scene, activeLevelId, activeLevelSlabs, activeConstructionDatum]);
   const bridgeSlabContext = useMemo(() => scene ? {
     levelId: activeLevelId,
     slabs: Object.values(scene.nodes).filter(node => node.type === "slab"),
     levelBaseY: Object.fromEntries(Object.values(scene.nodes).filter(node => node.type === "level").map(node => [node.id, (Number.isFinite(node.level) ? Number(node.level) : 0) * 3.2])),
   } : undefined, [scene, activeLevelId]);
   const positionDescription = useMemo(() => selectedDevice ? describeDevicePosition(overlay, selectedDevice.id, devicePositioningContext) : {}, [overlay, selectedDevice, devicePositioningContext]);
+  const selectedGroundReferences = useMemo(() => selectedDevice ? describeGroundPositionReferences(selectedDevice, positionDescription, dimensionFaces) : [], [selectedDevice, positionDescription, dimensionFaces]);
+  const finishedFloorSurfaces = useMemo(() => buildFinishedFloorSurfaces(overlay.constructionDatums, scene?.nodes ?? {}), [overlay.constructionDatums, scene?.nodes]);
+  const selectedFinishedFloorSurface = finishedFloorSurfaces.find(surface => surface.id === selectedId);
+  const selectedDeviceFloorSurface = selectedDeviceLevelId && selectedDevice ? finishedFloorAt(overlay.constructionDatums, scene?.nodes ?? {}, selectedDeviceLevelId, selectedDevice.position.position[0], selectedDevice.position.position[2]) : undefined;
+  const selectedFloorTopOffsetMm = selectedDeviceFloorSurface && selectedDevice ? Math.round((selectedDevice.position.position[1] + deviceVerticalHalfExtentMeters(selectedDevice) - selectedDeviceFloorSurface.y) * 1000) : undefined;
+  useEffect(() => { setFloorTopOffsetDraft(selectedFloorTopOffsetMm === undefined ? "" : String(selectedFloorTopOffsetMm)); }, [selectedDevice?.id, selectedFloorTopOffsetMm, selectedDeviceFloorSurface?.datumId, selectedDeviceFloorSurface?.regionId]);
   const selectedReferencePlaneElevationMm = selectedDevice?.mount?.kind === "reference-plane"
     ? Math.round((selectedDevice.position.position[1] - deviceVerticalHalfExtentMeters(selectedDevice) - (firstPhysicalPositioningHit(selectedDevice.position.position, [0, -1, 0], devicePositioningContext.physicalSurfaces ?? [], surface => surface.objectKind === "slab")?.point[1] ?? devicePositioningContext.levelFloorY[selectedDevice.mount.levelId] ?? 0)) * 1000)
     : undefined;
@@ -390,7 +466,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   }, [selectedHvacUnit, selectedHvacLevelId, devicePositioningContext.wallFaces, overlay.hvac.indoorUnits]);
   const renderedOverlay = { ...overlay, devices: overlay.devices.map((device) => Object.assign({}, device, { displaySelected: selectedDeviceIds.includes(device.id), ...(device.id === selectedDevice?.id ? { displayPosition: positionDescription } : {}) })) } as ConduitOverlayDocument & { devices: (NetworkDevice & { displayPosition?: DevicePositionDescription; displaySelected?: boolean })[] };
   const selectWhileBrowsing = (id: string | null, additive = false) => {
-    if (tool !== "select") return;
+    if (tool !== "select" && tool !== "box-select" && tool !== "construction-datum" && !overlay.constructionDatums.some((datum) => datum.id === id)) return;
+    setBoxSelectedIds([]);
+    if (tool === "construction-datum" && id && scene?.nodes[id]?.type === "zone") { onSelect(id); setSelectedFloorRegionId(id); setSelectedSegmentIds([]); setSelectedDeviceIds([]); return; }
+    if (tool === "construction-datum" && id && scene?.nodes[id]?.type !== "slab" && !overlay.constructionDatums.some(datum => datum.id === id)) return;
+    if (tool === "select" && (!id || !["slab", "zone"].includes(scene?.nodes[id]?.type ?? ""))) setSelectedFloorRegionId(null);
     const isLengthBearingConduit = Boolean(id && (overlay.segments.some((segment) => segment.id === id) || overlay.fittings.some((fitting) => fitting.id === id && Boolean(fitting.arc))));
     if (isLengthBearingConduit) {
       const next = additive ? (selectedSegmentIds.includes(id!) ? selectedSegmentIds.filter((segmentId) => segmentId !== id) : [...selectedSegmentIds, id!]) : [id!];
@@ -399,6 +479,16 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     onSelect(id); setSelectedSegmentIds([]);
     const isDevice = Boolean(id && overlay.devices.some((device) => device.id === id));
     setSelectedDeviceIds((current) => isDevice ? (additive ? current.includes(id!) ? current : [...current, id!] : [id!]) : []);
+  };
+  const selectBox = (incoming: string[], additive: boolean) => {
+    const current = boxSelectedIds.length ? boxSelectedIds : [...selectedDeviceIds, ...selectedSegmentIds, ...(selectedId ? [selectedId] : [])];
+    const ids = mergeBoxSelection(current, incoming, additive);
+    setBoxSelectedIds(ids);
+    const devices = ids.filter(id => overlay.devices.some(device => device.id === id));
+    setSelectedDeviceIds(devices);
+    setSelectedSegmentIds(ids.filter(id => overlay.segments.some(segment => segment.id === id) || overlay.fittings.some(fitting => fitting.id === id)));
+    onSelect(devices[0] ?? ids[0] ?? null);
+    setStatus(ids.length ? `已框选 ${ids.length} 个对象；Ctrl/⌘ 拖动追加选择，Esc 返回选择。` : "框选范围内没有可见对象。");
   };
   const selectWholeRoute = (id: string) => {
     if (tool !== "select") return;
@@ -446,11 +536,17 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     setSelectedDeviceIds((current) => syncExternalDeviceSelection(current, selectedId, deviceIds));
   }, [overlay.devices, selectedId]);
   useEffect(() => {
+    setBoxSelectedIds(current => selectedId && current.includes(selectedId) ? current : []);
+  }, [selectedId]);
+  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!keyboardActive) return;
       const editable = event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement;
+      const placementToolActive = tool === "point" || tool === "hvac-unit" || tool === "hvac-outlet" || tool === "hvac-thermostat";
       const activeDuct = activeHvacDuctId ? overlay.hvac.ducts.find((duct) => duct.id === activeHvacDuctId) : undefined;
-      const escapeAction = routeEscapeAction(tool === "hvac-control"
+      const escapeAction = routeEscapeAction(placementToolActive
+        ? { tool: "point-placement" }
+        : tool === "hvac-control"
         ? { tool, waypointCount: hvacControlWaypoints.length, hasStart: Boolean(hvacControlThermostatId) }
         : tool === "hvac-supply" || tool === "hvac-return"
           ? { tool: "hvac-duct", segmentCount: activeDuct?.segmentIds.length ?? 0, hasStart: Boolean(hvacRouteStart || activeHvacDuctId) }
@@ -467,16 +563,21 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         setStatus("已进入通用画管起点选择；可点击任一系统的绿色端口开始对应线路。"); return;
       }
       if (!event.metaKey && !event.ctrlKey && event.key.toLowerCase() === "d") { chooseTool("point"); setStatus("已切换到点位模式。"); return; }
-      if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") { event.preventDefault(); deleteSelectedObjects(); return; }
+      if ((event.key === "Delete" || event.key === "Backspace") && (tool === "select" || tool === "box-select")) { event.preventDefault(); deleteSelectedObjects(); return; }
       const routeIsActive = draft.length > 0 || Boolean(hvacRouteStart || activeHvacDuctId || hvacControlThermostatId);
       if (canToggleRouteOrthogonal(tool) && event.key === "Shift" && !event.repeat) { event.preventDefault(); const axisWasLocked = Boolean(worldAxis); toggleRouteOrthogonalMode(); setStatus(axisWasLocked ? "已取消世界轴锁定并开启正交。" : `正交${!orthogonal ? '已开启' : '已关闭'}。`); return; }
       if (shouldHandleWorldAxisArrow(event.key, routeIsActive, tool)) { const next = directionStateForArrow(event.key as DirectionArrow); event.preventDefault(); orthogonalDirection.current = null; setWorldAxis(next.worldAxis); setOrthogonal(next.orthogonal); setStatus(next.worldAxis ? `已锁定世界 ${next.worldAxis.toUpperCase()} 轴；按 ↓ 取消世界轴。` : "已取消世界轴锁定。"); return; }
       if (event.key === "Escape") {
+        if (tool === "box-select") { event.preventDefault(); setTool("select"); setStatus("已退出框选，选中对象保留。"); return; }
         if (tool === "select") { selectWhileBrowsing(null); return; }
         if (tool === "beam") { if (beamStart) { setBeamStart(null); setBeamPointer(null); } else setTool("select"); return; }
         if (escapeAction === "none") return;
         event.preventDefault();
         event.stopPropagation();
+        if (escapeAction === "cancel-placement") {
+          setUniversalRouteMode(false); setRouteStartChooser(false); setTool("select"); resetRouteSession(); setActiveHvacDuctId(null);
+          setStatus("已取消当前点位放置；已放置的对象保留。"); return;
+        }
         if (escapeAction === "cancel-penetration") { setPenetrationSession(null); setCursor(null); setStatus("已取消待确认的穿透出口。"); return; }
         if (escapeAction === "pop-draft-point") {
           const removedPoint = draft[draft.length - 1];
@@ -513,11 +614,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     // A focused canvas control may stop keydown bubbling. Route undo must still
     // receive Escape after the pointer confirms a point on that control.
     window.addEventListener("keydown", onKeyDown, true); return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [overlay, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, selectedSegmentIds, deviceRouteStart, sprinklerRouteStart, fireSignalStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
+  }, [overlay, boxSelectedIds, draft, system, diameterMm, surfaceMode, constructionParameters, tool, cursor, branchStart, branchEnd, beamStart, beamPointer, explicitPenetrations, worldAxis, orthogonal, penetrationSession, inlineDevicePreview, deviceType, latestCursor, selectedId, selectedDeviceIds, selectedSegmentIds, deviceRouteStart, sprinklerRouteStart, fireSignalStart, junctionRouteStart, endpointRouteStart, hvacRouteStart, activeHvacDuctId, hvacControlThermostatId, hvacControlWaypoints, authorCommand, keyboardActive, onSelect]);
 
   const commit = (next: ConduitOverlayDocument) => { commitSharedOverlay(next); setOverlay(next); setOverlayDirty(true); };
   const deleteSelectedObjects = () => {
+    if (boxSelectedIds.some(id => scene?.nodes[id] && (boxSelectedIds.length > 1 || scene.nodes[id].type !== "beam"))) { setStatus("选集中包含只读建筑对象；请单独选择要删除的施工对象。"); return; }
     if (selectedBeam) {
+      const supportedMembers = supportedBeamDependents(scene?.nodes ?? {}, selectedBeam.id);
+      if (supportedMembers.length) { setStatus(`梁仍支承 ${supportedMembers.map(beam => beam.name || beam.id).join("、")}，不能删除。`); return; }
       const hostedDevices = overlay.devices.filter((device) => device.position.attachment?.hostId === selectedBeam.id && isValidBeamAttachment(scene?.nodes ?? {}, device.position));
       if (hostedDevices.length) { setStatus(`Beam 仍承载 ${hostedDevices.length} 个设备：${hostedDevices.map((device) => device.name || device.id).join("、")}，不能删除。`); return; }
       const current = useOverlayStore.getState(), project = current.project;
@@ -529,7 +633,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       commitSharedWorkspace({ ...project, raw: { ...project.raw, nodes } }, nextOverlay, true, current.dirty || nextOverlay !== current.overlay);
       setBeamEditPreview(null); onSelect(null); setStatus("已删除空 Beam；管线保持不变。"); return;
     }
-    const ids = [...new Set(selectedSegmentIds.length ? selectedSegmentIds : selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
+    const ids = [...new Set(boxSelectedIds.length ? boxSelectedIds : selectedSegmentIds.length ? selectedSegmentIds : selectedDeviceIds.length ? selectedDeviceIds : selectedId ? [selectedId] : [])];
     if (!ids.length) return;
     let next = overlay;
     const hvacIds = ids.filter(id => isHvacObjectId(next, id));
@@ -540,7 +644,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     }
     next = deleteNetworkObjects(next, ids.filter(id => !hvacIds.includes(id)));
     if (next === overlay) return;
-    commit(next); onSelect(null); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个选中管线对象及孤立施工特征。` : "已删除对象及孤立施工特征。");
+    commit(next); onSelect(null); setBoxSelectedIds([]); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setHoverId(null); setStatus(ids.length > 1 ? `已删除 ${ids.length} 个选中管线对象及孤立施工特征。` : "已删除对象及孤立施工特征。");
   };
   const applyDevicePosition = (change?: { horizontalClearanceMm?: number; bottomHeightMm?: number; elevationMm?: number; finishedFloorElevationMm?: number; verticalClearanceMm?: number; planarClearanceMm?: Record<string, number> }) => {
     if (!selectedDevice) return;
@@ -551,6 +655,24 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const leaving = overlay.segments.filter((segment) => result.removedSegmentIds.includes(segment.id));
     setDepartingSegments(leaving); window.setTimeout(() => setDepartingSegments([]), 180);
     commit(result.overlay); setStatus(result.removedSegmentIds.length ? "设备已移动；相邻管段已断开，请从开放管端重新连接。" : "设备定位已更新。");
+  };
+  const applyFinishedFloorAlignment = (requestedOffset?: number) => {
+    if (!selectedDevice || !selectedDeviceFloorSurface || !isFloorMountedDevice(selectedDevice)) return;
+    if (selectedDevice.ports.some(port => port.connectedSegmentIds.length)) { setStatus("点位端口已接管，不能对齐完成面；请先移除关联管线。"); return; }
+    const offset = requestedOffset ?? Number(floorTopOffsetDraft);
+    if ((requestedOffset === undefined && !floorTopOffsetDraft.trim()) || !Number.isFinite(offset)) { setStatus("请输入有效的上口相对完成面偏移毫米数。"); return; }
+    const aligned = alignDeviceToFinishedFloor(selectedDevice, { ...selectedDeviceFloorSurface, levelId: selectedDeviceLevelId! }, offset);
+    if (aligned === selectedDevice) { setStatus("该点位不能移动到当前完成面。"); return; }
+    commit({ ...overlay, devices: overlay.devices.map(device => device.id === aligned.id ? aligned : device) });
+    setStatus(offset === 0 ? "点位上口已对齐完成面。" : `点位上口已设为完成面${offset > 0 ? "以上" : "以下"} ${Math.abs(offset)} mm。`);
+  };
+  const applyDeviceDatumOffset = () => {
+    if (!selectedDevice || !selectedDeviceDatum || !selectedDeviceLevelId || !deviceDatumOffsetDraft.trim()) return;
+    if (selectedDevice.ports.some(port => port.connectedSegmentIds.length)) { setStatus("设备端口已接管，垂直定位锁定；先移除关联管线再编辑。 "); return; }
+    const offset = (deviceDatumAbove ? 1 : -1) * Number(deviceDatumOffsetDraft), levelFloorY = devicePositioningContext.levelFloorY[selectedDeviceLevelId];
+    if (!Number.isFinite(offset) || levelFloorY === undefined) { setStatus("施工基准垂直偏移必须为有效毫米数，且设备需要有可用楼层定位。 "); return; }
+    const bottomHeightMm = Math.round((constructionDatumWorldY(selectedDeviceDatum, scene?.nodes ?? {}) + offset / 1000 - levelFloorY) * 1000);
+    applyDevicePosition(selectedDevice.position.attachment?.hostKind === "wall" ? { bottomHeightMm } : { elevationMm: bottomHeightMm });
   };
   const applyDeviceSize = (axis: 0 | 1 | 2, value: number) => {
     if (!selectedDevice || !Number.isFinite(value) || value <= 0) return;
@@ -786,7 +908,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     clearCompletedDraft(); setDeviceRouteStart(null); setStatus(tool === "branch" ? (system === "sprinkler" ? "已生成消防三通分支。" : "已生成 86 检修盒分支。") : "已直接生成管线与施工影响。");
   };
   const effectiveCursor = resolveEffectiveCursor(cursor);
-  const beamSnapTarget = scene && beamPointer && (beamStart?.attachment.levelId ?? beamPointer.levelId) ? snapBeamPoint(scene.nodes, beamStart?.attachment.levelId ?? beamPointer.levelId!, [beamPointer.point[0], beamPointer.point[2]]) : null;
+  const beamSnapTarget = scene && beamPointer?.targetId && activeLevelId
+    ? snapSupportedBeamPoint(scene.nodes, activeLevelId, [beamPointer.point[0], beamPointer.point[2]], {
+        objectId: beamPointer.targetId,
+        kind: beamStart ? undefined : "wall",
+        start: beamStart?.snap.point,
+        orthogonal: Boolean(beamStart && orthogonal),
+      })
+    : null;
   const activeTargetDevice = overlay.devices.find((device) => device.id === hoverId);
   const activeTargetPort = activeTargetDevice && deviceTargetPorts(activeTargetDevice, system).find((port) => port.id === activeTargetPortId);
   const activeTargetResolution = draft.length && activeTargetPort ? resolveTargetClick(draft[draft.length - 1], { kind: "device-port", point: activeTargetPort.position, targetId: activeTargetPort.id, label: `${activeTargetDevice?.name || DEVICE_DEFAULTS[activeTargetDevice!.deviceType].label}端口`, distancePixels: 0, compatible: true }, { tolerancePixels: 16, worldAxis, hostOrthogonal: orthogonal, orthogonalDirection: orthogonalDirection.current }) : null;
@@ -833,9 +962,13 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const first = previewPlan.diagnostics[0], ids = first?.objectIds?.length ? `（${first.objectIds.join("、")}）` : "";
     setStatus(`${first?.message ?? "当前路径无效。"}${ids}`);
   }, [previewPlan?.canCommit, previewPlan?.diagnostics[0]?.code, previewPlan?.diagnostics[0]?.objectIds?.join(":")]);
-  const beamCandidate = (start: ThreeDSurfaceHit, hit: BeamPointer, id = "beam-preview") => scene && start.attachment.hostKind === "ceiling"
-    ? (() => { const levelId = start.attachment.levelId ?? "", rawStart: [number, number] = [start.point[0], start.point[2]], constrainedEnd = constrainBeamEnd(rawStart, [hit.point[0], hit.point[2]], orthogonal), snappedStart = snapBeamPoint(scene.nodes, levelId, rawStart), snappedEnd = snapBeamPoint(scene.nodes, levelId, constrainedEnd); return beamNodeDefinition.create(scene.nodes, { id, name: "预览梁", levelId, start: snappedStart?.point ?? rawStart, end: snappedEnd?.point ?? constrainedEnd, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000, explicitCeilingCrossing: hit.ctrlKey }); })()
-    : null;
+  const beamCandidate = (start: BeamAnchor, hit: BeamPointer, id = "beam-preview") => {
+    if (!scene) return null;
+    if (!hit.targetId) return { valid: false, beam: null, diagnostics: ["终点必须点击真实墙、柱或已有梁的实体表面。"] };
+    const end = snapSupportedBeamPoint(scene.nodes, start.levelId, [hit.point[0], hit.point[2]], { objectId: hit.targetId, start: start.snap.point, orthogonal });
+    if (!end) return { valid: false, beam: null, diagnostics: [scene.nodes[hit.targetId]?.type === "column" ? "此处没有可用柱面支承；请使用无装饰直方柱、墙或已有梁面。" : "终点必须吸附墙、柱或已有梁的实体表面。"] };
+    return beamNodeDefinition.createSupported(scene.nodes, { id, name: "预览梁", levelId: start.levelId, start: start.snap, end, width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000 });
+  };
   const commitBeam = (end: BeamPointer) => {
     if (!beamStart) return;
     const candidate = beamCandidate(beamStart, end, `beam-${crypto.randomUUID()}`);
@@ -851,7 +984,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     onSelect(beam.id); setBeamStart(null); setBeamPointer(null); setStatus("已创建 Beam；工具保持开启，可继续绘制。");
   };
   function confirmBeamEndpoint(fallback?: BeamPointer) {
-    const endpoint = beamPointer ?? fallback;
+    const endpoint = fallback ?? beamPointer;
     if (!endpoint) { setStatus("请先移动鼠标确定 Beam 终点。 "); return; }
     commitBeam(endpoint);
   }
@@ -864,6 +997,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     const result = beamNodeDefinition.edit(scene.nodes, selectedBeam, edit);
     setBeamEditPreview(null);
     if (!result.valid || !result.beam) { setStatus(result.diagnostics[0] ?? "Beam 编辑无效。"); return; }
+    const unsupported = unsupportedDependentsAfterEdit(scene.nodes, result.beam);
+    if (unsupported.length) { setStatus(`修改会使 ${unsupported.map(beam => beam.name || beam.id).join("、")} 失去梁面支承，请先调整这些梁。`); return; }
     const current = useOverlayStore.getState(), project = current.project;
     if (!project || !project.raw.nodes || typeof project.raw.nodes !== "object") return;
     const nextProject = { ...project, raw: { ...project.raw, nodes: { ...(project.raw.nodes as Record<string, unknown>), [result.beam.id]: result.beam } } };
@@ -871,7 +1006,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     commitSharedWorkspace(nextProject, nextOverlay, true, current.dirty || nextOverlay !== currentOverlay);
   };
   const onSurfaceMove = (hit: ThreeDSurfaceHit | null) => {
-    if (tool === "beam") { setBeamPointer(hit ? { point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey, levelId: hit.attachment.levelId } : null); return; }
+    if (tool === "beam") return;
     if (!hit) { rawSurfaceHit.current = null; surfaceOccluded.current = true; if (!worldAxis) scheduleCursor(null); return; }
     surfaceOccluded.current = false;
     rawSurfaceHit.current = hit;
@@ -920,6 +1055,25 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     scheduleCursor({ position: point });
   };
   const onSurfaceHit = (hit: ThreeDSurfaceHit) => {
+    if (tool === "construction-datum" && hit.attachment.levelId) {
+      if (choosingDatumReference && hit.attachment.hostKind === "slab" && hit.attachment.levelId === activeLevelId) {
+        const slab = scene?.nodes[hit.attachment.hostId];
+        if (slab?.type === "slab") {
+          setDatumRawElevationMm(String(Math.round(resolveSlabVerticalRange(slab).top * 1000)));
+          setDatumRawReferenceSource({ kind: "slab-top", sourceObjectId: slab.id });
+          setChoosingDatumReference(false);
+          setStatus(`参考地面已设为 ${slab.name ?? slab.id}。`);
+        }
+        return;
+      }
+      const regionId = constructionDatumRegionAt(scene?.nodes ?? {}, hit.attachment.levelId, hit.point[0], hit.point[2]);
+      if (regionId) { onSelect(regionId); setSelectedFloorRegionId(regionId); setSelectedSegmentIds([]); setSelectedDeviceIds([]); }
+      else if (hit.attachment.hostKind === "slab") { onSelect(hit.attachment.hostId); }
+      return;
+    }
+    if ((tool === "select" || tool === "box-select") && hit.attachment.hostKind === "slab" && hit.attachment.levelId) {
+      setSelectedFloorRegionId(constructionDatumRegionAt(scene?.nodes ?? {}, hit.attachment.levelId, hit.point[0], hit.point[2]) ?? null);
+    }
     if (tool === "hvac-control") {
       if (!hvacControlThermostatId) { setStatus("先点击控温器的绿色控制端口起画。"); return; }
       const previous = hvacControlRouteAnchor();
@@ -931,9 +1085,21 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
       if (previous && Math.hypot(...point.position.map((value, axis) => value - previous.position[axis])) < .001) return;
       setHvacControlWaypoints(points => [...points, point]); setCursor(null); orthogonalDirection.current = null; setStatus("已确认控制管途经点；继续点击增加路径点，或点击 FCU 绿色控制端口完成。"); return;
     }
-    if (tool === "beam") {
-      if (!beamStart) { if (hit.attachment.hostKind !== "ceiling" || !hit.attachment.levelId) { setStatus("Beam 必须从 Ceiling 下表面开始。 "); return; } setBeamStart(hit); setBeamPointer(hit); setStatus("已确定梁起点；移动鼠标预览，第二次单击创建。Shift 约束水平正交。 "); return; }
-      confirmBeamEndpoint({ point: hit.point, shiftKey: hit.shiftKey, ctrlKey: hit.ctrlKey }); return;
+    if (tool === "beam") return;
+    if (tool === "point" && hit.attachment.hostKind === "slab" && hit.attachment.normal[1] > .9 && hit.attachment.levelId && scene) {
+      const floor = finishedFloorAt(overlay.constructionDatums, scene.nodes, hit.attachment.levelId, hit.point[0], hit.point[2]);
+      if (floor) {
+        try {
+          const device = createFinishedFloorDevice(deviceType, hit.point[0], hit.point[2], { ...floor, levelId: hit.attachment.levelId });
+          commit({ ...overlay, devices: [...overlay.devices, device] });
+          setCursor(null); onSelect(device.id); setSelectedDeviceIds([device.id]);
+          setStatus("已放置地面点位，上口与完成面齐平。");
+        } catch (error) { setStatus(error instanceof Error ? error.message : "该设备不能放置在完成面。"); }
+        return;
+      }
+      if (overlay.constructionDatums.some(datum => datum.levelId === hit.attachment.levelId && datum.finishedFloorOffsetMm !== undefined)) {
+        setCursor(null); setStatus("该位置没有唯一有效的完成面，不能落回毛坯楼板。"); return;
+      }
     }
     if (tool === "point") { try { const position = routePoint(hit); if (deviceType === "smoke-detector") { const next = placeSmokeDetector(overlay, position); commit(next); onSelect(next.devices[next.devices.length - 1]!.id); setStatus("已放置烟感，可从绿色消防信号端口起画。"); } else commit({ ...overlay, devices: [...overlay.devices, createNetworkDevice(deviceType, position)] }); setCursor(null); } catch { setStatus(`${DEVICE_DEFAULTS[deviceType].label}不能放置在当前宿主。`); } return; }
     if (tool === "hvac-unit") {
@@ -988,11 +1154,39 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (candidate.length >= 2) { const plan = validatedPlan(candidate, branchStart?.segmentId); if (!plan.canCommit) { rejectDiagnostics(plan); return; } }
     setDraft(candidate); setBranchEnd(constrained); setCursor(null); orthogonalDirection.current = null; setStatus("已确定落点；移动鼠标预览下一段，按 Enter、双击或完成路径直接生成。");
   };
-  const onLayoutReferenceHit = (point: [number, number, number], ctrlKey = false) => {
-    if (tool !== "beam" || !activeLevelId) return;
-    if (!beamStart && scene && !beamSourceExistsAt(scene.nodes, activeLevelId, [point[0], point[2]])) { setStatus("布局参考面只能在有效 Ceiling 区域开始 Beam。 "); return; }
-    if (beamStart) { confirmBeamEndpoint({ point, shiftKey: false, ctrlKey }); return; }
-    onSurfaceHit({ point, shiftKey: false, ctrlKey, attachment: { hostId: `layout-reference-plane:${activeLevelId}`, hostKind: "ceiling", surface: "layout-reference-plane", normal: [0, -1, 0], levelId: activeLevelId } });
+  const onFinishedFloorMove = (surface: FinishedFloorSurface, point: Vec3 | null) => {
+    if (!point) { if (tool === "point") scheduleCursor(null); return; }
+    if (tool !== "point" || !scene || !DEVICE_DEFAULTS[deviceType].hostKinds.includes("slab")) return;
+    const resolved = finishedFloorAt(overlay.constructionDatums, scene.nodes, surface.levelId, point[0], point[2]);
+    const slab = scene.nodes[resolved?.sourceSlabId ?? ""];
+    if (!resolved || resolved.datumId !== surface.datumId || !slab || slab.type !== "slab") { scheduleCursor(null); return; }
+    const levelY = (Number(scene.nodes[surface.levelId]?.level) || 0) * 3.2, slabTop = levelY + resolveSlabVerticalRange(slab).top, half = DEVICE_DEFAULTS[deviceType].sizeMm[2] / 2000;
+    const centerY = resolved.y - half;
+    const attachment: HostAttachment = { hostId: slab.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: surface.levelId, localPosition: [point[0], centerY - slabTop, point[2]], basis: { u: [1, 0, 0], v: [0, 0, 1] } };
+    scheduleCursor({ position: [point[0], centerY, point[2]], attachment });
+  };
+  const onFinishedFloorPlace = (surface: FinishedFloorSurface, point: Vec3) => {
+    if (!scene || tool !== "point") return;
+    const resolved = finishedFloorAt(overlay.constructionDatums, scene.nodes, surface.levelId, point[0], point[2]);
+    if (!resolved || resolved.datumId !== surface.datumId || resolved.sourceSlabId !== surface.sourceSlabId) { setStatus("该位置没有唯一有效的完成面与毛坯楼板。 "); return; }
+    try {
+      const device = createFinishedFloorDevice(deviceType, point[0], point[2], { ...resolved, levelId: surface.levelId });
+      commit({ ...overlay, devices: [...overlay.devices, device] });
+      setCursor(null); onSelect(device.id); setSelectedDeviceIds([device.id]);
+      setStatus(`${DEVICE_DEFAULTS[deviceType].label}已放置在完成面；设备及管线保持独立位置。`);
+    } catch (error) { setStatus(error instanceof Error ? error.message : `${DEVICE_DEFAULTS[deviceType].label}不能放置在完成面。`); }
+  };
+  const onBeamSurfacePlace = (pointer: BeamPointer | null) => {
+    if (!scene || !activeLevelId || !pointer) { setStatus("请点击真实墙体表面确定梁起点。"); return; }
+    if (beamStart) { confirmBeamEndpoint(pointer); return; }
+    if (!pointer.targetId || scene.nodes[pointer.targetId]?.type !== "wall") { setStatus("梁起点必须吸附真实墙体表面。"); return; }
+    const snap = snapSupportedBeamPoint(scene.nodes, activeLevelId, [pointer.point[0], pointer.point[2]], { kind: "wall", objectId: pointer.targetId });
+    if (!snap) { setStatus("未命中可用墙面，请重新选择墙体表面。"); return; }
+    const wallHeight = resolveEffectiveHeight(scene.nodes[pointer.targetId]!, scene.nodes).height!.value;
+    const topY = Number(scene.nodes[activeLevelId]?.level ?? 0) * 3.2 + wallHeight;
+    setBeamStart({ snap, levelId: activeLevelId, topY });
+    setBeamPointer({ ...pointer, point: [snap.point[0], topY, snap.point[1]] });
+    setStatus(`已吸附起点墙面，梁顶 ${Math.round(wallHeight * 1000)} mm；请选择同顶标高的墙、柱或梁面。`);
   };
   const onStartDeviceRoute = (device: NetworkDevice, portId?: string, targetPoint?: [number, number, number], requestedSystem?: RoutingSystem) => {
     if (tool !== "draw" && !(tool === "branch" && branchStart && draft.length)) { onSelect(device.id); return; }
@@ -1167,7 +1361,29 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   const resetRouteSession = () => { setDraft([]); setCursor(null); setBranchStart(null); setBranchEnd(null); setBranchPreview(null); setBeamStart(null); setBeamPointer(null); setInlineDevicePreview(null); setPenetrationSession(null); setExplicitPenetrations([]); setWorldAxis(null); setDeviceRouteStart(null); setSprinklerRouteStart(null); setFireSignalStart(null); setJunctionRouteStart(null); setEndpointRouteStart(null); setHvacRouteStart(null); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setHvacOutletPreview(null); orthogonalDirection.current = null; };
   useEffect(() => { onActiveToolChange?.(tool); }, [tool, onActiveToolChange]);
   const canUseTool = (next: Tool) => next === "hvac-supply" || next === "hvac-return" ? canUseCatalogTool(catalogLock, "hvac-duct") : canUseCatalogTool(catalogLock, next);
-  const chooseTool = (next: Tool) => { if (!canUseTool(next)) { setStatus("当前 Builder 卡片不允许切换到该工具。"); return; } setUniversalRouteMode(false); setRouteStartChooser(false); setTool(next); resetRouteSession(); if (['draw', 'branch', 'hvac-supply', 'hvac-return', 'hvac-control'].includes(next)) resetRouteConstraints(); setHvacControlThermostatId(null); setHvacControlWaypoints([]); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-control'].includes(next)) onSelect(null); };
+  const chooseTool = (next: Tool) => { if (!canUseTool(next)) { setStatus("当前 Builder 卡片不允许切换到该工具。"); return; } setUniversalRouteMode(false); setRouteStartChooser(false); setTool(next); resetRouteSession(); if (['draw', 'branch', 'hvac-supply', 'hvac-return', 'hvac-control'].includes(next)) resetRouteConstraints(); setHvacControlThermostatId(null); setHvacControlWaypoints([]); if (next !== 'hvac-supply' && next !== 'hvac-return') setActiveHvacDuctId(null); if (next !== "select" && next !== "box-select" && !['hvac-supply', 'hvac-return', 'hvac-outlet', 'hvac-control'].includes(next)) onSelect(null); };
+  const saveConstructionDatum = () => {
+    if (!activeLevelId || !scene?.nodes[activeLevelId]) { setStatus("请先选择活动楼层。 "); return; }
+    if (!datumHeightMm.trim() || choosingDatumReference) { setStatus(choosingDatumReference ? "请点击本层一块楼板的顶面作为参考地面。" : "请输入基线离毛坯地面的高度。 "); return; }
+    const height = Number(datumHeightMm), distanceAboveFinish = Number(datumFinishOffsetMm), finishDefined = datumFinishOffsetMm.trim() !== "";
+    if (!Number.isFinite(height) || (finishDefined && !Number.isFinite(distanceAboveFinish))) { setStatus("请输入有效的毫米数值；完成面高度可填 0 mm。 "); return; }
+    const sameSavedReference = activeConstructionDatum && datumRawReferenceSource?.kind === activeConstructionDatum.rawReference.kind && datumRawReferenceSource.sourceObjectId === activeConstructionDatum.rawReference.sourceObjectId && Number(datumRawElevationMm) === activeConstructionDatum.rawReference.elevationMm;
+    const rawReference = sameSavedReference ? activeConstructionDatum.rawReference : datumRawReferenceSource && datumRawElevationMm.trim() ? { ...(activeConstructionDatum?.rawReference ?? {}), ...datumRawReferenceSource, elevationMm: Number(datumRawElevationMm), basis: "explicit" as const } as ConstructionDatum["rawReference"] : inferredDatumReference?.reference;
+    if (!rawReference || rawReference.kind === "slab-top" && (!scene.nodes[rawReference.sourceObjectId] || scene.nodes[rawReference.sourceObjectId]!.type !== "slab" || nodeLevelId(scene.nodes, rawReference.sourceObjectId) !== activeLevelId)) { setStatus("请点击“选参考地面”，再点击本层楼板顶。 "); return; }
+    const rawElevation = rawReference.elevationMm;
+    const id = activeConstructionDatum?.id ?? `construction-datum:${activeLevelId}`;
+    const nextDatum: ConstructionDatum = { ...activeConstructionDatum, id, levelId: activeLevelId, label: activeConstructionDatum?.label ?? constructionDatumLabel(1), rawReference, heightAboveRawMm: height, elevationMm: constructionDatumElevationMm(rawElevation, height), ...(finishDefined ? { finishedFloorOffsetMm: height - distanceAboveFinish } : {}), localRegionFinishOffsets: activeConstructionDatum?.localRegionFinishOffsets ?? [] };
+    if (!finishDefined) delete nextDatum.finishedFloorOffsetMm;
+    const constructionDatums = [...overlay.constructionDatums.filter((datum) => datum.levelId !== activeLevelId), nextDatum];
+    commit({ ...overlay, constructionDatums }); onSelect(id); setStatus("施工基线已保存；线位更新不会移动设备或管线。 ");
+  };
+  const saveZoneFinishOffset = () => {
+    if (!activeConstructionDatum || !selectedFloorRegion) { setStatus("请在施工基准工具中选择一个空间区域。 "); return; }
+    if (!datumRegionFinishOffsetMm.trim()) { setStatus("请输入区域完成面差值；显式输入 0 mm 有效。 "); return; }
+    const delta = Number(datumRegionFinishOffsetMm); if (!Number.isFinite(delta)) { setStatus("请输入有效的区域完成面差值毫米数。 "); return; }
+    if (constructionDatumRegionLevelId(scene?.nodes ?? {}, selectedFloorRegion.id) !== activeLevelId) { setStatus("所选空间区域不属于当前楼层，不能设置局部完成面。 "); return; }
+    commit({ ...overlay, constructionDatums: overlay.constructionDatums.map((datum) => datum.id === activeConstructionDatum.id ? replaceRegionFinishOffset(datum, selectedFloorRegion.id, delta) : datum) }); setStatus(`已更新区域 ${selectedFloorRegion.name ?? selectedFloorRegion.id} 完成面差值；全层基线位置保持不变。 `);
+  };
   const handledAuthorCommand = useRef<number | null>(null);
   useEffect(() => {
     if (!authorCommand || handledAuthorCommand.current === authorCommand.id) return;
@@ -1180,23 +1396,24 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
     if (authorCommand.tool) chooseTool(authorCommand.tool);
   }, [authorCommand]);
   const routeInProgress = Boolean(draft.length || branchStart || penetrationSession || fireSignalStart || sprinklerRouteStart || deviceRouteStart || junctionRouteStart || endpointRouteStart);
-  const beamPreview = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer)?.beam ?? null : null;
   const activeBeamCandidate = beamStart && beamPointer ? beamCandidate(beamStart, beamPointer) : null;
-  const beamPointerState = tool !== "beam" || !beamPointer ? null : !beamStart ? "free" : !activeBeamCandidate?.valid ? "invalid" : activeBeamCandidate.beam?.explicitCeilingCrossing ? "crossing" : beamSnapTarget ? "surface-snap" : "free";
-  const beamPointerLabel = beamPointerState === "surface-snap" ? `Surface snap · ${beamSnapTarget!.target.kind} · ${beamSnapTarget!.target.id}`
-    : beamPointerState === "crossing" ? `Explicit Ceiling elevation crossing · 保留 ${Math.round((activeBeamCandidate!.beam!.effectiveCeilingElevation.meters) * 1000)} mm`
-      : beamPointerState === "invalid" ? activeBeamCandidate?.diagnostics[0] ?? "当前 Beam 无效。"
-        : beamPointerState === "free" ? "自由有效点" : null;
+  const beamPreview = beamStart && beamPointer && scene ? activeBeamCandidate?.beam ?? beamDraftPreview({
+    levelId: beamStart.levelId, start: beamStart.snap.point, end: [beamPointer.point[0], beamPointer.point[2]],
+    topElevation: { meters: beamStart.topY - Number(scene.nodes[beamStart.levelId]?.level ?? 0) * 3.2, basis: "wall-top", sourceWallId: beamStart.snap.target.id, measurementBasis: resolveEffectiveHeight(scene.nodes[beamStart.snap.target.id]!, scene.nodes).height?.source === "explicit" ? "explicit" : "derived" },
+    width: beamSection.widthMm / 1000, height: beamSection.heightMm / 1000, orthogonal,
+  }) : null;
+  const beamPointerState = tool !== "beam" || !beamPointer ? null
+    : !beamStart ? beamPointer.targetId && scene?.nodes[beamPointer.targetId]?.type === "wall" && beamSnapTarget ? "surface-snap" : "invalid"
+    : !activeBeamCandidate?.valid ? "invalid" : "surface-snap";
+  const beamPointerLabel = beamPointerState === "invalid" ? activeBeamCandidate?.diagnostics[0] ?? "请从真实墙体表面起画"
+    : beamSnapTarget ? `实体表面捕捉 · ${beamSnapTarget.target.kind} · ${beamSnapTarget.target.id}` : null;
+  const displayedBeamPointer = beamPointer && beamStart && beamPreview ? { ...beamPointer, point: [beamPreview.end[0], beamStart.topY, beamPreview.end[1]] as [number, number, number] } : beamPointer && beamSnapTarget ? { ...beamPointer, point: [beamSnapTarget.point[0], beamStart?.topY ?? (Number(scene?.nodes[activeLevelId]?.level ?? 0) * 3.2 + resolveEffectiveHeight(scene!.nodes[beamSnapTarget.target.id]!, scene!.nodes).height!.value), beamSnapTarget.point[1]] as [number, number, number] } : beamPointer;
   const onPointerRay = (origin: [number, number, number], direction: [number, number, number], shiftKey = false, ctrlKey = false) => {
     const surfaceHit = rawSurfaceHit.current;
     const blockedByOpening = surfaceOccluded.current;
     rawSurfaceHit.current = null;
     surfaceOccluded.current = false;
-    if (tool === "beam" && beamStart && !surfaceHit && Math.abs(direction[1]) > 1e-8) {
-      const distance = (beamStart.point[1] - origin[1]) / direction[1];
-      if (distance >= 0) setBeamPointer({ point: [origin[0] + direction[0] * distance, beamStart.point[1], origin[2] + direction[2] * distance], shiftKey, ctrlKey });
-      return;
-    }
+    if (tool === "beam") return;
     if (tool === "hvac-control" && hvacControlThermostatId && worldAxis) {
       const start = hvacControlRouteAnchor();
       if (start) {
@@ -1271,6 +1488,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
   };
   if (!scene) return <section className="three-d-empty"><b>尚未导入 JSON</b><span>导入布局后即可切换到 3D 查看。</span></section>;
   if (!scene.rootNodeIds.length) return <section className="three-d-empty"><b>无法建立 3D 场景</b>{scene.diagnostics.map((diagnostic) => <span key={diagnostic.code}>{diagnostic.message}</span>)}</section>;
+  const renderDevicePlanarField = (reference: NonNullable<DevicePositionDescription["planar"]>[number]) => <label key={reference.key}>{devicePositionReferenceLabel(reference, overlay, selectedDevice!, devicePositioningContext)}{devicePositionReferenceHint(reference, selectedDevice!) && <small>{devicePositionReferenceHint(reference, selectedDevice!)}</small>}<span><input type="number" min="0" value={positionDraft.planar?.[reference.key] ?? reference.millimeters} onChange={event => setPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.key]: Number(event.target.value) } }))} onBlur={event => event.target.value !== "" && applyDevicePosition({ planarClearanceMm: { [reference.key]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>;
+  const renderGroundPositionField = (reference: typeof selectedGroundReferences[number]) => <label key={reference.key}>{reference.panelLabel}<span><input aria-label={`${reference.panelLabel}毫米`} disabled={selectedDevice?.ports.some(port => port.connectedSegmentIds.length)} type="number" min="0" value={positionDraft.planar?.[reference.key] ?? reference.millimeters} onChange={event => setPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.key]: Number(event.target.value) } }))} onBlur={event => event.target.value !== "" && applyDevicePosition({ planarClearanceMm: { [reference.key]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>;
   return (
     <section className="three-d-workspace">
     <div className="three-d-canvas">
@@ -1320,16 +1539,18 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         <div className="conduit-panel-head">
             {!panelCollapsed && (
               <div>
-                <b>{tool === "beam" ? "梁工具" : "系统工具"}</b>
+                  <b>{tool === "beam" ? "梁工具" : tool === "construction-datum" ? "施工基准" : "系统工具"}</b>
                 <small>
                   {
                     (
                       {
                         select: "选择与属性",
+                        "box-select": "左键拖框；Ctrl/⌘ 追加，Esc 返回选择",
                         draw: "绘制新管线",
                         branch: "从已有管线分支",
                         point: "放置设备点位",
                         beam: "从 Ceiling 下表面绘制梁",
+                        "construction-datum": "数值设置本层共用水平基线",
                         delete: "删除网络对象",
                         "hvac-unit": "放置空调内机",
                         "hvac-duct": "选择内机端口绘制风管",
@@ -1362,9 +1583,10 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                     "branch",
                     "point",
                     "beam",
+                    "construction-datum",
                     "hvac-unit",
                     "delete",
-                  ] as Array<ConduitTool | "beam" | "hvac-unit">
+                  ] as Array<ConduitTool | "beam" | "construction-datum" | "hvac-unit">
                 ).map((item) => (
                   <button
                     key={item}
@@ -1376,6 +1598,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           branch: "从已有管段拉出分支",
                           point: "放置设备点位",
                           beam: "绘制 Beam",
+                          "construction-datum": "施工基准",
                           "hvac-unit": "放置空调内机",
                           delete: "删除管网对象",
                         } as const
@@ -1399,6 +1622,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           branch: "分支",
                           point: "点位",
                           beam: "梁",
+                          "construction-datum": "基准",
                           "hvac-unit": "空调",
                           delete: "删除",
                         } as const
@@ -1424,6 +1648,23 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 {tool === 'hvac-outlet' && <small>悬停风管外表面预览默认 {HVAC_DEFAULT_OUTLET_MM.join(' × ')} mm 风口；单击当前鼠标命中的面确认。</small>}
                 {tool === 'hvac-control' && <><small>点击控温器绿色端口起画，单击表面确认途经点，再点击 FCU 绿色控制端口提交；默认正交，Shift 切换；方向键锁定世界轴。</small><div className="conduit-mode-row"><button className={orthogonal && !worldAxis ? 'active' : ''} aria-pressed={orthogonal && !worldAxis} onClick={toggleRouteOrthogonalMode}>{orthogonal && !worldAxis ? '正交开启' : '正交关闭'}</button><button className={worldAxis === 'x' ? 'active' : ''} aria-pressed={worldAxis === 'x'} onClick={() => chooseRouteWorldAxis('x')}>X 轴</button><button className={worldAxis === 'y' ? 'active' : ''} aria-pressed={worldAxis === 'y'} onClick={() => chooseRouteWorldAxis('y')}>Y 轴</button><button className={worldAxis === 'z' ? 'active' : ''} aria-pressed={worldAxis === 'z'} onClick={() => chooseRouteWorldAxis('z')}>Z 轴</button><button className={worldAxis ? 'active' : ''} aria-pressed={Boolean(worldAxis)} disabled={!worldAxis} onClick={() => { orthogonalDirection.current = null; setWorldAxis(null); }}>取消世界轴</button></div></>}
               </section>
+              )}
+              {(tool === "construction-datum" || selectedConstructionDatum) && (
+                <section className="conduit-tool-options" aria-label="施工基准设置">
+                  <b>本层所有墙面 · {activeConstructionDatum?.label ?? "H01"}</b>
+                  <small>{choosingDatumReference ? "点击本层楼板顶面，设置参考地面。" : `参考地面：${datumRawReferenceSource?.kind === "slab-top" ? scene?.nodes[datumRawReferenceSource.sourceObjectId]?.name ?? "毛坯地面" : inferredDatumReference?.label ?? (activeLevelSlabs.some(slab => Array.isArray(slab.polygon) && slab.polygon.length >= 3) ? "请选择参考地面" : "模型中没有可用地面")}`}</small>
+                  {activeLevelSlabs.some(slab => Array.isArray(slab.polygon) && slab.polygon.length >= 3) && (!activeConstructionDatum && !inferredDatumReference || activeConstructionDatum?.rawReference.kind === "slab-top") && <button type="button" aria-pressed={choosingDatumReference} onClick={() => setChoosingDatumReference(value => !value)}>{choosingDatumReference ? "取消选择" : activeConstructionDatum ? "更换参考地面" : "选参考地面"}</button>}
+                  <label>基线离毛坯地面<span><input aria-label="基线离毛坯地面高度" type="number" value={datumHeightMm} onChange={event => {
+                    const next = event.target.value;
+                    if (next.trim() && datumHeightMm.trim() && datumFinishOffsetMm.trim() && Number.isFinite(Number(next)) && Number.isFinite(Number(datumHeightMm)) && Number.isFinite(Number(datumFinishOffsetMm))) {
+                      setDatumFinishOffsetMm(String(Number(datumFinishOffsetMm) + Number(next) - Number(datumHeightMm)));
+                    }
+                    setDatumHeightMm(next);
+                  }} /> mm</span></label>
+                  <label>水平基线离完成面高度<span><input aria-label="水平基线离完成面高度" type="number" value={datumFinishOffsetMm} onChange={event => setDatumFinishOffsetMm(event.target.value)} placeholder="可留空" /> mm</span></label>
+                  <small>{datumFinishOffsetMm.trim() && datumHeightMm.trim() && Number.isFinite(Number(datumFinishOffsetMm)) && Number.isFinite(Number(datumHeightMm)) ? `完成面高于毛坯面：${Math.round(Number(datumHeightMm) - Number(datumFinishOffsetMm))} mm` : "完成面未定义"}</small>
+                  <button type="button" onClick={saveConstructionDatum}>{activeConstructionDatum ? "保存基线" : "创建基线"}</button>
+                </section>
               )}
               {tool === "beam" && (
                 <button
@@ -1486,71 +1727,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       mm
                     </span>
                   </label>
-                  {layoutReferencePlane && (
-                    <>
-                      <b>布局参考面</b>
-                      <label>
-                        <input
-                          type="checkbox"
-                          checked={layoutReferencePlane.visible}
-                          onChange={(event) =>
-                            commit({
-                              ...overlay,
-                              layoutReferencePlanes:
-                                replaceLayoutReferencePlane(
-                                  overlay.layoutReferencePlanes,
-                                  {
-                                    ...layoutReferencePlane,
-                                    visible: event.target.checked,
-                                  },
-                                ),
-                            })
-                          }
-                        />{" "}
-                        显示活动楼层参考面
-                      </label>
-                      <label>
-                        高度
-                        <span>
-                          <input
-                            aria-label="布局参考面高度"
-                            type="number"
-                            min="0"
-                            value={layoutReferencePlane.elevationMm}
-                            onChange={(event) => {
-                              const elevationMm = Number(event.target.value);
-                              if (
-                                Number.isFinite(elevationMm) &&
-                                elevationMm >= 0
-                              )
-                                commit({
-                                  ...overlay,
-                                  layoutReferencePlanes:
-                                    replaceLayoutReferencePlane(
-                                      overlay.layoutReferencePlanes,
-                                      {
-                                        ...layoutReferencePlane,
-                                        elevationMm,
-                                        basis: "explicit",
-                                        sourceCeilingId: undefined,
-                                      },
-                                    ),
-                                });
-                            }}
-                          />{" "}
-                          mm
-                        </span>
-                      </label>
-                      <small>
-                        {layoutReferencePlane.basis === "largest-area-ceiling"
-                          ? "基于最大 Ceiling 面积"
-                          : layoutReferencePlane.basis ===
-                              "derived-default-2700mm"
-                            ? "推导默认值 2700 mm"
-                            : "显式高度"}
-                      </small>
-                    </>
-                  )}
+                  <small>从墙面起画，另一端吸附同顶标高的墙、柱或梁面；梁顶与起点墙顶齐平。</small>
                   <small>
                     初始值 300 × 500 mm，仅为作者工具默认值，不是结构标准。
                   </small>
@@ -1803,7 +1980,8 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             </>
           )}
       </aside>, panelHost)}
-        {hasSelectedObject && (
+        {boxSelectedIds.length > 1 && <aside className="conduit-panel conduit-selection-panel" aria-label="框选对象"><div className="conduit-panel-head"><b>已选择 {boxSelectedIds.length} 个对象</b><button type="button" aria-label="清空框选" onClick={() => { setBoxSelectedIds([]); setSelectedDeviceIds([]); setSelectedSegmentIds([]); onSelect(null); }}>×</button></div><small>单击对象可查看和编辑属性；导入建筑保持只读。</small></aside>}
+        {hasSelectedObject && boxSelectedIds.length <= 1 && (
           <aside className="conduit-panel conduit-selection-panel" aria-label={selectedObjectPanelTitle}>
             <div className="conduit-panel-head">
               <b>{selectedObjectPanelTitle}</b>
@@ -1949,6 +2127,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                       多选，双击选中整条连通管道。
                     </small>
                   )}
+                  {selectedDatumSlab && <section className="conduit-context-section" aria-label="楼板施工基准入口"><b>楼板 · {selectedDatumSlab.name ?? selectedDatumSlab.id}</b>{selectedFloorRegion && <small>本次楼板拾取位置落在空间区域：{selectedFloorRegion.name ?? selectedFloorRegion.id}。</small>}<button type="button" onClick={() => setTool("construction-datum")}>施工基准{selectedFloorRegion ? " · 编辑该区域完成面" : " · 设置本层基线"}</button></section>}
+                  {selectedFinishedFloorSurface && <section className="conduit-context-section" aria-label="完成面属性"><b>完成面 · {selectedFinishedFloorSurface.regionId ? scene?.nodes[selectedFinishedFloorSurface.regionId]?.name ?? selectedFinishedFloorSurface.regionId : "本层"}</b><small>由施工基准 {overlay.constructionDatums.find(datum => datum.id === selectedFinishedFloorSurface.datumId)?.label ?? selectedFinishedFloorSurface.datumId} 与楼板 {scene?.nodes[selectedFinishedFloorSurface.sourceSlabId]?.name ?? selectedFinishedFloorSurface.sourceSlabId} 派生；标高 {Math.round(selectedFinishedFloorSurface.y * 1000)} mm。</small><button type="button" onClick={() => setTool("construction-datum")}>编辑施工基准</button></section>}
+                  {selectedFloorRegion && <section className="conduit-context-section" aria-label="施工基准区域完成面"><b>区域完成面 · {selectedFloorRegion.name ?? selectedFloorRegion.id}</b>{activeConstructionDatum ? <><small>相对本层完成面；正值为高，负值为低。</small><label>高 / 低差值<span><input aria-label="区域完成面相对本层高低差值" type="number" value={datumRegionFinishOffsetMm} onChange={event => setDatumRegionFinishOffsetMm(event.target.value)} /> mm</span></label><button type="button" onClick={saveZoneFinishOffset}>保存区域差值</button></> : <><small>本层尚无施工基线。</small><button type="button" onClick={() => setTool("construction-datum")}>设置本层施工基线</button></>}</section>}
                   {selectedRouteLengths.length > 0 && (
                     <div
                       className="conduit-length-summary"
@@ -1991,9 +2172,21 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                   {selectedHvacSegment && (() => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(selectedHvacSegment.id)), terminal = duct?.segmentIds[duct.segmentIds.length - 1] === selectedHvacSegment.id, lengthMm = Math.round(Math.hypot(...selectedHvacSegment.end.position.map((value, axis) => value - selectedHvacSegment.start.position[axis])) * 1000); return <section className="conduit-context-section" aria-label="风管属性"><b>{duct?.system === 'supply' ? '送风管' : '回风管'}</b><label>长度<span><input disabled={!terminal} type="number" min="1" defaultValue={lengthMm} onBlur={event => { if (!duct) return; const result = resizeHvacTerminalSegment(overlay, duct.id, Number(event.target.value)); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><small>{terminal ? '末端风管段可精确调长度；风口越界会拒绝修改。' : '中间风管段需删除后续段再重画。'}</small></section>; })()}
                   {selectedHvacControlConduit && (selectedHvacControlSegment || selectedHvacControlFitting) && <section className="conduit-context-section" aria-label="HVAC 控制管属性"><b>HVAC 控制管</b><small>白色 HVAC 控制管一对一连接控温器与 FCU。</small><button className="danger" onClick={() => deleteObject(selectedHvacControlConduit.id)}>删除控制管</button></section>}
                   {selectedHvacOutlet && selectedHvacOutletClearances && <section className="conduit-context-section" aria-label="风口属性"><b>风口</b><label>宽<span><input type="number" min="1" value={selectedHvacOutlet.sizeMm[0]} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { sizeMm: [Math.max(1, Number(event.target.value)), selectedHvacOutlet.sizeMm[1]] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>高<span><input type="number" min="1" value={selectedHvacOutlet.sizeMm[1]} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { sizeMm: [selectedHvacOutlet.sizeMm[0], Math.max(1, Number(event.target.value))] }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>起点净距<span><input type="number" min="0" value={selectedHvacOutletClearances.fromStartMm} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { offsetMm: Number(event.target.value) }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><label>终点净距<span><input type="number" min="0" value={selectedHvacOutletClearances.toEndMm} onChange={event => { const result = editHvacOutlet(overlay, selectedHvacOutlet.id, { offsetMm: selectedHvacOutletClearances.fromStartMm + selectedHvacOutletClearances.toEndMm - Number(event.target.value) }); if ('reason' in result) setStatus(result.reason); else commit(result.overlay); }} /> mm</span></label><small>风口所在面由放置时鼠标命中的物理风管面决定并保持固定；选中后用两端净距调整位置。</small></section>}
-                  {selectedThermostat && <section className="conduit-context-section" aria-label="空调控温器属性"><b>空调控温器</b><label>名称<input value={selectedThermostat.name} onChange={event => commit({ ...overlay, hvac: { ...overlay.hvac, thermostats: overlay.hvac.thermostats.map(item => item.id === selectedThermostat.id ? { ...item, name: event.target.value } : item) } })} /></label><div className="conduit-position-fields" aria-label="空调控温器中心定位">{thermostatPositionDescription.planar?.map(reference => <label key={reference.key}>{devicePositionDirectionLabel(thermostatPositionProxyValue!, reference.key, reference.direction, cameraRight)} · 至{devicePositionTargetLabel(reference, overlay, thermostatPositionProxyValue!, devicePositioningContext)}<span><input disabled={selectedThermostatConnected} type="number" min="0" value={thermostatPositionDraft.planar?.[reference.key] ?? reference.millimeters} onChange={event => setThermostatPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.key]: Number(event.target.value) } }))} onBlur={event => event.target.value !== '' && applyThermostatPosition({ planarClearanceMm: { [reference.key]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /> mm</span></label>)}<small>{selectedThermostatConnected ? '控温器已连接控制管；请先删除控制管后再移动，避免管端脱开。' : '回车或离开输入框即生效；移动时控制端口会同步移动。'}</small></div></section>}
+                  {selectedThermostat && <section className="conduit-context-section" aria-label="空调控温器属性"><b>空调控温器</b><label>名称<input value={selectedThermostat.name} onChange={event => commit({ ...overlay, hvac: { ...overlay.hvac, thermostats: overlay.hvac.thermostats.map(item => item.id === selectedThermostat.id ? { ...item, name: event.target.value } : item) } })} /></label><div className="conduit-position-fields" aria-label="空调控温器施工定位">{thermostatPositionDescription.planar?.filter(reference => !(selectedThermostat.position.attachment?.hostKind === 'wall' && reference.key.startsWith('v'))).map(reference => <label key={reference.key}>{devicePositionReferenceLabel(reference, overlay, thermostatPositionProxyValue!, devicePositioningContext)}<span><input disabled={selectedThermostatConnected} type="number" min="0" value={thermostatPositionDraft.planar?.[reference.key] ?? reference.millimeters} onChange={event => setThermostatPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.key]: Number(event.target.value) } }))} onBlur={event => event.target.value !== '' && applyThermostatPosition({ planarClearanceMm: { [reference.key]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /> mm</span></label>)}<small>{selectedThermostatConnected ? '控温器已连接控制管；请先删除控制管后再移动，避免管端脱开。' : '回车或离开输入框即生效；移动时控制端口会同步移动。'}</small></div>{selectedThermostat.position.attachment?.hostKind === 'wall' && <details className="conduit-object-details"><summary>实体净距</summary>{thermostatPositionDescription.planar?.filter(reference => reference.key.startsWith('v')).map(reference => <label key={reference.key}>{devicePositionDirectionLabel(thermostatPositionProxyValue!, reference.key, reference.direction)} · 至{devicePositionTargetLabel(reference, overlay, thermostatPositionProxyValue!, devicePositioningContext)}<span><input disabled={selectedThermostatConnected} type="number" min="0" value={thermostatPositionDraft.planar?.[reference.key] ?? reference.millimeters} onChange={event => setThermostatPositionDraft(value => ({ ...value, planar: { ...value.planar, [reference.key]: Number(event.target.value) } }))} onBlur={event => event.target.value !== '' && applyThermostatPosition({ planarClearanceMm: { [reference.key]: Number(event.target.value) } })} onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur(); }} /> mm</span></label>)}</details>}</section>}
                   {selectedDevice && (
                     <>
+                      {isFloorMountedDevice(selectedDevice) && <section className="conduit-context-section" aria-label="完成面定位">
+                        <b>完成面定位</b>
+                        {selectedDeviceFloorSurface && selectedFloorTopOffsetMm !== undefined ? <>
+                          <small>当前上口相对有效完成面 {selectedFloorTopOffsetMm > 0 ? "高" : selectedFloorTopOffsetMm < 0 ? "低" : "齐平"} {Math.abs(selectedFloorTopOffsetMm)} mm；修改完成面只更新依据，不移动点位。</small>
+                          <label>上口相对完成面<span><input aria-label="设备上口相对完成面偏移" disabled={selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0)} type="number" value={floorTopOffsetDraft} onChange={event => setFloorTopOffsetDraft(event.target.value)} /> mm</span></label>
+                          <button type="button" disabled={selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0)} onClick={() => applyFinishedFloorAlignment()}>按偏移对齐完成面</button>
+                          <button type="button" disabled={selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0)} onClick={() => applyFinishedFloorAlignment(0)}>上口齐平</button>
+                          {selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0) && <small>点位端口已接管，位置锁定。</small>}
+                        </> : <small>完成面未定义或当前位置没有唯一楼板；现有点位保持原位。</small>}
+                      </section>}
+                      {!isFloorMountedDevice(selectedDevice) && selectedDeviceDatum && selectedDeviceDatumOffsetMm !== undefined && <label>{["socket", "switch", "network-outlet"].includes(selectedDevice.deviceType) ? "底盒下边缘" : "下边缘"}相对水平基线 {selectedDeviceDatum.label}<span><select aria-label="设备下边缘相对施工基准方向" disabled={selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0)} value={deviceDatumAbove ? "above" : "below"} onChange={event => setDeviceDatumAbove(event.target.value === "above")}><option value="above">高于</option><option value="below">低于</option></select><input aria-label={`设备下边缘${deviceDatumAbove ? "高于" : "低于"}水平基线 ${selectedDeviceDatum.label}`} disabled={selectedDevice.ports.some(port => port.connectedSegmentIds.length > 0)} type="number" min="0" value={deviceDatumOffsetDraft} onChange={event => setDeviceDatumOffsetDraft(event.target.value)} onBlur={applyDeviceDatumOffset} onKeyDown={event => { if (event.key === "Enter") event.currentTarget.blur(); }} /> mm</span></label>}
+                      {!isFloorMountedDevice(selectedDevice) && selectedDeviceHeightAboveFinishedFloorMm !== undefined && <label>下边缘至完成地面<span>{selectedDeviceHeightAboveFinishedFloorMm} mm</span></label>}
                       <label>
                         名称
                         <input
@@ -2120,11 +2313,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                             </span>
                           </label>
                         )}
-                        {positionDescription.horizontal && (
+                        {positionDescription.horizontal && !(positionDescription.planar ?? []).some(reference => reference.key === "u+" || reference.key === "u-") && (
                           <label>
                             {positionDescription.horizontal.kind === "opening"
-                              ? "洞口边净距"
-                              : "墙端净距"}
+                              ? "中心至洞口垂直基准线净距"
+                              : "中心至墙角垂直基准线净距"}
                             <span>
                               <input
                                 type="number"
@@ -2156,9 +2349,9 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                             </span>
                           </label>
                         )}
-                        {(positionDescription.vertical?.kind === "finished-floor" || positionDescription.vertical?.kind === "floor-socket") && (
+                        {!isFloorMountedDevice(selectedDevice) && (positionDescription.vertical?.kind === "finished-floor" || positionDescription.vertical?.kind === "floor-socket") && !(selectedDevice.position.attachment?.hostKind === "wall" && selectedDeviceDatum) && (
                           <label>
-                            下边缘离地
+                            {positionDescription.vertical.witness?.objectKind === "slab" ? "下边缘至楼板顶面" : "下边缘至模型地面"}
                             <span>
                               <input
                                 disabled={positionDescription.vertical.kind === "floor-socket"}
@@ -2189,46 +2382,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                             </span>
                           </label>
                         )}
-                        {positionDescription.planar?.map((reference) => (
-                          <label key={reference.key}>
-                            {devicePositionDirectionLabel(selectedDevice, reference.key, reference.direction, cameraRight)} · 至{devicePositionTargetLabel(reference, overlay, selectedDevice, devicePositioningContext)}
-                            <span>
-                              <input
-                                type="number"
-                                min="0"
-                                value={
-                                  positionDraft.planar?.[reference.key] ?? reference.millimeters
-                                }
-                                onChange={(event) =>
-                                  setPositionDraft((value) => ({
-                                    ...value,
-                                    planar: {
-                                      ...value.planar,
-                                      [reference.key]: Number(
-                                        event.target.value,
-                                      ),
-                                    },
-                                  }))
-                                }
-                                onBlur={(event) =>
-                                  event.target.value !== "" &&
-                                  applyDevicePosition({
-                                    planarClearanceMm: {
-                                      [reference.key]: Number(
-                                        event.target.value,
-                                      ),
-                                    },
-                                  })
-                                }
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter")
-                                    event.currentTarget.blur();
-                                }}
-                              />{" "}
-                              mm
-                            </span>
-                          </label>
-                        ))}
+                        {isFloorMountedDevice(selectedDevice) ? selectedGroundReferences.map(renderGroundPositionField) : positionDescription.planar?.filter(reference => !(selectedDevice.position.attachment?.hostKind === "wall" && reference.key === "v-") && !(selectedDevice.position.attachment?.hostKind === "wall" && selectedDeviceDatum && reference.key.startsWith("v"))).map(renderDevicePlanarField)}
                         <small>
                           回车或离开输入框即生效
                           {selectedDeviceIds.length > 1
@@ -2237,6 +2391,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                           。
                         </small>
                       </div>
+                      {selectedDevice.position.attachment?.hostKind === "wall" && selectedDeviceDatum && <details className="conduit-object-details">
+                        <summary>实体净距</summary>
+                        {positionDescription.planar?.filter(reference => reference.key === "v+").map(renderDevicePlanarField)}
+                        {positionDescription.vertical && <label>{positionDescription.vertical.witness?.objectKind === "slab" ? "下缘至楼板顶面" : "下缘至模型楼层基准"}<span>{positionDescription.vertical.millimeters} mm</span></label>}
+                      </details>}
                       {selectedDevice.deviceType === "smoke-detector" ? <section className="conduit-context-section" aria-label="烟感尺寸">
                         <b>烟感尺寸</b>
                         <label>直径<span><input type="number" min="1" value={selectedDevice.sizeMm[0]} disabled={!sizeSelectionHasSameType || sizeSelectionHasConnections} onChange={(event) => applyDeviceSize(0, Number(event.target.value))} /> mm</span></label>
@@ -2356,11 +2515,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             <span aria-hidden="true">
               {beamPointerState === "invalid"
                 ? "⊘"
-                : beamPointerState === "crossing"
-                  ? "◆"
-                  : beamPointerState === "surface-snap"
-                    ? "⊙"
-                    : "＋"}
+                : "⊙"}
             </span>
             {beamPointerLabel}
           </div>
@@ -2392,35 +2547,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
         >
           <color attach="background" args={[getBuilderPresentation().background]} />
           <BuilderLighting shadowsEnabled={shadowsEnabled} />
+          {tool === "box-select" && keyboardActive && <BoxSelectTool planeY={(Number(scene.nodes[activeLevelId]?.level) || 0) * 3.2} worldToEditing={displayTransform.worldToEditing} onSelect={selectBox} onCancel={() => { setTool("select"); setStatus("已退出框选，选中对象保留。"); }} />}
           <group matrix={displayTransform.displayMatrix} matrixAutoUpdate={false} matrixWorldNeedsUpdate>
-          {tool === "beam" && layoutReferencePlane?.visible && (
-            <>
-              <BeamPlanePointerCapture
-                y={layoutReferencePlaneY}
-                worldToEditing={displayTransform.worldToEditing}
-                onPlace={onLayoutReferenceHit}
-              />
-              <LayoutPlane
-                bounds={scene.bounds}
-                y={layoutReferencePlaneY}
-                onPreview={(position, ctrlKey) =>
-                  setBeamPointer(
-                    position
-                      ? {
-                          point: position,
-                          shiftKey: false,
-                          ctrlKey,
-                          levelId: activeLevelId,
-                        }
-                      : null,
-                  )
-                }
-                onPlace={onLayoutReferenceHit}
-                confirmOnPointerDown
-              />
-            </>
-          )}
-    <BeamAuthoringMarker pointer={beamPointer} state={beamPointerState} />
+          {tool === "beam" && <BeamSurfacePointerCapture nodes={scene.nodes} topY={beamStart?.topY ?? null} worldToEditing={displayTransform.worldToEditing} onPreview={setBeamPointer} onPlace={onBeamSurfacePlace} />}
+          {tool === "beam" && beamStart && <BeamAuthoringMarker pointer={{ point: [beamStart.snap.point[0], beamStart.topY, beamStart.snap.point[1]], shiftKey: false }} state="surface-snap" />}
+          <BeamAuthoringMarker pointer={displayedBeamPointer} state={beamPointerState} />
           {activeLevelId &&
             (sharedPointPlane ||
               selectedDevice?.mount?.kind === "reference-plane") && (
@@ -2463,6 +2594,17 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
                 }}
               />
             )}
+          <FinishedFloorScene
+            surfaces={layers.floors ? finishedFloorSurfaces.filter(surface => !hiddenNodeIds.has(surface.sourceSlabId) && sourceNodeIsVisible(surface.sourceSlabId, scene.nodes)) : []}
+            activeLevelId={activeLevelId}
+            tool={tool === "select" ? "select" : tool === "point" ? "point" : "other"}
+            floorPlacementEnabled={DEVICE_DEFAULTS[deviceType].hostKinds.includes("slab")}
+            worldToEditing={displayTransform.worldToEditing}
+            selectedId={selectedId}
+            onSelect={surface => { onSelect(surface.id); setSelectedDeviceIds([]); setSelectedSegmentIds([]); setBoxSelectedIds([]); setSelectedFloorRegionId(surface.regionId ?? null); }}
+            onMove={onFinishedFloorMove}
+            onPlace={onFinishedFloorPlace}
+          />
           <PascalScenePreview
             scene={scene}
             layers={layers}
@@ -2471,9 +2613,11 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             activeLevelId={activeLevelId}
             wallMode={wallMode}
             selectedId={selectedId}
+            selectedIds={boxSelectedIds}
+            selectedConstructionRegionId={selectedFloorRegion?.id}
             highlightHostId={
               tool === "beam"
-                ? beamStart?.attachment.hostId
+                ? null
                 : tool === "draw" ||
                     tool === "point" ||
                     (tool === "branch" && branchStart)
@@ -2483,11 +2627,14 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             previousRoutePoint={draft[draft.length - 1]}
             penetrationBypassHostId={penetrationSession?.host.hostId}
             beamPreview={beamEditPreview ?? beamPreview}
+            beamPreviewValid={Boolean(beamEditPreview || activeBeamCandidate?.valid)}
             onSelect={selectWhileBrowsing}
             overlay={overlay}
             appliedSurfaceChases={appliedConstruction.surfaceChases}
             appliedPenetrations={appliedConstruction.penetrations}
             constructionMode="construction"
+            constructionDatumSelection={tool === "construction-datum"}
+            constructionDatumReferenceSelecting={choosingDatumReference}
             onSurfaceHit={onSurfaceHit}
             onSurfaceMove={onSurfaceMove}
             onSurfaceFinish={finishAtCursor}
@@ -2497,7 +2644,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             overlay={overlayForLevel(renderedOverlay, activeLevelId)}
             departingSegments={departingSegments}
             selectedId={selectedId}
+            selectedIds={boxSelectedIds}
             selectedSegmentIds={selectedSegmentIds}
+            selectedDevicePosition={selectedDevice ? positionDescription : undefined}
+            selectedDeviceDatumMeasurement={selectedDeviceDatumMeasurement}
+            selectedDeviceWallFrame={selectedDeviceWallFrame}
+            dimensionFaces={dimensionFaces}
             constructionMode="construction"
             visibleSystems={overlay.settings.visibleSystems}
             sensorVisible={overlay.settings.sensorVisible}
@@ -2605,7 +2757,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             onStartEndpoint={onStartEndpoint}
             onDelete={deleteObject}
           />
-          <HvacScene routingNodes={scene?.nodes} overlay={overlayForLevel(overlay, activeLevelId)} selectedId={selectedId} systemVisible={systemLayerVisibility.HVACSystem} routeStartChooser={routeStartChooser && tool === 'draw'} ductStartActive={tool === 'hvac-duct'} deleteMode={tool === 'delete'} onDelete={deleteObject} controlRouteActive={tool === 'hvac-control'} powerRouteActive={powerRouteActive} targetAssist={hoveredHvacAssist} onHoverTargetPort={(unitId, portId, kind, hovered) => setHoveredHvacTarget((current) => hovered ? current?.unitId === unitId && current.portId === portId ? current : { unitId, portId, kind } : current?.unitId === unitId && current.portId === portId ? null : current)} draftControlRoute={hvacControlThermostatId ? { thermostatId: hvacControlThermostatId, points: hvacControlWaypoints, cursor: hoveredHvacTarget?.kind === 'control' && hoveredHvacResolution && hoveredHvacResolution.kind !== 'none' ? hoveredHvacResolution.point : cursor ?? null, targetUnitId: hoveredHvacTarget?.kind === 'control' && hoveredHvacResolution?.kind === 'connect' ? hoveredHvacTarget.unitId : undefined, bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm } : null} onStartControlRoute={(thermostatId, candidate) => {
+          <HvacScene routingNodes={scene?.nodes} overlay={overlayForLevel(overlay, activeLevelId)} selectedId={selectedId} selectedIds={boxSelectedIds} systemVisible={systemLayerVisibility.HVACSystem} routeStartChooser={routeStartChooser && tool === 'draw'} ductStartActive={tool === 'hvac-duct'} deleteMode={tool === 'delete'} onDelete={deleteObject} controlRouteActive={tool === 'hvac-control'} powerRouteActive={powerRouteActive} targetAssist={hoveredHvacAssist} onHoverTargetPort={(unitId, portId, kind, hovered) => setHoveredHvacTarget((current) => hovered ? current?.unitId === unitId && current.portId === portId ? current : { unitId, portId, kind } : current?.unitId === unitId && current.portId === portId ? null : current)} draftControlRoute={hvacControlThermostatId ? { thermostatId: hvacControlThermostatId, points: hvacControlWaypoints, cursor: hoveredHvacTarget?.kind === 'control' && hoveredHvacResolution && hoveredHvacResolution.kind !== 'none' ? hoveredHvacResolution.point : cursor ?? null, targetUnitId: hoveredHvacTarget?.kind === 'control' && hoveredHvacResolution?.kind === 'connect' ? hoveredHvacTarget.unitId : undefined, bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm } : null} onStartControlRoute={(thermostatId, candidate) => {
             const thermostat = overlay.hvac.thermostats.find(item => item.id === thermostatId);
             if (!thermostat) return;
             const port = ensureHvacThermostatPort(thermostat).controlPort;
@@ -2626,7 +2778,7 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
             const result = createHvacControlConduit(overlay, hvacControlThermostatId, unitId, hvacControlWaypoints, { nodes: scene?.nodes, bendRadiusMm: parseBendRadiusMm(bendRadiusInput) ?? overlay.settings.bendRadiusMm, stockLengthMm: overlay.settings.stockLengthMm });
             if ('reason' in result) { setStatus(result.reason); return; }
             commit(result.overlay); onSelect(result.conduit.id); setHvacControlThermostatId(null); setHvacControlWaypoints([]); setCursor(null); setTool('select'); setStatus('白色 HVAC 控制管已连接控温器与 FCU。');
-          }} onTargetPowerPort={onTargetHvacPowerPort} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} selectedThermostatDimensions={selectedThermostat ? thermostatPositionDescription : undefined} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
+          }} onTargetPowerPort={onTargetHvacPowerPort} selectedIndoorUnitDimensions={selectedHvacUnit ? { bottomElevationMm: selectedHvacBottomElevationMm, planar: selectedHvacPlanarReferences } : undefined} selectedThermostatDimensions={selectedThermostat ? thermostatPositionDescription : undefined} selectedThermostatWallFrame={selectedThermostatWallFrame} dimensionFaces={dimensionFaces} outletPreview={tool === 'hvac-outlet' ? hvacOutletPreview : null} onDuctOutletPreview={tool === 'hvac-outlet' ? setHvacOutletPreview : undefined} onPlaceDuctOutlet={tool === 'hvac-outlet' ? preview => { const duct = overlay.hvac.ducts.find(item => item.segmentIds.includes(preview.segmentId)); if (!duct) return; const result = addHvacOutlet(overlay, duct.id, preview.segmentId, preview.face, preview.offsetMm); setHvacOutletPreview(null); if ('reason' in result) setStatus(result.reason); else { commit(result.overlay); onSelect(result.outlet.id); setStatus('已在鼠标命中的风管面添加风口。'); } } : undefined} previewPosition={tool === 'hvac-unit' ? cursor?.position ?? null : null} draftDuct={hvacRouteStart && !activeHvacDuctId && cursor ? { ...hvacRouteStart, end: cursor.position } : null} onStartDuct={(unitId, system) => {
             if (!canUseTool('hvac-duct')) { setStatus('当前 Builder 卡片不允许绘制镀锌铁皮风管。'); return; }
             if (overlay.hvac.ducts.some(duct => duct.indoorUnitId === unitId && duct.system === system)) { setStatus(`该内机${system === 'supply' ? '送风' : '回风'}口已经有一条路线。`); return; }
             notifyAuthoringSystem('hvac'); setRouteStartChooser(false); resetRouteConstraints(); setTool(system === 'supply' ? 'hvac-supply' : 'hvac-return'); setCursor(null); setActiveHvacDuctId(null); setHvacRouteStart({ unitId, system }); onSelect(unitId);
@@ -2641,12 +2793,12 @@ export default function ThreeDWorkspace({ scene, hiddenNodeIds, selectedId, onSe
           </group>
           {gridVisible && <BuilderGround y={builderDisplayPoint([0, Number(scene.nodes[activeLevelId ?? ""]?.level ?? 0) * 3.2, 0], displayTransform.displayMatrix)[1]} />}
           <BuilderInk />
+          <BuilderAxisIndicator displayMatrix={displayTransform.displayMatrix} />
           <BuilderNavigation bounds={scene.bounds} preset={preset} presetRevision={presetRequest.revision} projection={projection} onCameraRight={updateCameraRight} displayTransform={displayTransform} keyboardActive={keyboardActive} interactionActive={tool !== "select"} orbitRequest={authorCommand?.cameraOrbit ? { id: authorCommand.id, direction: authorCommand.cameraOrbit } : undefined} />
         </Canvas>
         {snapStatus && <div className={`conduit-snap-status${hoveredHvacControlCheck && "reason" in hoveredHvacControlCheck ? " blocked" : ""}`}>{snapStatus}</div>}
         <div className="three-d-walkthrough-hint">
-          V 选择 · 空格拖动平移 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z
-          悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成
+          {tool === "box-select" ? "左键拖框 · Ctrl/⌘ 追加选择 · 空格拖动平移 · 右键旋转 · Esc 返回选择" : "V 选择 · 空格拖动平移 · 左键确认 · Shift 正交开关 · Tab 穿透 · ← X / ↑ Y / → Z 悬空轴 · ↓ 取消轴 · 右键旋转 · Enter 直接生成"}
         </div>
     </div>
     </section>

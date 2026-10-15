@@ -76,12 +76,40 @@ _Avoid_: Three-dimensional coordinate equality, auxiliary alignment
 A per-level virtual horizontal plane used to place device points at an explicit elevation when the actual ceiling, beam, or other mounting host is absent from the building model.
 _Avoid_: Ceiling, slab, building host
 
+**Horizontal construction datum**:
+A shared horizontal setting-out reference at one explicit elevation for a Level, shown as lines on its wall faces. Its height above a regional finished floor may differ between regions while the datum elevation remains shared.
+_Avoid_: Layout reference plane, installation reference plane, local raw-floor clearance
+
+**Raw-floor reference**:
+The explicitly chosen floor reference from which the construction datum and planned finished-floor elevations are established. It identifies one reference rather than following the unfinished floor under each wall.
+_Avoid_: Finished floor, nearest floor surface, assumed zero
+
+**Defined finished floor**:
+The planned finished-floor elevation explicitly confirmed relative to the raw-floor reference, whether or not the finish has been physically constructed. An explicitly confirmed zero offset is distinct from an undefined finished floor.
+_Avoid_: Raw slab top, automatic finish allowance, installed floor finish
+
+**Finished-floor placement surface**:
+A horizontal installation surface at the defined finished-floor elevation, bounded by the actual floor area and its openings. A ground box is positioned by its upper opening relative to this surface.
+_Avoid_: Raw slab top, mortar layer, suspended installation reference plane
+
+**Ground positioning baseline**:
+A named floor setting-out reference based on an identified wall face or opening edge. Its code identifies the same physical reference for every device using it; a ground device is positioned by its center's horizontal distance to the reference.
+_Avoid_: Device-specific axis cross, camera-dependent left and right, horizontal height datum
+
+**Regional finished-floor offset**:
+A signed difference between an identified region's planned finished floor and the Level's common finished floor. It changes regional height readings while retaining the shared horizontal construction datum.
+_Avoid_: Local horizontal datum elevation, replacement finish thickness, device movement
+
+**Derived vertical positioning datum**:
+A vertical line through the actual wall-corner or opening-edge witness used by a device's horizontal positioning dimension. Its displayed distance retains the dimension's device-centre or physical-envelope-edge basis.
+_Avoid_: Independently drawn vertical line, another device centre, arbitrary wall edge
+
 **Layout reference plane**:
-A per-level horizontal editing surface shared by Beam authoring and eligible horizontal device-point placement. Its independently persisted Overlay setting is visible and enabled by default at the Level's effective Ceiling elevation, may be hidden or moved for editing, and affects only new or uncommitted geometry rather than previously placed objects.
+A per-level horizontal editing surface for eligible horizontal device-point and fan-coil placement. It defaults to the Level's effective Ceiling underside, may be hidden or moved, and affects only new or uncommitted placements. Beam authoring uses physical supports independently of this surface.
 _Avoid_: Ceiling, building host, Beam elevation, selection plane
 
 **Orthogonal lock**:
-An explicit, visible authoring state that constrains a new Beam preview to the Layout reference plane's world X or Z direction. Shift toggles the state; it is not a hidden hold-only modifier and does not change committed geometry.
+An explicit, visible authoring state that constrains a new Beam preview to a world X or Z direction. Shift toggles the state; it is not a hidden hold-only modifier and does not change committed geometry.
 _Avoid_: Surface snap, auxiliary alignment, permanent Beam constraint
 
 **Surface snap**:
@@ -200,3 +228,7 @@ _Avoid_: thermostat binding, logical dashed association, electrical network cond
 **FCU power and control ports**:
 Stable physical endpoints on the FCU casing: one red receptacle-system power sink and one white HVAC-control sink, each with capacity for one conduit. The thermostat has a white HVAC-control source port and routes do not require a weak-current panel.
 _Avoid_: a single ambiguous FCU connection point, inferred legacy route
+
+**Wall-supported Beam**:
+A horizontal Beam whose starting end meets a physical Wall face and whose top is level with that Wall top. Its other end meets a Wall, Column or Beam face at the same top elevation.
+_Avoid_: Ceiling-hosted Beam, free-floating Beam, Layout reference plane

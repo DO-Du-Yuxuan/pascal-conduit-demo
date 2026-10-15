@@ -19,3 +19,5 @@ Beam authoring uses a default-visible per-Level Layout reference plane so it rem
 ADR 0006 updates the current public schema to Project 4.0 and its specific type catalog; this historical decision does not authorize retired generic public types. See [0006-project-4-system-catalog.md](0006-project-4-system-catalog.md).
 
 ADR 0005 replaces the separate Project/Overlay file ownership and export decision in this record. The physical modeling, authoring limits, and reconnection behavior remain applicable; the Overlay is now an internal editor adapter and its authored content is saved in the unified Project JSON.
+
+ADR 0016 replaces the new-Beam Ceiling/auxiliary-plane authoring rule with physical Wall-supported authoring and wall-top evidence. Existing Ceiling-based Beam records retain their original geometry and evidence.

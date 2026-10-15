@@ -27,6 +27,30 @@ describe("Layout reference plane", () => {
     expect(parseOverlay(legacy).layoutReferencePlanes).toEqual([]);
   });
 
+  it("uses the rendered Ceiling underside when source heights are omitted, without changing source nodes", () => {
+    const source = structuredClone(nodes);
+    source.level!.height = 2.5;
+    delete source.large!.height;
+    delete source.small!.height;
+    const before = structuredClone(source);
+    expect(defaultLayoutReferencePlane(source, "level")).toMatchObject({ elevationMm: 2490, basis: "largest-area-ceiling", sourceCeilingId: "large" });
+    source.level!.height = 4.2;
+    expect(defaultLayoutReferencePlane(source, "level").elevationMm).toBeCloseTo(4190);
+    source.level!.height = 2.5;
+    expect(source).toEqual(before);
+  });
+
+  it("follows overlapping slab undersides and the Builder default when no Level height is stored", () => {
+    const source = structuredClone(nodes);
+    delete source.large!.height;
+    expect(defaultLayoutReferencePlane(source, "level").elevationMm).toBe(2500);
+    source.level!.height = 2.5;
+    source.slab = { id: "slab", type: "slab", parentId: "level", polygon: source.large!.polygon, elevation: 0, thickness: 0.2 };
+    expect(defaultLayoutReferencePlane(source, "level").elevationMm).toBeCloseTo(2290);
+    source.large!.height = 2.8;
+    expect(defaultLayoutReferencePlane(source, "level").elevationMm).toBe(2800);
+  });
+
   it("keeps eligible point mounts distinct and stable while a shared plane changes", () => {
     const base = createEmptyOverlay("source.json", "sha"), first = { levelId: "level", visible: true, elevationMm: 2800, basis: "largest-area-ceiling" as const, sourceCeilingId: "large" };
     const device = createReferencePlaneDevice("luminaire", [1, 2.8, 1], "level", first.elevationMm);

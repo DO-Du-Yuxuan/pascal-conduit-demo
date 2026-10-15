@@ -1,4 +1,5 @@
 import type { NodeData } from "../types";
+import { resolveEffectiveHeight } from "../geometry/effective-building";
 import { DERIVED_CEILING_ELEVATION_METERS, resolveBeamCeilings } from "./beams";
 import type { LayoutReferencePlane } from "./overlay";
 
@@ -55,10 +56,9 @@ export function defaultLayoutReferencePlane(
       elevationMm: DERIVED_CEILING_ELEVATION_METERS * 1000,
       basis: "derived-default-2700mm",
     };
-  const height =
-    finite(ceiling.height) && ceiling.height > 0
-      ? ceiling.height
-      : DERIVED_CEILING_ELEVATION_METERS;
+  // Match the visible Ceiling underside, including follows-Level/slab values,
+  // without filling derived defaults into the imported building node.
+  const height = resolveEffectiveHeight(ceiling, nodes).height!.value;
   return {
     levelId,
     visible: true,

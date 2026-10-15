@@ -1,8 +1,46 @@
 import { describe, expect, it } from "vitest";
-import { constrainBeamEnd, createBeam, DERIVED_CEILING_ELEVATION_METERS, editBeam, nudgeBeamLaterally, quantizeBeamMeters, resizeBeamLength, translateBeam, validateBeam } from "./beams";
+import { beamTopElevationMeters, constrainBeamEnd, createBeam, createSupportedBeam, DERIVED_CEILING_ELEVATION_METERS, editBeam, nudgeBeamLaterally, quantizeBeamMeters, resizeBeamLength, translateBeam, validateBeam } from "./beams";
 
 const nodes: any = { level: { id: "level", type: "level" }, explicit: { id: "explicit", type: "ceiling", parentId: "level", height: 3, polygon: [[0, 0], [4, 0], [4, 4], [0, 4]] }, derived: { id: "derived", type: "ceiling", parentId: "level", polygon: [[4, 0], [8, 0], [8, 4], [4, 4]] } };
 describe("Demo Beam", () => {
+  const supportedNodes: any = {
+    level: { id: "level", type: "level", height: 2.7 },
+    wallStart: { id: "wallStart", type: "wall", parentId: "level", start: [0, -1], end: [0, 4], height: 2.5, thickness: .1 },
+    wallEnd: { id: "wallEnd", type: "wall", parentId: "level", start: [4, -1], end: [4, 4], height: 2.5, thickness: .1 },
+    lowerCeiling: { id: "lowerCeiling", type: "ceiling", parentId: "level", height: 2.49, polygon: [[-2, -2], [5, -2], [5, 5], [-2, 5]] },
+  };
+  const supportedSnap = (point: [number, number], id: string, face: "side-a" | "side-b" | "end-a" | "end-b" = "side-a", kind: "wall" | "column" | "beam" = "wall") => ({ point, distance: 0, target: { id, kind, face, start: point, end: point } });
+  it("creates supported Beams without Ceiling geometry and stores wall-top evidence", () => {
+    const { lowerCeiling: _ceiling, ...withoutCeiling } = supportedNodes;
+    const result = createSupportedBeam(withoutCeiling, { id: "supported", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.95, 1], "wallEnd", "side-b"), width: .1 });
+    expect(result).toMatchObject({ valid: true, beam: { width: .1, height: .5, ceilingIds: [], topElevation: { meters: 2.5, basis: "wall-top", sourceWallId: "wallStart", measurementBasis: "explicit" }, supports: { start: { objectId: "wallStart", kind: "wall", face: "side-a" }, end: { objectId: "wallEnd", kind: "wall", face: "side-b" } } } });
+    expect(result.beam).not.toHaveProperty("effectiveCeilingElevation");
+  });
+  it("uses resolved wall height with explicit or derived evidence, independently of Ceiling height", () => {
+    const derived = { ...supportedNodes, wallStart: { ...supportedNodes.wallStart, height: undefined }, wallEnd: { ...supportedNodes.wallEnd, height: 2.7 } };
+    const result = createSupportedBeam(derived, { id: "derived", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.95, 1], "wallEnd", "side-b") });
+    expect(result).toMatchObject({ valid: true, beam: { topElevation: { meters: 2.7, measurementBasis: "derived" } } });
+    expect(beamTopElevationMeters(result.beam!)).toBe(2.7);
+  });
+  it("accepts an endpoint on a simple rectangular Column whose physical top matches the Wall", () => {
+    const column = { id: "column", type: "column", parentId: "level", position: [4.2, 0, 1], width: .44, depth: .44, height: 2.5, baseStyle: "none", capitalStyle: "none", crossSection: "square", shaftProfile: "straight", shaftStartScale: 1, shaftEndScale: 1, shaftCornerRadius: .01, ringCount: 0, latheRingCount: 0 };
+    const result = createSupportedBeam({ ...supportedNodes, column }, { id: "column-supported", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.98, 1], "column", "end-b", "column") });
+    expect(result).toMatchObject({ valid: true, beam: { supports: { end: { objectId: "column", kind: "column", face: "end-b" } }, topElevation: { meters: 2.5 } } });
+  });
+  it("rejects free or Ceiling-only ends, unequal tops, and cross-Level supports", () => {
+    const freeEnd: any = { point: [2, 2], distance: 0, target: { id: "free", kind: "ceiling-edge", face: "side-a", start: [2, 2], end: [2, 2] } };
+    expect(createSupportedBeam(supportedNodes, { id: "free", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: freeEnd }).valid).toBe(false);
+    const unequal = { ...supportedNodes, wallEnd: { ...supportedNodes.wallEnd, height: 2.49 } };
+    expect(createSupportedBeam(unequal, { id: "unequal", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.95, 1], "wallEnd", "side-b") }).diagnostics).toContain("Beam 两端支承的有效顶标高必须相同。");
+    const crossLevel = { ...supportedNodes, other: { id: "other", type: "level" }, wallEnd: { ...supportedNodes.wallEnd, parentId: "other" } };
+    expect(createSupportedBeam(crossLevel, { id: "cross-level", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.95, 1], "wallEnd", "side-b") }).valid).toBe(false);
+  });
+  it("preserves supported evidence and unknown fields when editing, rejecting endpoints off their support", () => {
+    const created = createSupportedBeam(supportedNodes, { id: "edit", name: "梁", levelId: "level", start: supportedSnap([.05, 1], "wallStart"), end: supportedSnap([3.95, 1], "wallEnd", "side-b") }).beam!;
+    const withUnknown = { ...created, futureField: { retained: true } } as any;
+    expect(editBeam({ ...supportedNodes, edit: withUnknown }, withUnknown, { width: .2 })).toMatchObject({ valid: true, beam: { width: .2, futureField: { retained: true }, supports: withUnknown.supports, topElevation: withUnknown.topElevation } });
+    expect(editBeam({ ...supportedNodes, edit: withUnknown }, withUnknown, { end: [2, 2] })).toMatchObject({ valid: false });
+  });
   it("creates a valid angled Beam from same-elevation Ceiling hosts", () => { const result = createBeam(nodes, { id: "beam-1", name: "梁 1", levelId: "level", start: [0, 1], end: [3, 3] }); expect(result).toMatchObject({ valid: true, beam: { width: .3, height: .5, effectiveCeilingElevation: { meters: 3, basis: "explicit-ceiling-height" } } }); });
   it("retains derived elevation evidence", () => { const result = createBeam(nodes, { id: "beam-1", name: "梁 1", levelId: "level", start: [5, 1], end: [7, 3] }); expect(result.beam?.effectiveCeilingElevation).toEqual({ meters: DERIVED_CEILING_ELEVATION_METERS, basis: "derived-default-2700mm" }); });
   it("rejects hostless and conflicting-height spans without creating a Beam", () => { expect(createBeam(nodes, { id: "none", name: "梁", levelId: "level", start: [10, 0], end: [11, 0] }).valid).toBe(false); expect(createBeam(nodes, { id: "mixed", name: "梁", levelId: "level", start: [1, 1], end: [7, 1] }).diagnostics).toContain("Beam 不能跨越不同有效标高的 Ceiling。"); });

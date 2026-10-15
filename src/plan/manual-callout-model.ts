@@ -9,7 +9,7 @@ export const newManualCalloutDraft = (targetId: string, levelId: string, anchor:
 export function manualCalloutTargetAnchor(nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument | null, targetId: string): { levelId: string; anchor: PlanPoint } | null {
   const device = overlay?.devices.find(item => item.id === targetId);
   if (device) {
-    const levelId = device.position.attachment?.levelId ?? (device.mount?.kind === 'reference-plane' ? device.mount.levelId : null);
+    const levelId = device.position.attachment?.levelId ?? (device.mount?.kind === 'reference-plane' || device.mount?.kind === 'finished-floor' ? device.mount.levelId : null);
     return levelId ? { levelId, anchor: [device.position.position[0], device.position.position[2]] } : null;
   }
   const segment = overlay?.segments.find(item => item.id === targetId);

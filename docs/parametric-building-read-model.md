@@ -10,7 +10,7 @@
 - 源 Level 有明确 `height` 时，缺省墙高读取该层高，缺省天花按层顶/覆盖楼板下表面减 0.01 m 解析。没有明确 Level height 的旧文件，建筑显示使用当前 Builder 的 2.5 m 缺省。这是 Demo 的源格式兼容策略，不把新版字段倒推为本地 dsphere 已支持的合同。
 - 显式 Slab `thickness` 与顶面 `elevation` 分开读取；缺少 thickness 的旧节点仍按旧 Builder 从楼层基准向 elevation 挤出。显示与实体定位共用竖向范围，不改源 polygon/holes/标高。
 - Building 位姿、Level 明确 height/baseElevation 只用于显示变换。保存的设备、管线和编辑坐标仍不重写，不对既有项目自动移位、改线或重接。
-- Beam 校验和作者工具继续读取源 Ceiling 的显式/派生依据。缺省 Ceiling 的旧 `derived-default-2700mm` Beam 合同不会因显示解析而被改成“显式高度”。
+- 旧 Beam 继续读取保存的源 Ceiling 显式/派生依据，缺省 Ceiling 的旧 `derived-default-2700mm` 合同不自动转换。新建墙面支承梁读取起点 Wall 的有效顶标高，并在 `topElevation` 保留源 Wall 与明确/推导依据；详见[梁作者合同](beam-authoring.md)。
 
 Project 4.0 的已识别建筑别名增加 Skylight、Scan、BoxVent、RidgeVent、Chimney、SolarPanel、Dormer。规范化只发生在内部 kind；未编辑的源字段、类型、稳定 ID 和未知字段继续往返保留。
 

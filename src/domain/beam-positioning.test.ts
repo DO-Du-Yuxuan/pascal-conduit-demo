@@ -1,10 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { getWallCurveFrameAt } from "../geometry/walls/curve";
-import { beamClearances, beamPlanarClearances, editBeamClearance, editBeamPlanarClearance, snapBeamPoint } from "./beam-positioning";
+import { beamClearances, beamPlanarClearances, editBeamClearance, editBeamPlanarClearance, snapBeamPoint, snapSupportedBeamPoint } from "./beam-positioning";
 import { createBeam, editBeam } from "./beams";
 
-const nodes: any = { level: { id: "level", type: "level" }, ceiling: { id: "ceiling", type: "ceiling", parentId: "level", polygon: [[-2, -2], [12, -2], [12, 12], [-2, 12]] }, left: { id: "left", type: "wall", parentId: "level", start: [0, 0], end: [10, 0], thickness: .2 }, right: { id: "right", type: "wall", parentId: "level", start: [0, 4], end: [10, 4], thickness: .2 }, start: { id: "start", type: "wall", parentId: "level", start: [0, 0], end: [0, 4], thickness: .2 }, end: { id: "end", type: "wall", parentId: "level", start: [8, 0], end: [8, 4], thickness: .2 }, column: { id: "column", type: "column", parentId: "level", position: [6, 0, 2], width: .4, depth: .4 } };
+const nodes: any = { level: { id: "level", type: "level" }, ceiling: { id: "ceiling", type: "ceiling", parentId: "level", polygon: [[-2, -2], [12, -2], [12, 12], [-2, 12]] }, left: { id: "left", type: "wall", parentId: "level", start: [0, 0], end: [10, 0], thickness: .2 }, right: { id: "right", type: "wall", parentId: "level", start: [0, 4], end: [10, 4], thickness: .2 }, start: { id: "start", type: "wall", parentId: "level", start: [0, 0], end: [0, 4], thickness: .2 }, end: { id: "end", type: "wall", parentId: "level", start: [8, 0], end: [8, 4], thickness: .2 }, column: { id: "column", type: "column", parentId: "level", position: [6, 0, 2], width: .4, height: 2.5, depth: .4, baseStyle: "none", capitalStyle: "none", crossSection: "square", shaftProfile: "straight", shaftStartScale: 1, shaftEndScale: 1, shaftCornerRadius: .01, ringCount: 0, latheRingCount: 0 } };
 describe("Beam physical positioning", () => {
+  it("snaps supported endpoints to selected physical faces and preserves orthogonal lock", () => {
+    const fixture: any = {
+      level: nodes.level,
+      startWall: { id: "startWall", type: "wall", parentId: "level", start: [0, 0], end: [4, 0] },
+      endWall: { id: "endWall", type: "wall", parentId: "level", start: [4, -1], end: [4, 1], thickness: .1 },
+      column: nodes.column,
+      ceiling: nodes.ceiling,
+    };
+    const wallStart = snapSupportedBeamPoint(fixture, "level", [1, -.02], { objectId: "startWall", kind: "wall" });
+    expect(wallStart?.point).toEqual([1, -.05]);
+    expect(wallStart?.target).toMatchObject({ id: "startWall", kind: "wall", face: "side-a" });
+    const lockedEnd = snapSupportedBeamPoint(fixture, "level", [3.9, -.02], { objectId: "endWall", kind: "wall", start: [1, -.05], orthogonal: true });
+    expect(lockedEnd?.point).toEqual([3.95, -.05]);
+    expect(lockedEnd?.target).toMatchObject({ id: "endWall", kind: "wall" });
+    expect(snapSupportedBeamPoint(fixture, "level", [1, -.02], { objectId: "ceiling", kind: "wall" })).toBeNull();
+  });
   it("snaps only to physical Wall, Column, and Beam faces with a deterministic identity", () => {
     const snappedWall = snapBeamPoint(nodes, "level", [3, .13]);
     expect(snappedWall?.target).toMatchObject({ id: "left", kind: "wall" });

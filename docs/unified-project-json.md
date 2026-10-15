@@ -2,7 +2,15 @@
 
 消防信号白线与红、蓝、白网络线管共用自动过桥、大弯、梁换面 90° 弯头、定尺、辅助对齐及轴锁的几何规则。悬空和世界轴点列无需宿主也可按真实交叉生成过桥；既有消防信号直管、大弯和桥体均可作为避让障碍。消防信号过桥保存在 `FireProtectionSystem` 的 `FireSignalConduitElbow.bridge` 中，导入后继续按过桥几何显示。消防水管保持不自动过桥；消防信号仍不使用 Circuit，也不与其他系统端口互接。
 
-> 当前合同：仅导入和导出 `schemaVersion: "4.0"`。3.0 及更早格式、明确退休的公共类型均拒绝导入；不迁移。编辑器内部 Overlay 通用名仅为适配结构，不是公开类型。未知合法未来节点与字段仍无损往返。详见 [ADR 0005](adr/0005-unified-project-file.md) 与 [ADR 0006](adr/0006-project-4-system-catalog.md)。
+> 当前合同：统一导出 `schemaVersion: "4.0"`；导入支持 4.0，以及无版本 Pascal 建筑树和可通过当前实体合同验证的 1.0 / 2.0 / 3.0 节点树。旧文件由导入适配器转换为 4.0；明确退休、无法明确转换的公共类型仍拒绝导入。编辑器内部 Overlay 通用名仅为适配结构，不是公开类型。未知合法未来节点与字段仍无损往返。详见 [ADR 0005](adr/0005-unified-project-file.md) 与 [ADR 0006](adr/0006-project-4-system-catalog.md)。
+
+## 旧项目导入兼容
+
+顶部导入先经过 `importProjectJson`，4.0 文件继续由 `decodeUnifiedProject` 严格校验，不补齐损坏的 4.0 文件。旧文件必须具有 `nodes`、唯一 `rootNodeIds`、已有 Site → Building 建筑树以及一致的节点 ID / parentId / children。支持无 `schemaVersion` 或版本字符串 `1.0`、`2.0`、`3.0`；无版本输入须以原始小写 `site` 为根，避免将丢失版本字段的规范 `Site` 项目当作旧文件修复。这些版本只表示可以尝试结构转换，不保证任意历史施工数据都受支持。
+
+转换在副本上进行：已知建筑节点的小写/连字符类型映射为 4.0 类型；原几何数值、单位、ID、引用、材料、集合、插件和未知节点字段保留。仅补充缺少的十个空系统容器，不创建 Drawing、不推断线路或设备。容器 ID 根据 Site ID 和系统类型确定，遇到现有节点 ID 冲突时追加序号；已有容器不移动或覆盖，错误归属和重复容器会由 4.0 校验拒绝。
+
+身份优先使用已有 `pascalConduitProjectId`，其次复用非空 `projectId`（原字段保留），两者都没有时使用 `pascal-project:<Site ID>`，不依赖文件名或内容 SHA。导入诊断显示转换提示；原磁盘文件不自动改写，导出统一写 4.0。转换完成后必须通过完整 4.0 树、设备、引用及测量依据校验，失败不会替换当前工作区。单独 Overlay、未知版本、破损树，以及缺少明确映射的 `Sensor`、`FireWaterInlet` 等退休实体仍拒绝；旧双文件仍需外部合并。决策见 [ADR 0014](adr/0014-backward-compatible-project-import.md)。
 
 ## 文件外壳与身份
 
@@ -102,6 +110,7 @@
 | `HVACControlConduit` | `HVACSystem` 子节点，拥有 `thermostatId`、`thermostatPortId`、`indoorUnitId`、`indoorUnitPortId`、`segmentIds`、`fittingIds`、`diameterMm`，并在节点内嵌 `segments` 与弯头、过桥几何。墙地暗敷槽及明确穿孔归 HVACSystem 的 `surfaceChases` / `penetrations`，使用内嵌管段或管件的稳定 ID 引用。端口 ID 与所有路线、管段、弯头 ID 全局稳定且唯一。 |
 | `surfaceChases`、`penetrations`、HVAC `wallPenetrations` | 与产生它们的路线同属一个系统容器，保留宿主建筑 ID、路线 ID、显式/派生依据及尺寸；不修改建筑节点。 |
 | `installationReferencePlanes`、`layoutReferencePlanes` | 按 `levelId` 归入对应 `Level` 节点的同名数组，保留明确与推导标高的依据。 |
+| `constructionDatums` | 可选地归入 `Level` 的共享施工基准数组，最多一条；记录稳定 ID、H 标签、原始楼板/楼层参考、相对原始参考高度、由二者相加得到的规范标高、经确认的完成面偏移及 Zone 局部完成面偏移。无基准的导入 Level 不会自动补写此字段；详细行为见[施工基准合同](construction-datum.md)。 |
 | 弯曲半径、定尺长度、盒尺寸等施工参数 | 归相关系统容器的 `settings`，现有 `Mm` 单位与数值不变。 |
 | 颜色、图层可见性、传感器及 HVAC 可见性 | 归 `Site.settings` 的显示偏好；它们不改变建筑或系统实体。 |
 | 旧 Overlay 的 `source` 和独立 `schemaVersion` | 由统一项目身份和统一 `schemaVersion` 取代，不再作为第二份文档保存。 |
@@ -152,6 +161,16 @@
 
 ## 格式边界与转换
 
-Demo 只导入和导出 `schemaVersion: "4.0"`，界面只有一份项目文件的保存与未保存状态。3.0 及更早格式拒绝导入，不提供自动迁移；如需保留旧项目，须在 Demo 外完成转换并生成符合本合同的 4.0 文件。已有对象的 ID 和未知业务字段应保留，不能为了分类而复制、重命名或丢弃对象。未实现的类型可被解析、保留和重新导出，但不承诺在当前 Viewer 中渲染或编辑。
+Demo 统一导出 `schemaVersion: "4.0"`，界面只有一份项目文件的保存与未保存状态。无版本 Pascal 建筑树及结构兼容的 1.0 / 2.0 / 3.0 文件可按上文“旧项目导入兼容”转换；未知版本、无法明确转换的退休实体及旧 Project + Overlay 双文件仍需外部处理。已有对象的 ID 和未知业务字段应保留，不能为了分类而复制、重命名或丢弃对象。未实现的类型可被解析、保留和重新导出，但不承诺在当前 Viewer 中渲染或编辑。
 
 本格式以 README、Viewer、工作区持久化和测量合同共同维护；ADR 0005 记录单文件归属决策，ADR 0006 记录 4.0 断代与系统目录决策。统一格式读写的往返测试覆盖已知实体、未知实体、引用、Drawing 布局和未编辑建筑字段；共享解析或展示修改须运行完整测试与构建。
+
+## 完成面挂载扩展
+
+已确认的完成面仍归 `Level.constructionDatums` 所有。3D 完成面定位网格和编号地面参考线都是派生显示，不生成另一份 Slab 或重复网格数据。支持地面安装的设备可保存 `mount: {kind: "finished-floor", levelId, datumId, sourceSlabId, regionId?, topOffsetMm}`；Level、基准、源 Slab 和可选 Zone 必须真实且同层。设备节点、端口、未知合法字段保持稳定，未知挂载字段可往返保存。
+
+设备 `position` 保存盒体中心，安装定位高度使用盒体上口；`topOffsetMm` 表示最近明确定位时的偏差，当前偏差由世界坐标和当前完成面重新计算。修改完成面保留设备及路线坐标，设备移动通过明确定位动作执行。图纸依据包括当前设备、施工基准、源 Slab 和实际使用的 Zone，计数成员不与证据来源混用。详见[施工基准合同](construction-datum.md)及[ADR 0015](adr/0015-derived-finished-floor-placement.md)。
+
+## 墙面支承梁
+
+新建 `Beam` 使用 `topElevation: { meters, basis: "wall-top", sourceWallId, measurementBasis: "explicit" | "derived" }` 保存相对 Level 的墙顶标高及来源；`supports.start` / `supports.end` 保存 `{ objectId, kind, face }` 实体支承面引用。起点为 Wall，终点为同层、同顶标高的 Wall、Column 或 Beam，不能用 Ceiling 边或辅助面替代。新梁不再要求 Ceiling，不把墙顶值写成 `effectiveCeilingElevation`。旧 Beam 继续保留原有 `ceilingIds`、`effectiveCeilingElevation`、`explicitCeilingCrossing`，不自动转换或移位。详见[梁作者合同](beam-authoring.md)和 [ADR 0016](adr/0016-wall-supported-beam-authoring.md)。

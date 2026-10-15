@@ -1,7 +1,8 @@
+import { selectionAppearance } from "../../three/selection-appearance";
 import { Html, Line } from "@react-three/drei";
 import { useEffect, useMemo } from "react";
 import { type ThreeEvent } from "@react-three/fiber";
-import type { BeamNode } from "../../domain/beams";
+import { beamTopElevationMeters, type BeamNode } from "../../domain/beams";
 import type { BeamPlanarClearance } from "../../domain/beam-positioning";
 import type { Penetration, Vec3 } from "../../domain/overlay";
 import { getBuilderPresentation } from "../../three/builder-presentation";
@@ -13,6 +14,7 @@ export type BeamRendererProps = {
   onSelect: () => void;
   levelBaseY: number;
   preview?: boolean;
+  previewValid?: boolean;
   penetrations?: Penetration[];
   planarClearances?: BeamPlanarClearance[];
   onSurfaceHit?: (hit: BeamSurfaceHit) => void;
@@ -45,6 +47,7 @@ export function BeamRenderer({
   onSelect,
   levelBaseY,
   preview = false,
+  previewValid = true,
   penetrations = NO_PENETRATIONS,
   planarClearances = [],
   onSurfaceHit,
@@ -53,7 +56,7 @@ export function BeamRenderer({
 }: BeamRendererProps) {
   const rendered = useMemo(
     () => buildBeamGeometry(node, levelBaseY, penetrations),
-    [node.width, node.height, node.start[0], node.start[1], node.end[0], node.end[1], node.effectiveCeilingElevation.meters, levelBaseY, penetrations],
+    [node.width, node.height, node.start[0], node.start[1], node.end[0], node.end[1], beamTopElevationMeters(node), levelBaseY, penetrations],
   );
   useEffect(() => () => rendered?.geometry.dispose(), [rendered]);
   if (!rendered) return null;
@@ -82,12 +85,12 @@ export function BeamRenderer({
       onDoubleClick={() => { if (!preview) onSurfaceFinish?.(); }}
     >
       <primitive object={geometry} attach="geometry" />
-      <meshStandardMaterial color={selected ? "#fb923c" : BEAM_COLOR} transparent={preview} opacity={preview ? .45 : 1} roughness={.7} />
+      <meshStandardMaterial {...selectionAppearance(preview ? previewValid ? "#60a5fa" : "#ef4444" : BEAM_COLOR, selected && !preview)} transparent={preview} opacity={preview ? .45 : 1} roughness={.7} />
     </mesh>
     {penetrations.map((penetration) => <mesh key={penetration.id} position={penetration.entry.position}>
       <sphereGeometry args={[penetration.diameterMm / 2000, 12, 8]} />
       <meshBasicMaterial color="#111827" />
     </mesh>)}
-    {selected && !preview && <BeamPlanarDimensionGuides clearances={planarClearances} y={levelBaseY + node.effectiveCeilingElevation.meters - node.height - .05} />}
+    {selected && !preview && <BeamPlanarDimensionGuides clearances={planarClearances} y={levelBaseY + beamTopElevationMeters(node) - node.height - .05} />}
   </group>;
 }

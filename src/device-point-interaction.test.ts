@@ -236,7 +236,7 @@ describe("device point interaction wiring", () => {
     expect(workspace).toContain('event.key.toLowerCase() === "l") {');
     expect(compactWorkspace).toContain("setUniversalRouteMode(true); setRouteStartChooser(true);");
     expect(workspace).toContain('event.key.toLowerCase() === "d") { chooseTool("point");');
-    expect(workspace).toContain('if ((event.key === "Delete" || event.key === "Backspace") && tool === "select") {');
+    expect(workspace).toContain('if ((event.key === "Delete" || event.key === "Backspace") && (tool === "select" || tool === "box-select")) {');
     expect(workspace).toContain("deleteSelectedObjects();");
   });
 

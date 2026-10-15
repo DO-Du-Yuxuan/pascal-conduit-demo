@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { BUILDER_CARDS, canUseCatalogTool, catalogLockForBuilderCard } from "../builder-workbench";
 import { routeEscapeAction, shouldIgnoreEditableKeydown } from "./route-escape";
 
 describe("route Escape undo decisions", () => {
+  it("cancels placement under a real Builder card lock while keeping route undo separate", () => {
+    const smartPointCard = BUILDER_CARDS.smart.find((card) => card.deviceType === "rfid-reader")!;
+    const lock = catalogLockForBuilderCard(smartPointCard);
+    expect(canUseCatalogTool(lock, "select")).toBe(false);
+    expect(routeEscapeAction({ tool: "point-placement" })).toBe("cancel-placement");
+    expect(routeEscapeAction({ tool: "draw", draftPointCount: 2, hasFixedStart: true })).toBe("pop-draft-point");
+  });
+
   it("pops one confirmed point at a time for fixed-source red and white routes", () => {
     for (const tool of ["draw", "branch"] as const) {
       expect(routeEscapeAction({ tool, draftPointCount: 4, hasFixedStart: true })).toBe("pop-draft-point");

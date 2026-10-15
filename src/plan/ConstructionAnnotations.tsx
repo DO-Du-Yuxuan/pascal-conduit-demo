@@ -21,7 +21,7 @@ export function missingConstructionDrawingLayout(overlay: ConduitOverlayDocument
     .map(dimension => [dimension.id, { levelId: dimension.levelId, sourceObjectIds: [...new Set(dimension.relatedIds)], basis: { kind: dimension.measurementBasis, reference: dimension.referenceKind, assumptions: dimension.assumptions, confidence: dimension.confidence } }] as [string, DrawingEvidence])
     .filter(([id, value]) => JSON.stringify(overlay.pointDimensionEvidence[id]) !== JSON.stringify(value)));
   const annotationEvidence = Object.fromEntries(plan.report.annotations
-    .map(annotation => [annotation.id, { levelId: annotation.levelId, sourceObjectIds: [...new Set(annotation.relatedIds)], basis: { kind: annotation.measurementBasis, reference: annotation.kind, assumptions: annotation.assumptions, confidence: annotation.confidence } }] as [string, DrawingEvidence])
+    .map(annotation => [annotation.id, { levelId: annotation.levelId, sourceObjectIds: [...new Set(annotation.evidenceSourceIds ?? annotation.relatedIds)], basis: { kind: annotation.measurementBasis, reference: annotation.kind, assumptions: annotation.assumptions, confidence: annotation.confidence } }] as [string, DrawingEvidence])
     .filter(([id, value]) => JSON.stringify(overlay.constructionAnnotationEvidence[id]) !== JSON.stringify(value)));
   const annotationLabels = Object.fromEntries(plan.layout.placed
     .filter(item => !overlay.constructionAnnotationLabelPositions[item.annotation.id])

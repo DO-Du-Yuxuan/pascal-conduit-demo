@@ -2,6 +2,7 @@ import type { Circuit, ConduitOverlayDocument, DeviceFrame, DeviceMount, HostKin
 import type { PlannedRoute } from "./routing";
 import { commitBranchRoute, commitPlannedRoute } from "./routing";
 import { SOURCE_PORTS_PER_EDGE, sourcePortTemplate } from "./source-ports";
+import { deviceVerticalHalfExtentMeters } from "../geometry/positioning-measurements";
 
 // Overlay files are imported into a fresh browser session.  An in-memory
 // counter would restart at one and can therefore reuse an imported device ID.
@@ -43,6 +44,11 @@ export const systemCanBranch = (system: RoutingSystem) => system !== "network" &
 export const deviceSupportsSystem = (device: NetworkDevice, system: RoutingSystem) => device.systems.includes(system);
 export const isSourceDevice = (device: NetworkDevice) => DEVICE_DEFAULTS[device.deviceType].source;
 export const sprinklerDirectionOf = (device: NetworkDevice): SprinklerDirection => device.deviceType === "sprinkler-head" && device.sprinklerDirection === "pendent" ? "pendent" : "upright";
+export const isFloorMountedDevice = (device: NetworkDevice): boolean => {
+  if (device.mount?.kind === "finished-floor") return true;
+  const attachment = device.position.attachment ?? (device.mount?.kind === "host" ? device.mount.attachment : undefined);
+  return attachment?.hostKind === "slab" && (attachment.surface === "top" || attachment.normal[1] > .9);
+};
 
 /** Changes only the sprinkler's presentation/installation direction. Pipe topology and ports stay intact. */
 export function setSprinklerDirection(overlay: ConduitOverlayDocument, deviceId: string, direction: SprinklerDirection): ConduitOverlayDocument {
@@ -127,6 +133,27 @@ export function isReferencePlaneEligibleDeviceType(deviceType: NetworkDeviceType
 export function createReferencePlaneDevice(deviceType: NetworkDeviceType, position: Vec3, levelId: string, elevationMm: number, name?: string): NetworkDevice {
   if (!isReferencePlaneEligibleDeviceType(deviceType)) throw new Error(`${DEVICE_DEFAULTS[deviceType].label}不能放置在悬空参考面。`);
   return buildNetworkDevice(deviceType, { position }, name, false, { mount: { kind: "reference-plane", levelId, elevationMm }, frameFront: [0, -1, 0] });
+}
+
+export function createFinishedFloorDevice(deviceType: NetworkDeviceType, x: number, z: number, surface: { y: number; levelId: string; datumId: string; sourceSlabId: string; regionId?: string }, topOffsetMm = 0, name?: string): NetworkDevice {
+  if (!Number.isFinite(topOffsetMm)) throw new Error("完成面偏移必须是有限数值。");
+  const definition = DEVICE_DEFAULTS[deviceType];
+  if (!definition.hostKinds.includes("slab")) throw new Error(`${definition.label}不能安装在完成地面。`);
+  const mount: DeviceMount = { kind: "finished-floor", levelId: surface.levelId, datumId: surface.datumId, sourceSlabId: surface.sourceSlabId, ...(surface.regionId ? { regionId: surface.regionId } : {}), topOffsetMm };
+  const position: RoutePoint = { position: [x, surface.y + topOffsetMm / 1000 - definition.sizeMm[2] / 2000, z] };
+  const device = buildNetworkDevice(deviceType, position, name, false, { mount, frameFront: [0, 1, 0] });
+  const deltaY = surface.y + topOffsetMm / 1000 - deviceVerticalHalfExtentMeters(device) - device.position.position[1];
+  return { ...device, position: { position: [x, device.position.position[1] + deltaY, z] }, ports: device.ports.map(port => ({ ...port, position: { position: [port.position.position[0], port.position.position[1] + deltaY, port.position.position[2]] } })) };
+}
+
+/** Explicitly align a floor device; callers decide when this action is allowed. */
+export function alignDeviceToFinishedFloor(device: NetworkDevice, surface: { y: number; levelId: string; datumId: string; sourceSlabId: string; regionId?: string }, topOffsetMm = device.mount?.kind === "finished-floor" ? device.mount.topOffsetMm : 0): NetworkDevice {
+  if (!Number.isFinite(topOffsetMm) || device.ports.some(port => port.connectedSegmentIds.length)) return device;
+  const alignedFrame = { front: [0, 1, 0] as Vec3, up: [0, 0, -1] as Vec3, right: [1, 0, 0] as Vec3 };
+  const aligned = { ...device, frame: alignedFrame, orientation: [0, 1, 0] as Vec3 };
+  const delta: Vec3 = [0, surface.y + topOffsetMm / 1000 - deviceVerticalHalfExtentMeters(aligned) - device.position.position[1], 0];
+  const mount: DeviceMount = { kind: "finished-floor", levelId: surface.levelId, datumId: surface.datumId, sourceSlabId: surface.sourceSlabId, ...(surface.regionId ? { regionId: surface.regionId } : {}), topOffsetMm };
+  return { ...aligned, position: { position: add(device.position.position, delta) }, mount, ports: device.ports.map(port => ({ ...port, position: { position: add(port.position.position, delta) } })) };
 }
 
 export function rebuildNetworkDevice(device: NetworkDevice, sizeMm = device.sizeMm): NetworkDevice {

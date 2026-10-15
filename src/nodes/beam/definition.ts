@@ -1,5 +1,6 @@
 import {
   createBeam,
+  createSupportedBeam,
   DEFAULT_BEAM_HEIGHT_METERS,
   DEFAULT_BEAM_WIDTH_METERS,
   editBeam,
@@ -24,6 +25,7 @@ export const beamNodeDefinition = {
   ] as const,
   schema: { validate: validateBeam },
   create: createBeam,
+  createSupported: createSupportedBeam,
   edit: editBeam,
   parametrics: {
     buildGeometry: buildBeamGeometry,

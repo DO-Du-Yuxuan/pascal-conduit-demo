@@ -1,7 +1,7 @@
 import type { NetworkDeviceType, RoutingSystem } from "./domain/overlay";
 
 export type BuilderSystemId = "electrical" | "plumbing" | "lighting" | "hvac" | "smart" | "water" | "bath" | "fire" | "irrigation" | "gas";
-export type BuilderAuthorTool = "select" | "draw" | "branch" | "point" | "beam" | "delete" | "hvac-unit" | "hvac-duct" | "hvac-outlet" | "hvac-thermostat" | "hvac-control";
+export type BuilderAuthorTool = "select" | "box-select" | "draw" | "branch" | "point" | "beam" | "construction-datum" | "delete" | "hvac-unit" | "hvac-duct" | "hvac-outlet" | "hvac-thermostat" | "hvac-control";
 export type BuilderCardSection = "place" | "draw" | "edit";
 export type BuilderCard = { label: string; icon: string; section: BuilderCardSection; tool: BuilderAuthorTool; system?: RoutingSystem; deviceType?: NetworkDeviceType };
 export type BuilderCatalogLock = { tools?: readonly BuilderAuthorTool[]; systems?: readonly RoutingSystem[]; deviceTypes?: readonly NetworkDeviceType[] };

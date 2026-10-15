@@ -8,7 +8,7 @@ export function ConstructionLegend({ sections, annotationScale }: { sections: In
     <summary>点位图例及安装高度表</summary>
     <div className="construction-installation-schedule-content">{sections.map(section => <section key={section.system} data-construction-schedule={section.system}>
       <h3>{section.label}</h3>
-      {section.rows.map(row => <div key={`${row.deviceType}:${row.name}:${row.mounting}:${row.height}`} className="construction-schedule-row" style={row.deviceType === 'sprinkler-head' ? { minHeight: 'calc(42px * var(--point-scale))' } : undefined} data-schedule-row title={`来源：${row.sourceIds.join(', ')}\n依据：${row.measurementBasis}；置信度：${row.confidence}\n${row.assumptions.join('\n')}`}>
+      {section.rows.map(row => <div key={`${row.deviceType}:${row.name}:${row.mounting}:${row.height}`} className="construction-schedule-row" style={row.deviceType === 'sprinkler-head' ? { minHeight: 'calc(42px * var(--point-scale))' } : undefined} data-schedule-row title={`设备：${row.sourceIds.join(', ')}\n依据来源：${(row.evidenceSourceIds ?? row.sourceIds).join(', ')}\n依据：${row.measurementBasis}；置信度：${row.confidence}\n${row.assumptions.join('\n')}`}>
         <svg style={row.deviceType === 'sprinkler-head' ? { overflow: 'visible' } : undefined} viewBox="-12 -12 24 24" aria-label={`${row.name}图块`}><g fill="#fff" stroke="#343434" strokeWidth="1.5"><DeviceSymbol type={row.deviceType} sprinklerDirection={row.sprinklerDirection} floorSocket={row.floorSocket} /></g></svg>
         <span className="construction-schedule-variant">{row.variant ?? ''}</span><span>{row.name}</span><span>{row.mounting}</span><span>H={row.height}</span><span>×{row.quantity}</span>
       </div>)}

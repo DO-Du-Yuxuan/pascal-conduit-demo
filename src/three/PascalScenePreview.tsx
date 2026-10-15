@@ -1,5 +1,6 @@
-import { Html, Line } from "@react-three/drei";
-import { useEffect, useMemo, useState } from "react";
+import { selectionAppearance } from "./selection-appearance";
+import { Line } from "@react-three/drei";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { BackSide, BoxGeometry, DoubleSide, ExtrudeGeometry, FrontSide, Matrix4, Quaternion, RepeatWrapping, Shape, ShapeGeometry, SRGBColorSpace, Texture, TextureLoader, Vector3 } from "three";
 import { getRoofOuterSurfaceFrameAtPoint } from "@pascal-app/viewer";
 import { finalDimensions, resolveItemPlanTransform, resolveItemVerticalRange, resolveWallOpeningTransform } from "../geometry/transform";
@@ -16,6 +17,9 @@ import type { ThreeDLayerVisibility } from "./ThreeDWorkspace";
 import { buildingLayerForType, type ThreeDLevelMode, type ThreeDWallMode } from "./view-state";
 import type { ThreeDSceneInput } from "./scene-input";
 import type { ConduitOverlayDocument, HostAttachment, Penetration, RoutePoint, SurfaceChase, Vec3 } from "../domain/overlay";
+import { constructionDatumRegionAt, constructionDatumWallLabel, datumWallLineSegments, finishedFloorWallLineSegments, finishOffsetForRegion, splitDatumLinesByRegions } from "../domain/construction-datum";
+import { constructionDatumLabelFrame } from "./construction-datum-label";
+import { WorldSpaceCanvasLabel } from "../components/WorldSpaceCanvasLabel";
 import { transitionToAdjacentWall, type WallHostCandidate } from "./host-transition";
 import { isFrontmostSurfaceEvent } from "./surface-picking";
 import { subtractBeamPenetrations, subtractHorizontalChases } from "./chase-geometry";
@@ -29,13 +33,26 @@ import { resolveBuilderRoleMaterial, resolveBuilderWallMaterials, resolveBuilder
 import type { BuilderResolvedMaterial, BuilderTextureSlot } from "./builder-materials";
 
 export type ThreeDSurfaceHit = { point: Vec3; attachment: HostAttachment; shiftKey: boolean; ctrlKey?: boolean };
-type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; activeLevelId?: string; wallMode: ThreeDWallMode; selectedId: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; beamPreview?: BeamNode | null; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
+type Props = { scene: ThreeDSceneInput; layers: ThreeDLayerVisibility; hiddenNodeIds: ReadonlySet<string>; levelMode: ThreeDLevelMode; activeLevelId?: string; wallMode: ThreeDWallMode; selectedId: string | null; selectedIds?: readonly string[]; selectedConstructionRegionId?: string | null; highlightHostId?: string | null; previousRoutePoint?: RoutePoint; penetrationBypassHostId?: string | null; beamPreview?: BeamNode | null; beamPreviewValid?: boolean; onSelect: (id: string) => void; overlay?: ConduitOverlayDocument; appliedSurfaceChases?: SurfaceChase[]; appliedPenetrations?: Penetration[]; constructionMode?: "construction" | "finished" | "xray"; constructionDatumSelection?: boolean; constructionDatumReferenceSelecting?: boolean; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void };
 type Point = [number, number, number];
 const EMPTY_CHASES: SurfaceChase[] = [];
 const EMPTY_PENETRATIONS: Penetration[] = [];
 const EMPTY_OPENINGS: NodeData[] = [];
 const TEXTURE_SLOTS: BuilderTextureSlot[] = ["map", "normalMap", "roughnessMap", "metalnessMap", "displacementMap", "aoMap", "emissiveMap", "bumpMap", "alphaMap", "lightMap"];
 const PRESENTATION = getBuilderPresentation();
+function DatumWallLabel({ points, side, position, text }: { points: Vec3[]; side: -1 | 1; position: Vec3; text: string }) {
+  const frame = constructionDatumLabelFrame(points, side, position);
+  if (!frame) return null;
+  return <WorldSpaceCanvasLabel text={text} position={[frame.position[0], frame.position[1] + .035, frame.position[2]]} right={frame.right} up={frame.up} normal={frame.normal} fontSizeMm={48} canvasHeightMm={72} color="#33404a" />;
+}
+
+/** Drei Line forwards children under its material; keep the text plane as a scene sibling. */
+export function DatumWallAnnotation({ points, label, onSelect }: { points: Vec3[]; label?: ReactNode; onSelect: () => void }) {
+  return <>
+    <Line points={points} color="#33485a" lineWidth={1} renderOrder={12} onClick={(event) => { event.stopPropagation(); onSelect(); }} />
+    {label}
+  </>;
+}
 
 const numeric = (value: unknown, fallback = 0) => typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const resolveNodeMaterial = (node: NodeData, schemaKey = "material", presetKey = "materialPreset", role: "roof" | "joinery" | "glazing" | "furnishing" = "joinery") => {
@@ -84,10 +101,9 @@ function BuilderWallMaterialSlot({ attach, resolved, selected, translucent }: { 
   }, [resolved]);
   const side = resolved.side === "double" ? DoubleSide : resolved.side === "back" ? BackSide : FrontSide;
   return <meshStandardMaterial attach={attach}
-    color={selected ? "#fb923c" : resolved.color}
+    {...selectionAppearance(resolved.color, selected, resolved.opacity * (translucent ? .3 : 1))}
     roughness={resolved.roughness}
     metalness={resolved.metalness}
-    opacity={resolved.opacity * (translucent ? .3 : 1)}
     transparent={resolved.transparent || translucent}
     side={side}
     map={textures.map}
@@ -108,7 +124,7 @@ function Beam({ node, levelY, ...props }: Omit<BeamRendererProps, "node" | "leve
   return <Renderer node={node as BeamNode} levelBaseY={levelY} {...props} />;
 }
 
-function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; chases?: SurfaceChase[]; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void }) {
+function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, attachment, chases = EMPTY_CHASES, penetrations = EMPTY_PENETRATIONS, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback, raycastEnabled = true }: { node: NodeData; y: number; thickness?: number; color: string; opacity: number; selected: boolean; onSelect: () => void; attachment?: HostAttachment; chases?: SurfaceChase[]; penetrations?: Penetration[]; onSurfaceHit?: (hit: ThreeDSurfaceHit) => void; onSurfaceMove?: (hit: ThreeDSurfaceHit | null) => void; onSurfaceFinish?: () => void; onChaseFallback?: (key: string, failed: boolean) => void; raycastEnabled?: boolean }) {
   const result = useMemo(() => {
     const polygon = Array.isArray(node.polygon) ? node.polygon : [];
     if (polygon.length < 3) return { geometry: null, failed: false };
@@ -144,9 +160,9 @@ function Surface({ node, y, thickness = 0, color, opacity, selected, onSelect, a
       : normal[1] < 0 ? "bottom" : "top";
     return { point: [event.point.x, event.point.y, event.point.z], attachment: { ...attachment, surface, normal, localPosition: [event.point.x, event.point.y - y, event.point.z], basis: { u: [1, 0, 0], v: [0, 0, 1] } }, shiftKey: event.nativeEvent.shiftKey, ctrlKey: event.nativeEvent.ctrlKey || event.nativeEvent.metaKey };
   };
-  return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
+  return <mesh position={[0, y, 0]} rotation={[-Math.PI / 2, 0, 0]} raycast={raycastEnabled ? undefined : () => null} onPointerMove={(event) => { if (!isFrontmostSurfaceEvent(event)) return; const next = hit(event); if (next) onSurfaceMove?.(next); }} onClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSelect(); const next = hit(event); if (next && event.nativeEvent.detail < 2) onSurfaceHit?.(next); }} onDoubleClick={(event) => { if (!isFrontmostSurfaceEvent(event)) return; event.stopPropagation(); onSurfaceFinish?.(); }}>
     <primitive object={geometry} attach="geometry" />
-    <meshStandardMaterial color={selected ? "#fb923c" : color} transparent opacity={opacity} side={2} roughness={.88} />
+    <meshStandardMaterial {...selectionAppearance(color, selected, opacity)} transparent side={2} roughness={.88} />
   </mesh>;
 }
 
@@ -158,7 +174,7 @@ function ItemProxy({ node, position, rotationY, selected, onSelect }: { node: No
   return <group position={position} rotation={[0, rotationY, 0]} onClick={(event) => { event.stopPropagation(); onSelect(); }}>
     <mesh position={[0, height / 2, 0]}>
       <primitive object={geometry} attach="geometry" />
-      <meshStandardMaterial color={selected ? "#fb923c" : PRESENTATION.colors.furnishing} roughness={.72} />
+      <meshStandardMaterial {...selectionAppearance(PRESENTATION.colors.furnishing, selected)} roughness={.72} />
     </mesh>
   </group>;
 }
@@ -260,7 +276,7 @@ function BuilderFence({ node, y, selected, onSelect }: { node: NodeData; y: numb
   </group>;
 }
 
-export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, activeLevelId, wallMode, selectedId, highlightHostId, previousRoutePoint, penetrationBypassHostId, beamPreview, onSelect, overlay, appliedSurfaceChases, appliedPenetrations, constructionMode = "construction", onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
+export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, activeLevelId, wallMode, selectedId, selectedIds = [], selectedConstructionRegionId, highlightHostId, previousRoutePoint, penetrationBypassHostId, beamPreview, beamPreviewValid = true, onSelect, overlay, appliedSurfaceChases, appliedPenetrations, constructionMode = "construction", constructionDatumSelection = false, constructionDatumReferenceSelecting = false, onSurfaceHit, onSurfaceMove, onSurfaceFinish, onChaseFallback }: Props) {
   const sceneIndex = useMemo(() => {
     const nodes = Object.values(scene.nodes), levelIdByNode: Record<string, string | null> = {}, levelValueByNode: Record<string, number> = {}, openingsByWall: Record<string, NodeData[]> = {}, slabsByLevel: Record<string, NodeData[]> = {}, wallsByLevel: Record<string, NodeData[]> = {};
     const levelIdFor = (node: NodeData) => {
@@ -304,33 +320,64 @@ export function PascalScenePreview({ scene, layers, hiddenNodeIds, levelMode, ac
   const elevation = (node: NodeData) => { const level = levelFor(node); return level * 3.2 + (levelMode === "exploded" ? level * 1.6 : 0); };
   const floorTopAt = (levelId: string | null, x: number, z: number) => Math.max(0, ...(sceneIndex.slabsByLevel[levelId ?? ""] ?? EMPTY_OPENINGS).filter((node) => Array.isArray(node.polygon) && pointInPolygon(x, z, node.polygon)).map((node) => Math.max(0, numeric(node.elevation, .05))));
   const visible = (node: NodeData) => { const layer = buildingLayerForType(node.type); return sourceNodeIsVisible(node.id, scene.nodes) && !hiddenNodeIds.has(node.id) && !!layer && layers[layer] && !(node.type === "beam" && !validateBeam(node, scene.nodes).valid) && !(node.type === "wall" && wallMode === "down") && (levelMode !== "solo" || (activeLevelId ? levelIdFor(node) === activeLevelId : levelFor(node) === 0)); };
+  const activeDatum = overlay?.constructionDatums.find((datum) => datum.levelId === activeLevelId);
+  const datumWalls = (sceneIndex.wallsByLevel[activeLevelId ?? ""] ?? []).map(wall => ({ ...wall, height: effectiveParameters[wall.id]?.height?.value ?? wall.height, thickness: effectiveParameters[wall.id]?.thickness?.value ?? wall.thickness }));
+  const datumOpenings = Object.fromEntries(Object.entries(sceneIndex.openingsByWall).map(([wallId, openings]) => [wallId, openings.map(opening => ({ ...opening, width: effectiveParameters[opening.id]?.width?.value ?? opening.width, height: effectiveParameters[opening.id]?.height?.value ?? opening.height }))]));
+  const datumLevelY = Number(scene.nodes[activeLevelId ?? ""]?.level ?? 0) * 3.2;
+  const datumLines = activeDatum ? splitDatumLinesByRegions(datumWallLineSegments(activeDatum, datumWalls, datumOpenings, datumLevelY), scene.nodes, activeLevelId ?? "") : [];
+  const finishLines = activeDatum ? finishedFloorWallLineSegments(activeDatum, datumWalls, datumOpenings, datumLevelY, scene.nodes) : [];
+  const selectedDatumDevice = overlay?.devices.find((device) => device.id === selectedId);
+  const selectedDatumWallId = selectedDatumDevice?.position.attachment?.hostKind === "wall" ? selectedDatumDevice.position.attachment.hostId : undefined;
+  const selectedDatumHighlight = selectedDatumWallId && selectedDatumDevice ? datumLines.filter(line => line.wallId === selectedDatumWallId).flatMap(line => {
+    let cumulative = 0, best: { along: number; nearest: number } | undefined;
+    const lengths = line.points.slice(1).map((b, index) => Math.hypot(b[0] - line.points[index]![0], b[2] - line.points[index]![2]));
+    line.points.slice(1).forEach((b, index) => { const a = line.points[index]!, length = lengths[index]!, dx = b[0] - a[0], dz = b[2] - a[2], denom = length * length, t = denom ? Math.max(0, Math.min(1, ((selectedDatumDevice.position.position[0] - a[0]) * dx + (selectedDatumDevice.position.position[2] - a[2]) * dz) / denom)) : 0, point: Vec3 = [a[0] + dx * t, a[1], a[2] + dz * t], nearest = Math.hypot(selectedDatumDevice.position.position[0] - point[0], selectedDatumDevice.position.position[2] - point[2]); if (!best || nearest < best.nearest) best = { along: cumulative + length * t, nearest }; cumulative += length; });
+    if (!best || cumulative < .01) return [];
+    const pointAt = (distance: number): Vec3 => { let passed = 0; for (let index = 0; index < lengths.length; index++) { const length = lengths[index]!, a = line.points[index]!, b = line.points[index + 1]!; if (passed + length >= distance || index === lengths.length - 1) { const t = length ? Math.max(0, Math.min(1, (distance - passed) / length)) : 0; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; } passed += length; } return line.points[0]!; };
+    const from = Math.max(0, best.along - .225), to = Math.min(cumulative, best.along + .225), points = [pointAt(from), ...line.points.slice(1, -1).filter((_point, index) => { const along = lengths.slice(0, index + 1).reduce((sum, item) => sum + item, 0); return along > from && along < to; }), pointAt(to)];
+    return [{ points, nearest: best.nearest }];
+  }).sort((a, b) => a.nearest - b.nearest)[0]?.points : undefined;
+  const labeledWallSides = new Set<string>();
+  const labeledFinishWallSides = new Set<string>();
+  const regionAt = (x: number, z: number) => activeLevelId ? constructionDatumRegionAt(scene.nodes, activeLevelId, x, z) : undefined;
   return <group name="pascal-readonly-preview">
-    {layers.beams && beamPreview && !scene.nodes[beamPreview.id] && <Beam node={beamPreview} selected={false} onSelect={() => undefined} levelY={elevation(beamPreview)} preview />}
+    {layers.beams && beamPreview && !scene.nodes[beamPreview.id] && <Beam node={beamPreview} selected={false} onSelect={() => undefined} levelY={elevation(beamPreview)} preview previewValid={beamPreviewValid} />}
     {sceneIndex.nodes.map((node) => {
       if (!visible(node)) return null;
-      const selected = node.id === selectedId || node.id === highlightHostId, select = () => onSelect(node.id), y = elevation(node);
-      if (node.type === "wall") return <Wall key={node.id} node={node} hostId={node.id} levelId={levelIdFor(node)} levelWalls={sceneIndex.wallsByLevel[levelIdFor(node) ?? ""] ?? EMPTY_OPENINGS} openings={sceneIndex.openingsByWall[node.id] ?? EMPTY_OPENINGS} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} y={y} selected={selected} effectiveHeight={effectiveParameters[node.id]?.height?.value} wallMode={constructionMode === "xray" ? "translucent" : wallMode} onSelect={select} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />;
-      if (node.type === "slab") { const range = resolveSlabVerticalRange(node); return <Surface key={node.id} node={node} y={y + range.bottom} thickness={range.thickness} color={PRESENTATION.colors.floor} opacity={constructionMode === "xray" ? .32 : 1} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: levelIdFor(node) }} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />; }
-      if (node.type === "ceiling") return <Surface key={node.id} node={node} y={y + (effectiveParameters[node.id]?.height?.value ?? 2.5)} thickness={.04} color={PRESENTATION.colors.ceiling} opacity={constructionMode === "xray" ? .24 : .94} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "ceiling", surface: "ceiling-face", normal: [0, -1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />;
-      if (node.type === "beam") { const rendered = beamPreview?.id === node.id ? beamPreview : node, valid = validateBeam(rendered, scene.nodes).beam; return <Beam key={node.id} node={rendered} selected={selected} onSelect={select} levelY={elevation(rendered)} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} planarClearances={selected && valid ? beamPlanarClearances(scene.nodes, valid) : []} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />; }
-      if (node.type === "zone") return <Surface key={node.id} node={node} y={y + .012} color={typeof node.color === "string" ? node.color : "#60a5fa"} opacity={.24} selected={selected} onSelect={select} />;
+      const selected = node.id === selectedId || selectedIds.includes(node.id) || node.id === highlightHostId, select = () => onSelect(node.id), y = elevation(node), mark = (child: ReactNode) => <group key={node.id} userData={{ boxSelectId: node.id }}>{child}</group>;
+      if (node.type === "wall") return mark(<Wall node={node} hostId={node.id} levelId={levelIdFor(node)} levelWalls={sceneIndex.wallsByLevel[levelIdFor(node) ?? ""] ?? EMPTY_OPENINGS} openings={sceneIndex.openingsByWall[node.id] ?? EMPTY_OPENINGS} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} y={y} selected={selected} effectiveHeight={effectiveParameters[node.id]?.height?.value} wallMode={constructionMode === "xray" ? "translucent" : wallMode} onSelect={select} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />);
+      if (node.type === "slab") { const range = resolveSlabVerticalRange(node); return mark(<Surface node={node} y={y + range.bottom} thickness={range.thickness} color={PRESENTATION.colors.floor} opacity={constructionMode === "xray" ? .32 : 1} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "slab", surface: "top", normal: [0, 1, 0], levelId: levelIdFor(node) }} chases={constructionMode === "finished" ? EMPTY_CHASES : chasesByHost[node.id] ?? EMPTY_CHASES} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} onChaseFallback={onChaseFallback} />); }
+      if (node.type === "ceiling") return mark(<Surface node={node} y={y + (effectiveParameters[node.id]?.height?.value ?? 2.5)} thickness={.04} color={PRESENTATION.colors.ceiling} opacity={constructionMode === "xray" ? .24 : .94} selected={selected} onSelect={select} attachment={{ hostId: node.id, hostKind: "ceiling", surface: "ceiling-face", normal: [0, -1, 0], levelId: levelIdFor(node) }} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />);
+      if (node.type === "beam") { const rendered = beamPreview?.id === node.id ? beamPreview : node, valid = validateBeam(rendered, scene.nodes).beam; return mark(<Beam node={rendered} selected={selected} onSelect={select} levelY={elevation(rendered)} penetrations={constructionMode === "finished" ? EMPTY_PENETRATIONS : penetrationsByHost[node.id] ?? EMPTY_PENETRATIONS} planarClearances={selected && valid ? beamPlanarClearances(scene.nodes, valid) : []} onSurfaceHit={handleSurfaceHit} onSurfaceMove={handleSurfaceMove} onSurfaceFinish={onSurfaceFinish} />); }
+      if (node.type === "zone") { const point = node.polygon?.reduce((sum: number[], vertex: number[]) => [sum[0]! + vertex[0]!, sum[1]! + (vertex.length >= 3 ? vertex[2]! : vertex[1]!)], [0, 0]) ?? [0, 0], count = Math.max(1, node.polygon?.length ?? 0), floor = constructionDatumSelection ? floorTopAt(levelIdFor(node), point[0] / count, point[1] / count) : 0; return mark(<Surface node={node} y={y + floor + (constructionDatumSelection ? .025 : .012)} color={typeof node.color === "string" ? node.color : "#60a5fa"} opacity={constructionDatumSelection ? .14 : .24} selected={selected} onSelect={select} raycastEnabled={!constructionDatumReferenceSelecting} />); }
       if (node.type === "item" || node.type === "shelf" || node.type === "cabinet" || node.type === "cabinet-module") {
         const transform = resolveItemPlanTransform(node.id, scene.nodes), vertical = resolveItemVerticalRange(node.id, scene.nodes), position = vector(node.position);
         const itemLevelId = levelIdFor(node), worldX = transform.status === "ok" ? transform.x : position[0], worldZ = transform.status === "ok" ? transform.z : position[2], grounded = node.asset?.attachTo === "wall-side" || node.asset?.attachTo === "ceiling" ? 0 : floorTopAt(itemLevelId, worldX, worldZ), localBottom = vertical.status === "ok" ? vertical.bottom : position[1], rotationY = transform.status === "ok" ? transform.rotationY : yaw(node);
-        return <ItemProxy key={node.id} node={node} position={[worldX, y + grounded + localBottom, worldZ]} rotationY={rotationY} selected={selected} onSelect={select} />;
+        return mark(<ItemProxy node={node} position={[worldX, y + grounded + localBottom, worldZ]} rotationY={rotationY} selected={selected} onSelect={select} />);
       }
-      if (node.type === "door" || node.type === "window") return <Opening key={node.id} node={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />;
-      if (node.type === "column") return <BuilderColumn key={node.id} node={node} y={y} selected={selected} onSelect={select} />;
-      if (node.type === "fence") return <BuilderFence key={node.id} node={node} y={y} selected={selected} onSelect={select} />;
-      if (node.type === "stair") return <BuilderStair key={node.id} stair={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />;
+      if (node.type === "door" || node.type === "window") return mark(<Opening node={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />);
+      if (node.type === "column") return mark(<BuilderColumn node={node} y={y} selected={selected} onSelect={select} />);
+      if (node.type === "fence") return mark(<BuilderFence node={node} y={y} selected={selected} onSelect={select} />);
+      if (node.type === "stair") return mark(<BuilderStair stair={node} nodes={scene.nodes} y={y} selected={selected} onSelect={select} />);
       if (node.type === "stair-segment") return null;
       if (node.type === "roof-segment") {
         const parent = node.parentId ? scene.nodes[node.parentId] : undefined, pos = vector(node.position), parentPos = parent ? vector(parent.position) : [0, 0, 0];
         const transform = builderRoofSegmentTransform(pos, parentPos, parent ? yaw(parent) : 0, yaw(node));
-        return <RoofSegmentMesh key={node.id} node={node} nodes={scene.nodes} transform={transform} levelY={y} selected={selected} selectedId={selectedId} onSelect={select} onSelectSkylight={onSelect} onChaseFallback={onChaseFallback} />;
+        return mark(<RoofSegmentMesh node={node} nodes={scene.nodes} transform={transform} levelY={y} selected={selected} selectedId={selectedId} onSelect={select} onSelectSkylight={onSelect} onChaseFallback={onChaseFallback} />);
       }
       return null;
     })}
+    {activeDatum && datumLines.filter(line => visible(scene.nodes[line.wallId]!)).map((line, index) => {
+      const sideKey = `${line.wallId}:${line.side}:${line.regionId ?? "common"}`, showLabel = !labeledWallSides.has(sideKey); labeledWallSides.add(sideKey);
+      const regionId = line.regionId;
+      return <DatumWallAnnotation key={`${activeDatum.id}:${line.wallId}:${line.side}:${index}`} points={line.points} label={showLabel ? <DatumWallLabel points={line.points} side={line.side} position={line.labelPosition} text={constructionDatumWallLabel(activeDatum, finishOffsetForRegion(activeDatum, regionId))} /> : null} onSelect={() => onSelect(activeDatum.id)} />;
+    })}
+    {activeDatum && finishLines.filter(line => visible(scene.nodes[line.wallId]!)).map((line, index) => {
+      const sideKey = `${line.wallId}:${line.side}:${line.regionId ?? "common"}`, showLabel = !labeledFinishWallSides.has(sideKey); labeledFinishWallSides.add(sideKey);
+      return <DatumWallAnnotation key={`finish:${activeDatum.id}:${line.wallId}:${line.side}:${index}`} points={line.points} label={showLabel ? <DatumWallLabel points={line.points} side={line.side} position={line.labelPosition} text="地面完成面" /> : null} onSelect={() => onSelect(activeDatum.id)} />;
+    })}
+    {selectedConstructionRegionId && datumLines.filter(line => line.regionId === selectedConstructionRegionId && visible(scene.nodes[line.wallId]!)).map((line, index) => <Line key={`region-datum-highlight:${selectedConstructionRegionId}:${line.wallId}:${line.side}:${index}`} points={line.points} color="#d97706" lineWidth={2} renderOrder={13} raycast={() => null} />)}
+    {selectedDatumHighlight && selectedDatumWallId && visible(scene.nodes[selectedDatumWallId]!) && <Line points={selectedDatumHighlight} color="#d97706" lineWidth={2} renderOrder={14} raycast={() => null} />}
   </group>;
 }
 

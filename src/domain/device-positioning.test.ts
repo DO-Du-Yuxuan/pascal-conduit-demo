@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNetworkDevice, createReferencePlaneDevice, openRouteEndpoints, placeNetworkDevice, startRouteFromDevice, commitDeviceRoute } from "./devices";
+import { createFinishedFloorDevice, createNetworkDevice, createReferencePlaneDevice, openRouteEndpoints, placeNetworkDevice, startRouteFromDevice, commitDeviceRoute } from "./devices";
 import { createEmptyOverlay, type RoutePoint } from "./overlay";
 import { planRoute } from "./routing";
 import { describeDevicePosition, editDevicePosition, resizeDevicePoint, resizeSpotlight } from "./device-positioning";
@@ -38,6 +38,10 @@ describe("device point positioning transaction", () => {
       ["u+", 1400, "neighbor"], ["u-", 1000, "wall-a"], ["v+", 3697, "wall-a"], ["v-", 400, "slab-a"],
     ]);
     expect(description.planar?.find(reference => reference.key === "u+")?.witness?.point).toEqual([4.4, .493, .06]);
+
+    const withConstructionDatum = { ...overlay, constructionDatums: [{ id: "datum:L0", levelId: "L0", label: "H01", rawReference: { kind: "level-base" as const, sourceObjectId: "L0", elevationMm: 0, basis: "explicit" as const }, heightAboveRawMm: 1350, elevationMm: 1350, finishedFloorOffsetMm: 50, localRegionFinishOffsets: [] }] };
+    const constructionDescription = describeDevicePosition(withConstructionDatum, selected.id, { levelFloorY: { L0: 0 }, wallSpans: {}, wallFaces: [{ id: wall.id, levelId: "L0", point: [0, 0, 0], normal: [0, 0, 1], start: [0, 0, 0], end: [10, 0, 0] }], physicalSurfaces });
+    expect(constructionDescription.planar?.find(reference => reference.key === "u+")?.witness).toMatchObject({ objectId: wall.id, objectKind: "wall", point: [10, .493, .06] });
   });
 
   it("uses true straight-wall coordinates and does not turn opening grid seams into hits", () => {
@@ -152,7 +156,7 @@ describe("device point positioning transaction", () => {
     const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: [] as ReturnType<typeof buildPhysicalPositioningSurfaces> };
 
     const unobstructed = describeDevicePosition(overlay, selected.id, context).planar?.find(reference => reference.key === "v+");
-    expect(unobstructed).toMatchObject({ millimeters: 551, witness: { objectId: peer.id, objectKind: "device", point: peer.position.position } });
+    expect(unobstructed).toBeUndefined();
 
     const nearerWall = quad("near-wall", "wall", [-1, 0, .25], [1, 0, .25], [1, 2, .25], [-1, 2, .25]);
     const obstructed = describeDevicePosition(overlay, selected.id, { ...context, physicalSurfaces: nearerWall }).planar?.find(reference => reference.key === "v+");
@@ -486,6 +490,44 @@ describe("device point positioning transaction", () => {
     expect(outsideSlab.status).toBe("rejected");
     expect(outsideSlab.overlay.devices[0]?.position.position).toEqual([2.5, 0, 2]);
     expect(outsideSlab.skippedDeviceIds).toEqual([movedSocket.id]);
+  });
+
+  it("measures a legacy slab-top point from its center and preserves the legacy mount on edit", () => {
+    const attachment = { hostId: "slab-a", hostKind: "slab" as const, surface: "top", normal: [0, 1, 0] as [number, number, number], levelId: "L0", localPosition: [1, 0, 2] as [number, number, number], basis: { u: [1, 0, 0] as [number, number, number], v: [0, 0, 1] as [number, number, number] } };
+    const point = createReferencePlaneDevice("luminaire", [1, .6, 2], "L0", 600);
+    point.deviceType = "strong-panel";
+    point.position.attachment = attachment;
+    point.mount = { kind: "host", attachment: structuredClone(attachment) };
+    point.sizeMm = [1000, 1200, 200];
+    const originalMount = structuredClone(point.mount);
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [point] };
+    const physicalSurfaces = [
+      ...quad("east-wall", "wall", [4, 0, 0], [4, 0, 4], [4, 3, 4], [4, 3, 0]),
+      ...quad("slab-a", "slab", [0, 0, 0], [4, 0, 0], [4, 0, 4], [0, 0, 4]),
+    ];
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces };
+
+    expect(describeDevicePosition(overlay, point.id, context).planar?.find(item => item.key === "u+")).toMatchObject({ millimeters: 3000, witness: { objectId: "east-wall" } });
+    const moved = editDevicePosition(overlay, { deviceIds: [point.id], planarClearanceMm: { "u+": 2500 } }, context, "commit");
+
+    expect(moved.status).toBe("committed");
+    expect(moved.overlay.devices[0]?.position.position[0]).toBeCloseTo(1.5);
+    expect(moved.overlay.devices[0]?.mount).toMatchObject({ kind: "host", attachment: { hostId: originalMount?.kind === "host" ? originalMount.attachment.hostId : "", hostKind: "slab", surface: "top", levelId: "L0" } });
+    expect(moved.overlay.devices[0]?.position.attachment).toMatchObject({ hostId: "slab-a", hostKind: "slab", surface: "top" });
+  });
+
+  it("uses stable wall faces for floor dimensions and ignores door leaves and peer devices", () => {
+    const surface = { y: 0, levelId: "L0", datumId: "datum-a", sourceSlabId: "slab-a" };
+    const floorPoint = createFinishedFloorDevice("socket", 1, 2, surface);
+    const peer = createFinishedFloorDevice("socket", 2, 2, surface);
+    const overlay = { ...createEmptyOverlay("a", "sha"), devices: [floorPoint, peer] };
+    const doorLeaf = quad("door-leaf", "door", [2, 0, 1], [2, 0, 3], [2, 1.8, 3], [2, 1.8, 1]);
+    const eastWall = quad("east-wall", "wall", [4, 0, 0], [4, 0, 4], [4, 3, 4], [4, 3, 0]);
+    const context = { levelFloorY: { L0: 0 }, wallSpans: {}, physicalSurfaces: [...doorLeaf, ...eastWall], finishedFloorAt: () => ({ y: 0, datumId: "datum-a", sourceSlabId: "slab-a" }) };
+
+    const east = describeDevicePosition(overlay, floorPoint.id, context).planar?.find(item => item.key === "u+");
+    expect(east).toMatchObject({ millimeters: 3000, witness: { objectId: "east-wall", objectKind: "wall" } });
+    expect(describeDevicePosition(overlay, floorPoint.id, { ...context, physicalSurfaces: doorLeaf }).planar).toEqual([]);
   });
 
   it("bulk-edits the bottom-edge height of multiple wall device points", () => {

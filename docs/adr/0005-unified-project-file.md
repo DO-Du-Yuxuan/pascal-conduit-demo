@@ -16,3 +16,8 @@ Drawings are optional and separately owned under Site. The current canvas target
 ## Version scope
 
 The 3.0 version above records the format at the time this decision was accepted. [ADR 0006](0006-project-4-system-catalog.md) supersedes only the schema version and public system/type catalog: the current Demo accepts 4.0 only, with no 3.0 migration. This ADR remains authoritative for one-file ownership, stable identity, save behavior, and Overlay as an internal adapter.
+
+
+## Subsequent compatibility decision
+
+[ADR 0014](0014-backward-compatible-project-import.md) supersedes the direct-import rejection boundary for recognized legacy Pascal trees and structurally compatible 1.0 / 2.0 / 3.0 projects. The editor and export format remain 4.0; retired entities without an explicit safe mapping remain rejected.

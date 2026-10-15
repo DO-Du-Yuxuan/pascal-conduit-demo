@@ -1,7 +1,7 @@
 import type { NodeData } from "../types";
 import { getWallCurveFrameAt, isCurvedWall } from "../geometry/walls/curve";
 import { DEFAULT_WALL_THICKNESS } from "../geometry/walls/thickness";
-import { editBeam, quantizeBeamMeters, validateBeam, type BeamNode, type BeamValidation } from "./beams";
+import { constrainBeamEnd, editBeam, quantizeBeamMeters, validateBeam, type BeamNode, type BeamValidation } from "./beams";
 
 export type BeamSurfaceKind = "wall" | "column" | "beam" | "ceiling-edge";
 export type BeamSurface = { id: string; kind: BeamSurfaceKind; face: "side-a" | "side-b" | "end-a" | "end-b"; start: [number, number]; end: [number, number] };
@@ -30,13 +30,28 @@ const closest = (target: [number, number], start: [number, number], end: [number
 };
 const yaw = (node: NodeData) => typeof node.rotation === "number" ? node.rotation : Array.isArray(node.rotation) && finite(node.rotation[1]) ? node.rotation[1] : 0;
 const columnSurfaces = (node: NodeData): BeamSurface[] => {
-  const position = Array.isArray(node.position) ? node.position : [];
+  // Pascal's default Column includes a wider base and capital, and round or
+  // profiled shafts have no rectangular side faces. Only expose an exact
+  // straight square profile when all nonuniform shaping is explicitly off.
+  if ((node.crossSection && node.crossSection !== "square") || (node.shaftProfile && node.shaftProfile !== "straight") ||
+    node.baseStyle !== "none" || node.capitalStyle !== "none" || (finite(node.shaftTaper) && node.shaftTaper !== 0) ||
+    (finite(node.shaftTwist) && node.shaftTwist !== 0) || (finite(node.shaftBulge) && node.shaftBulge !== 0) ||
+    (finite(node.fluteCount) && node.fluteCount > 0) || node.shaftStartScale !== 1 || node.shaftEndScale !== 1 ||
+    (node.supportStyle && node.supportStyle !== "vertical") || node.style === "cluster" ||
+    (finite(node.shaftTwistStep) && node.shaftTwistStep !== 0) || !(finite(node.shaftCornerRadius) && node.shaftCornerRadius > .001) ||
+    (finite(node.ringCount) && node.ringCount > 0) || (finite(node.latheRingCount) && node.latheRingCount > 0) || node.shaftDetail === "lathe-turned") return [];
+  const position = Array.isArray(node.position) ? node.position : [0, 0, 0];
   if (!finite(position[0]) || !finite(position[2])) return [];
   const center: [number, number] = [position[0], position[2]];
-  const dimensions = Array.isArray(node.asset?.dimensions) ? node.asset.dimensions : [], width = finite(node.width) && node.width > 0 ? node.width : finite(dimensions[0]) && dimensions[0] > 0 ? dimensions[0] : null, depth = finite(node.depth) && node.depth > 0 ? node.depth : finite(dimensions[2]) && dimensions[2] > 0 ? dimensions[2] : width;
+  const dimensions = Array.isArray(node.asset?.dimensions) ? node.asset.dimensions : [], width = finite(node.width) && node.width > 0 ? node.width : finite(dimensions[0]) && dimensions[0] > 0 ? dimensions[0] : .44, depth = finite(node.depth) && node.depth > 0 ? node.depth : finite(dimensions[2]) && dimensions[2] > 0 ? dimensions[2] : width;
   if (!width || !depth) return [];
   const c = Math.cos(yaw(node)), s = Math.sin(yaw(node)), corners: [number, number][] = [[-width / 2, -depth / 2], [width / 2, -depth / 2], [width / 2, depth / 2], [-width / 2, depth / 2]].map(([x, z]) => [center[0] + x * c + z * s, center[1] - x * s + z * c]);
-  return corners.map((start, index) => ({ id: node.id, kind: "column" as const, face: index % 2 ? "side-b" as const : "side-a" as const, start, end: corners[(index + 1) % corners.length]! }));
+  const faces: BeamSurface["face"][] = ["side-a", "end-a", "side-b", "end-b"];
+  const bevel = Math.min(Number(node.shaftCornerRadius), Math.min(width, depth) * .35);
+  return corners.map((start, index) => {
+    const end = corners[(index + 1) % corners.length]!, tangent = normalized(subtract(end, start))!;
+    return { id: node.id, kind: "column" as const, face: faces[index]!, start: add(start, scale(tangent, bevel)), end: add(end, scale(tangent, -bevel)) };
+  });
 };
 const wallSurfaces = (node: NodeData): BeamSurface[] => {
   const start = point(node.start), end = point(node.end); if (!start || !end) return [];
@@ -59,6 +74,17 @@ export const beamSurfaces = (beam: BeamNode): BeamSurface[] => {
     { id: beam.id, kind: "beam", face: "end-b", start: add(beam.end, scale(normal, half)), end: add(beam.end, scale(normal, -half)) },
   ];
 };
+/** Return physical plan faces for one supported host without validating a
+ * Beam host. This keeps endpoint validation free of surface/validator recursion. */
+export function physicalBeamSurfacesForNode(node: NodeData): BeamSurface[] {
+  if (node.type === "wall") return wallSurfaces(node);
+  if (node.type === "column") return columnSurfaces(node);
+  if (node.type === "beam") {
+    const beam = node as BeamNode;
+    return point(beam.start) && point(beam.end) && finite(beam.width) && beam.width > 0 ? beamSurfaces(beam) : [];
+  }
+  return [];
+}
 export const beamAuthoringSurfaces = (nodes: Record<string, NodeData>, levelId: string, exceptId?: string) => Object.values(nodes).flatMap((node) => {
   if (node.id === exceptId || levelFor(nodes, node) !== levelId) return [];
   if (node.type === "wall") return wallSurfaces(node);
@@ -76,6 +102,47 @@ export function snapBeamPoint(nodes: Record<string, NodeData>, levelId: string, 
   if (!match) return null;
   const segment = subtract(match.target.end, match.target.start), span = length(segment), parameter = span < 1e-8 ? 0 : Math.max(0, Math.min(1, quantizeBeamMeters(dot(subtract(match.point, match.target.start), segment) / span) / span));
   return { point: add(match.target.start, scale(segment, parameter)), distance: match.distance, target: match.target };
+}
+
+export type SupportedBeamSnapOptions = { objectId?: string; kind?: "wall" | "column" | "beam"; start?: [number, number]; orthogonal?: boolean; tolerance?: number; exceptId?: string };
+/** Snap only to physical Wall, Column, or Beam faces. With orthogonal lock,
+ * intersect the locked axis with the finite face so the resulting point keeps
+ * the axis constraint. */
+export function snapSupportedBeamPoint(nodes: Record<string, NodeData>, levelId: string, candidate: [number, number], options: SupportedBeamSnapOptions = {}): BeamSnap | null {
+  const tolerance = options.tolerance ?? .15;
+  let projectedCandidate = candidate;
+  let axisDirection: [number, number] | null = null;
+  if (options.start && options.orthogonal) {
+    projectedCandidate = constrainBeamEnd(options.start, candidate, true);
+    axisDirection = Math.abs(projectedCandidate[0] - options.start[0]) >= Math.abs(projectedCandidate[1] - options.start[1])
+      ? [1, 0] : [0, 1];
+  }
+  const surfaces = Object.values(nodes).flatMap((node) => {
+    if (node.id === options.exceptId || (options.objectId && node.id !== options.objectId) || (options.kind && node.type !== options.kind) || levelFor(nodes, node) !== levelId) return [];
+    return physicalBeamSurfacesForNode(node);
+  });
+  const matches = surfaces.flatMap((target) => {
+    if (axisDirection) {
+      const faceVector = subtract(target.end, target.start), denom = cross(axisDirection, faceVector);
+      if (Math.abs(denom) < 1e-10) return [];
+      const delta = subtract(target.start, options.start!);
+      const alongFace = cross(delta, axisDirection) / denom;
+      const hit = add(target.start, scale(faceVector, alongFace));
+      const distance = length(subtract(projectedCandidate, hit));
+      return alongFace >= -1e-8 && alongFace <= 1 + 1e-8 && distance <= tolerance ? [{ target, point: hit, distance }] : [];
+    }
+    const hit = closest(candidate, target.start, target.end);
+    return hit.distance <= tolerance ? [{ target, ...hit }] : [];
+  }).sort((a, b) => a.distance - b.distance || a.target.kind.localeCompare(b.target.kind) || a.target.id.localeCompare(b.target.id) || a.target.face.localeCompare(b.target.face));
+  const match = matches[0];
+  if (!match) return null;
+  const face = subtract(match.target.end, match.target.start), span = length(face);
+  const fraction = span < 1e-8 ? 0 : Math.max(0, Math.min(1, dot(subtract(match.point, match.target.start), face) / (span * span)));
+  const snappedFraction = axisDirection ? fraction : Math.max(0, Math.min(1, quantizeBeamMeters(fraction * span) / span));
+  const snapped = add(match.target.start, scale(face, snappedFraction));
+  if (axisDirection && Math.abs(axisDirection[0]) > .5) snapped[1] = options.start![1];
+  if (axisDirection && Math.abs(axisDirection[1]) > .5) snapped[0] = options.start![0];
+  return { point: snapped, distance: length(subtract(projectedCandidate, snapped)), target: match.target };
 }
 
 const rayHit = (origin: [number, number], direction: [number, number], surface: BeamSurface) => {

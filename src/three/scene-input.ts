@@ -1,3 +1,4 @@
+import { beamTopElevationMeters } from "../domain/beams";
 import { resolveEffectiveBuildingParameters } from "../geometry/effective-building";
 import { BUILTIN_KINDS } from "../coverage/pascalCoreManifest";
 import { finalDimensions, resolveItemPlanTransform } from "../geometry/transform";
@@ -70,7 +71,7 @@ function sceneBounds(nodes: Record<string, NodeData>): ThreeDBounds {
       for (const point of node.polygon) if (Array.isArray(point) && finite(point[0]) && finite(point[1])) extendPoint(raw, point[0], node.type === "ceiling" ? effective[node.id]?.height?.value ?? 2.5 : 0, point[2] ?? point[1]);
     }
     if (node.type === "beam" && Array.isArray(node.start) && Array.isArray(node.end) && finite(node.start[0]) && finite(node.start[1]) && finite(node.end[0]) && finite(node.end[1])) {
-      const top = typeof node.effectiveCeilingElevation === "object" && node.effectiveCeilingElevation && finite(node.effectiveCeilingElevation.meters) ? node.effectiveCeilingElevation.meters : 0;
+      const top = beamTopElevationMeters(node);
       extendPoint(raw, node.start[0], Math.max(0, top - (finite(node.height) ? node.height : 0)), node.start[1]);
       extendPoint(raw, node.end[0], Math.max(0, top), node.end[1]);
     }

@@ -1,7 +1,7 @@
 import { BoxGeometry } from "three";
 import type { Penetration, Vec3 } from "../../domain/overlay";
 import { subtractBeamPenetrations } from "../../three/chase-geometry";
-import type { BeamNode } from "../../domain/beams";
+import { beamTopElevationMeters, type BeamNode } from "../../domain/beams";
 
 export type BeamRenderTransform = {
   length: number;
@@ -15,7 +15,7 @@ export function beamRenderTransform(node: BeamNode, levelBaseY: number): BeamRen
   const dx = node.end[0] - node.start[0];
   const dz = node.end[1] - node.start[1];
   const length = Math.hypot(dx, dz);
-  const top = node.effectiveCeilingElevation.meters;
+  const top = beamTopElevationMeters(node);
   if (!Number.isFinite(length) || length < 1e-8 || !Number.isFinite(node.width) || node.width <= 0 || !Number.isFinite(node.height) || node.height <= 0 || !Number.isFinite(top) || top <= 0 || !Number.isFinite(levelBaseY)) return null;
   return {
     length,
@@ -66,7 +66,7 @@ export function resolveBeamSurfaceHit(
   const dx = node.end[0] - node.start[0];
   const dz = node.end[1] - node.start[1];
   const length = Math.hypot(dx, dz);
-  const top = node.effectiveCeilingElevation.meters;
+  const top = beamTopElevationMeters(node);
   if (length < 1e-8 || !Number.isFinite(node.width) || node.width <= 0 || !Number.isFinite(node.height) || node.height <= 0 || !Number.isFinite(top) || top <= 0 || !Number.isFinite(levelBaseY) || point.some((coordinate) => !Number.isFinite(coordinate))) return null;
 
   const axis: Vec3 = [dx / length, 0, dz / length];

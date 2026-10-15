@@ -5,6 +5,8 @@ type Node = Record<string, any> & { id: string; type: string; parentId?: string 
 type Project = Record<string, any> & { nodes: Record<string, Node> };
 const SYSTEM_TYPES = ["ElectricalSystem", "PlumbingSystem", "LightingSystem", "HVACSystem", "SmartSystem", "WaterPurificationSystem", "BathroomSystem", "FireProtectionSystem", "IrrigationSystem", "GasSystem"] as const;
 const BUILDING_TYPES = ["Site", "Building", "Level", "Wall", "Door", "Window", "Item", "Shelf", "Slab", "Ceiling", "Column", "Fence", "Beam", "Roof", "RoofSegment", "Stair", "StairSegment", "Guide", "Spawn", "Zone", "Elevator", "Skylight", "Scan", "BoxVent", "RidgeVent", "Chimney", "SolarPanel", "Dormer"];
+export const PROJECT_SYSTEM_TYPES = SYSTEM_TYPES;
+export const PROJECT_BUILDING_TYPES: readonly string[] = BUILDING_TYPES;
 const BUILDING_SET = new Set(BUILDING_TYPES);
 const DEVICE_TYPES: Record<string, string> = {
   StrongCurrentBox: "strong-panel",
@@ -69,7 +71,7 @@ const AUTHORING_TYPE_PARENTS: Record<string, string> = {
 const RETIRED_PUBLIC_TYPES = new Set(["Luminaire", "Sensor", "IndoorUnit", "Thermostat", "AirDuct", "FireWaterInlet", "FireWaterFitting"]);
 const record = (value: unknown): value is Record<string, any> => !!value && typeof value === "object" && !Array.isArray(value);
 const copy = <T>(value: T): T => structuredClone(value);
-const stableArrayKeys = (value: any): string[] => !record(value) ? [] : [typeof value.id === "string" ? `id:${value.id}` : null, typeof value.levelId === "string" ? `level:${value.levelId}` : null].filter((key): key is string => key !== null);
+const stableArrayKeys = (value: any): string[] => !record(value) ? [] : [typeof value.id === "string" ? `id:${value.id}` : null, typeof value.levelId === "string" ? `level:${value.levelId}` : null, typeof value.regionId === "string" ? `region:${value.regionId}` : null].filter((key): key is string => key !== null);
 const mergeFields = (oldValue: any, nextValue: any): any => {
   if (Array.isArray(nextValue)) {
     if (!Array.isArray(oldValue)) return copy(nextValue);
@@ -116,6 +118,48 @@ export function validateUnifiedProject(raw: unknown): asserts raw is Project {
     for (const child of node.children ?? []) if (!nodes[child] || nodes[child].parentId !== id) throw new Error(`节点 ${id} 的 children 与 parentId 不一致：${child}`);
     if (node.children && new Set(node.children).size !== node.children.length) throw new Error(`节点 ${id} 的 children 有重复 ID。`);
   }
+  const levelOf = (node: Node | undefined): string | null => {
+    let cursor = node, visited = new Set<string>();
+    while (cursor && !visited.has(cursor.id)) { visited.add(cursor.id); if (cursor.type === "Level") return cursor.id; cursor = cursor.parentId ? nodes[cursor.parentId] : undefined; }
+    return null;
+  };
+  for (const level of Object.values(nodes).filter((node) => node.type === "Level")) {
+    if (level.constructionDatums === undefined) continue;
+    if (!Array.isArray(level.constructionDatums)) throw new Error(`Level ${level.id} 的 constructionDatums 必须是数组。`);
+    if (level.constructionDatums.length > 1) throw new Error(`Level ${level.id} 当前只支持一个共用施工基准。`);
+    const datumIds = new Set<string>();
+    for (const datum of level.constructionDatums) {
+      if (!record(datum) || typeof datum.id !== "string" || typeof datum.levelId !== "string" || datum.levelId !== level.id || datumIds.has(datum.id)) throw new Error(`Level ${level.id} 的施工基准身份无效或重复。`);
+      datumIds.add(datum.id);
+      const raw = datum.rawReference;
+      if (!record(raw) || !["level-base", "slab-top"].includes(raw.kind) || typeof raw.sourceObjectId !== "string" || !Number.isFinite(raw.elevationMm) || !["explicit", "derived"].includes(raw.basis)) throw new Error(`施工基准 ${datum.id} 的原始参考依据无效。`);
+      const source = nodes[raw.sourceObjectId];
+      if (raw.kind === "level-base" ? raw.sourceObjectId !== level.id : source?.type !== "Slab" || levelOf(source) !== level.id) throw new Error(`施工基准 ${datum.id} 的原始参考必须是本层原点或同层楼板。`);
+      if (typeof datum.label !== "string" || !datum.label.trim() || !Number.isFinite(datum.heightAboveRawMm) || !Number.isFinite(datum.elevationMm) || Math.abs(datum.elevationMm - raw.elevationMm - datum.heightAboveRawMm) > 1e-6) throw new Error(`施工基准 ${datum.id} 的标高或数值关系无效。`);
+      if (datum.finishedFloorOffsetMm !== undefined && !Number.isFinite(datum.finishedFloorOffsetMm)) throw new Error(`施工基准 ${datum.id} 的完成面依据无效。`);
+      if (!Array.isArray(datum.localRegionFinishOffsets)) throw new Error(`施工基准 ${datum.id} 的 Zone 完成面列表无效。`);
+      const regions = new Set<string>();
+      for (const region of datum.localRegionFinishOffsets) {
+        if (!record(region) || typeof region.regionId !== "string" || regions.has(region.regionId) || !Number.isFinite(region.offsetMm) || nodes[region.regionId]?.type !== "Zone" || levelOf(nodes[region.regionId]) !== level.id) throw new Error(`施工基准 ${datum.id} 的局部完成面必须引用同层唯一 Zone。`);
+        regions.add(region.regionId);
+      }
+    }
+  }
+  for (const node of Object.values(nodes)) {
+    // Validate only mount semantics introduced for device types this app
+    // understands. Unknown future public node types remain pass-through data.
+    if (!DEVICE_TYPES[node.type] || !record(node.mount) || node.mount.kind !== "finished-floor") continue;
+    const mount = node.mount, levelId = mount.levelId;
+    if (typeof levelId !== "string" || nodes[levelId]?.type !== "Level") throw new Error(`设备 ${node.id} 的完成面安装楼层无效。`);
+    if (typeof mount.sourceSlabId !== "string" || nodes[mount.sourceSlabId]?.type !== "Slab" || levelOf(nodes[mount.sourceSlabId]) !== levelId) throw new Error(`设备 ${node.id} 的完成面安装楼板必须是同层楼板。`);
+    if (typeof mount.datumId !== "string" || !mount.datumId.trim()) throw new Error(`设备 ${node.id} 的完成面施工基准 ID 无效。`);
+    const datumOwners = Object.values(nodes).filter((candidate) => candidate.type === "Level" && Array.isArray(candidate.constructionDatums))
+      .flatMap((owner) => owner.constructionDatums.map((datum: any) => ({ owner, datum })))
+      .filter(({ datum }) => record(datum) && datum.id === mount.datumId);
+    if (datumOwners.length && !datumOwners.some(({ owner, datum }) => owner.id === levelId && datum.levelId === levelId)) throw new Error(`设备 ${node.id} 的完成面施工基准必须属于安装楼层。`);
+    if (mount.regionId !== undefined && (typeof mount.regionId !== "string" || nodes[mount.regionId]?.type !== "Zone" || levelOf(nodes[mount.regionId]) !== levelId)) throw new Error(`设备 ${node.id} 的完成面区域必须是同层 Zone。`);
+    if (!Number.isFinite(mount.topOffsetMm)) throw new Error(`设备 ${node.id} 的完成面偏移必须是有限数值。`);
+  }
   const direct = (nodes[root].children ?? []).map((id) => nodes[id]);
   if (direct.filter((node) => node.type === "Building").length !== 1) throw new Error("Site 下必须有且仅有一个 Building。");
   for (const type of SYSTEM_TYPES) if (direct.filter((node) => node.type === type).length !== 1) throw new Error(`Site 下必须有且仅有一个 ${type}。`);
@@ -161,7 +205,7 @@ export function validateUnifiedProject(raw: unknown): asserts raw is Project {
   }
   const referencedIds = new Set(Object.keys(nodes));
   for (const node of Object.values(nodes)) {
-    for (const field of ["segments", "fittings", "ports", "circuits", "surfaceChases", "penetrations", "controls", "wallPenetrations", "installationReferencePlanes", "layoutReferencePlanes"]) {
+    for (const field of ["segments", "fittings", "ports", "circuits", "surfaceChases", "penetrations", "controls", "wallPenetrations", "installationReferencePlanes", "layoutReferencePlanes", "constructionDatums"]) {
       if (!Array.isArray(node[field])) continue;
       for (const item of node[field]) if (record(item) && typeof item.id === "string") {
         if (referencedIds.has(item.id)) throw new Error(`重复节点或内嵌对象 ID：${item.id}`);
@@ -245,6 +289,7 @@ export function decodeUnifiedProject(raw: unknown, fileName: string, sha256: str
   for (const id of buildingDescendants) if (nodes[id].type === "Level") {
     overlay.installationReferencePlanes.push(...copy(nodes[id].installationReferencePlanes ?? []));
     overlay.layoutReferencePlanes.push(...copy(nodes[id].layoutReferencePlanes ?? []));
+    overlay.constructionDatums.push(...copy(nodes[id].constructionDatums ?? []));
   }
   for (const node of Object.values(nodes)) {
     const parent = containerById[node.parentId ?? ""];
@@ -322,6 +367,14 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
   for (const id of authoredBuilding) if (nodes[id]?.type === "Level") {
     nodes[id].installationReferencePlanes = mergeFields(original[id]?.installationReferencePlanes, overlay.installationReferencePlanes.filter((plane) => plane.levelId === id));
     nodes[id].layoutReferencePlanes = mergeFields(original[id]?.layoutReferencePlanes, overlay.layoutReferencePlanes.filter((plane) => plane.levelId === id));
+    const constructionDatums = overlay.constructionDatums.filter((datum) => datum.levelId === id);
+    if (constructionDatums.length || original[id]?.constructionDatums !== undefined) {
+      nodes[id].constructionDatums = mergeFields(original[id]?.constructionDatums, constructionDatums);
+      for (const savedDatum of nodes[id].constructionDatums) {
+        const current = constructionDatums.find((datum) => datum.id === savedDatum.id);
+        if (current?.finishedFloorOffsetMm === undefined) delete savedDatum.finishedFloorOffsetMm;
+      }
+    }
   }
   const containers = Object.values(nodes).filter((node) => SYSTEM_TYPES.includes(node.type as typeof SYSTEM_TYPES[number]));
   const byType = Object.fromEntries(containers.map((node) => [node.type, node]));
@@ -406,7 +459,7 @@ export function encodeUnifiedProject(internalRaw: Record<string, any>, overlay: 
     nodes[item.id] = { ...copy(original[item.id] ?? {}), ...copy(item), type: "ManualLeader", parentId: drawing.id, sourceObjectIds: copy(original[item.id]?.sourceObjectIds ?? [item.targetId]) };
     drawing.children ??= []; if (!drawing.children.includes(item.id)) drawing.children.push(item.id);
   }
-  const sourceExists = (id: string) => Object.prototype.hasOwnProperty.call(nodes, id) || overlay.hvac.segments.some((segment) => segment.id === id);
+  const sourceExists = (id: string) => Object.prototype.hasOwnProperty.call(nodes, id) || overlay.hvac.segments.some((segment) => segment.id === id) || overlay.constructionDatums.some((datum) => datum.id === id);
   for (const drawing of drawings) if (defaultDrawing(drawings, drawing.levelId)?.id === drawing.id) {
     for (const id of [...(drawing.children ?? [])]) {
       const node = nodes[id];

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createBeam, validateBeam } from "./beams";
 import { placeIndoorUnit, placeThermostat, createHvacControlConduit } from "./hvac";
-import { decodeUnifiedProject, encodeUnifiedProject } from "./unified-project";
+import { decodeUnifiedProject, encodeUnifiedProject, validateUnifiedProject } from "./unified-project";
 import { commitFireSignalRoute, commitFreeRouteToDevice, commitFreeSprinklerRouteToDeviceBranch, commitSprinklerDeviceRoute, createNetworkDevice, createSmokeDetector, openRouteEndpoints, SPRINKLER_CONTINUATION_STUB_METERS, SPRINKLER_TEE_SOCKET_METERS } from "./devices";
 import { commitPlannedRoute, deleteNetworkObject, planRoute } from "./routing";
 import { withCollisionDiagnostics } from "./routing-collision";
@@ -28,6 +28,83 @@ function project() {
 }
 
 describe("unified project file", () => {
+  it("round-trips a semantic finished-floor device mount without adding a Building node", () => {
+    const raw = project();
+    raw.nodes.level!.children = [...(raw.nodes.level!.children ?? []), "slab:raw"];
+    raw.nodes["slab:raw"] = { id: "slab:raw", type: "Slab", parentId: "level", polygon: [[0, 0], [2, 0], [2, 2], [0, 2]], children: [] };
+    raw.nodes.level!.constructionDatums = [{ id: "datum:level", levelId: "level", label: "H01", rawReference: { kind: "slab-top", sourceObjectId: "slab:raw", elevationMm: 50, basis: "explicit" }, heightAboveRawMm: 1350, elevationMm: 1400, finishedFloorOffsetMm: 40, localRegionFinishOffsets: [] }];
+    raw.nodes.socket.mount = { kind: "finished-floor", levelId: "level", datumId: "datum:level", sourceSlabId: "slab:raw", topOffsetMm: 0, futureMountField: { retained: true } };
+    const opened = decodeUnifiedProject(raw, "floor.json", "sha");
+    expect(opened.overlay.devices[0]?.mount).toMatchObject({ kind: "finished-floor", datumId: "datum:level", sourceSlabId: "slab:raw", topOffsetMm: 0, futureMountField: { retained: true } });
+    const saved = encodeUnifiedProject(opened.projectRaw, opened.overlay) as any;
+    expect(saved.nodes.socket.mount).toMatchObject({ kind: "finished-floor", datumId: "datum:level", sourceSlabId: "slab:raw", topOffsetMm: 0, futureMountField: { retained: true } });
+    expect(saved.nodes["slab:raw"]).toEqual(raw.nodes["slab:raw"]);
+    expect(decodeUnifiedProject(saved, "floor.json", "next").overlay.devices[0]?.mount).toMatchObject({ kind: "finished-floor", datumId: "datum:level", sourceSlabId: "slab:raw", topOffsetMm: 0 });
+  });
+  it("validates finished-floor mounts against their same-level placement slab and optional metadata sources", () => {
+    const raw = project();
+    raw.nodes.level!.children = [...(raw.nodes.level!.children ?? []), "slab:raw", "slab:placement", "zone:room"];
+    raw.nodes["slab:raw"] = { id: "slab:raw", type: "Slab", parentId: "level", children: [] };
+    raw.nodes["slab:placement"] = { id: "slab:placement", type: "Slab", parentId: "level", children: [] };
+    raw.nodes["zone:room"] = { id: "zone:room", type: "Zone", parentId: "level", children: [] };
+    raw.nodes.level!.constructionDatums = [{ id: "datum:level", levelId: "level", label: "H01", rawReference: { kind: "slab-top", sourceObjectId: "slab:raw", elevationMm: 0, basis: "explicit" }, heightAboveRawMm: 1350, elevationMm: 1350, finishedFloorOffsetMm: 50, localRegionFinishOffsets: [] }];
+    raw.nodes.socket.mount = { kind: "finished-floor", levelId: "level", datumId: "datum:level", sourceSlabId: "slab:placement", regionId: "zone:room", topOffsetMm: 0 };
+
+    expect(() => validateUnifiedProject(raw)).not.toThrow();
+    const decoded = decodeUnifiedProject(raw, "floor.json", "sha");
+    expect((encodeUnifiedProject(decoded.projectRaw, decoded.overlay) as any).nodes.socket.mount).toMatchObject({ sourceSlabId: "slab:placement", regionId: "zone:room" });
+  });
+  it("rejects dangling and cross-level floor slabs but preserves mounts on unknown future types and soft-missing datums", () => {
+    const base = project();
+    base.nodes.level!.children = [...(base.nodes.level!.children ?? []), "slab:placement"];
+    base.nodes["slab:placement"] = { id: "slab:placement", type: "Slab", parentId: "level", children: [] };
+    base.nodes.socket.mount = { kind: "finished-floor", levelId: "level", datumId: "datum:removed", sourceSlabId: "slab:placement", topOffsetMm: 0 };
+    expect(() => validateUnifiedProject(base)).not.toThrow();
+
+    const missingSlab = structuredClone(base);
+    missingSlab.nodes.socket.mount.sourceSlabId = "slab:missing";
+    expect(() => validateUnifiedProject(missingSlab)).toThrow(/同层楼板/);
+
+    const crossLevel = structuredClone(base);
+    crossLevel.nodes.building.children = [...crossLevel.nodes.building.children, "level:other"];
+    crossLevel.nodes["level:other"] = { id: "level:other", type: "Level", parentId: "building", children: ["slab:other"] };
+    crossLevel.nodes["slab:other"] = { id: "slab:other", type: "Slab", parentId: "level:other", children: [] };
+    crossLevel.nodes.socket.mount.sourceSlabId = "slab:other";
+    expect(() => validateUnifiedProject(crossLevel)).toThrow(/同层楼板/);
+
+    const wrongDatumOwner = structuredClone(base);
+    wrongDatumOwner.nodes.building.children = [...wrongDatumOwner.nodes.building.children, "level:other"];
+    wrongDatumOwner.nodes["level:other"] = { id: "level:other", type: "Level", parentId: "building", children: [], constructionDatums: [{ id: "datum:removed", levelId: "level:other", label: "H01", rawReference: { kind: "level-base", sourceObjectId: "level:other", elevationMm: 0, basis: "explicit" }, heightAboveRawMm: 100, elevationMm: 100, localRegionFinishOffsets: [] }] };
+    expect(() => validateUnifiedProject(wrongDatumOwner)).toThrow(/施工基准必须属于安装楼层/);
+
+    const invalidOffset = structuredClone(base);
+    invalidOffset.nodes.socket.mount.topOffsetMm = Number.NaN;
+    expect(() => validateUnifiedProject(invalidOffset)).toThrow(/偏移必须是有限数值/);
+
+    const missingZone = structuredClone(base);
+    missingZone.nodes.socket.mount.regionId = "zone:missing";
+    expect(() => validateUnifiedProject(missingZone)).toThrow(/同层 Zone/);
+
+    const future = structuredClone(base);
+    future.nodes.future.mount = { kind: "finished-floor", levelId: "missing", datumId: "missing", sourceSlabId: "missing", topOffsetMm: Number.NaN };
+    expect(() => validateUnifiedProject(future)).not.toThrow();
+  });
+  it("round-trips stable Level-owned construction datum and explicit finish evidence", () => {
+    const raw = project();
+    raw.nodes.level!.children = [...(raw.nodes.level!.children ?? []), "slab:raw", "zone:room"];
+    raw.nodes["slab:raw"] = { id: "slab:raw", type: "Slab", parentId: "level", children: [] };
+    raw.nodes["zone:room"] = { id: "zone:room", type: "Zone", parentId: "level", children: [] };
+    raw.nodes.level!.constructionDatums = [{ id: "datum:level", levelId: "level", label: "H01", rawReference: { kind: "slab-top", sourceObjectId: "slab:raw", elevationMm: 50, basis: "explicit", plugin: { retained: true } }, heightAboveRawMm: 1350, elevationMm: 1400, finishedFloorOffsetMm: 50, localRegionFinishOffsets: [{ regionId: "zone:room", offsetMm: -20 }] }];
+    const opened = decodeUnifiedProject(raw, "datum.json", "sha");
+    expect(opened.overlay.constructionDatums).toMatchObject([{ id: "datum:level", label: "H01", elevationMm: 1400, finishedFloorOffsetMm: 50 }]);
+    const saved = encodeUnifiedProject(opened.projectRaw, opened.overlay) as any;
+    expect(saved.nodes.level.constructionDatums).toMatchObject([{ id: "datum:level", rawReference: { sourceObjectId: "slab:raw", plugin: { retained: true } }, localRegionFinishOffsets: [{ regionId: "zone:room", offsetMm: -20 }] }]);
+    expect(decodeUnifiedProject(saved, "datum.json", "next").overlay.constructionDatums[0]?.finishedFloorOffsetMm).toBe(50);
+    const withoutFinish = { ...opened.overlay, constructionDatums: opened.overlay.constructionDatums.map((datum) => ({ ...datum, finishedFloorOffsetMm: undefined })) };
+    const unsetSaved = encodeUnifiedProject(opened.projectRaw, withoutFinish) as any;
+    expect(unsetSaved.nodes.level.constructionDatums[0]).not.toHaveProperty("finishedFloorOffsetMm");
+    expect(decodeUnifiedProject(unsetSaved, "datum.json", "unset").overlay.constructionDatums[0]).not.toHaveProperty("finishedFloorOffsetMm");
+  });
   it("round-trips HVAC shared bridge geometry and construction records under HVACSystem", () => {
     const raw = project(); raw.nodes.socket.position = { position: [10, 1, 10] };
     const loaded = decodeUnifiedProject(raw, "control.json", "sha");

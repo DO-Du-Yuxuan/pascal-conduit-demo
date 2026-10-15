@@ -33,6 +33,8 @@ The 12-pixel interaction radius is converted to metres only to decide whether sn
 
 ## Positioning dimensions
 
+Height annotations and installation schedules use the same explicit construction finished-floor resolver when the current Level has a confirmed construction datum finish. Height is the device bottom edge minus the configured finished floor at the device X/Z. The exported Drawing evidence includes the datum and its raw reference object IDs, plus a Zone ID only when that local finish offset was actually applied. Schedule membership remains in `sourceIds`; measurement provenance is exposed separately as `evidenceSourceIds`. An unset finish leaves the existing physical slab-top/Level-base measurement and its stated assumptions intact. Floor sockets use their actual slab-mounted bottom edge, so an elevated finished floor can produce a negative value.
+
 管段挂载设备的 2D 符号、定位尺寸和标注共用实际世界坐标；`mount.kind: "segment"` 不作为墙面安装。定位尺寸使用室内两条主轴与真实边界见证，不将管段设备加入墙面尺寸链或墙面高度标注。尺寸数字位置与线偏移继续保留，几何重新从模型计算。
 
 Automatic 2D positioning dimensions use explicit model witnesses:

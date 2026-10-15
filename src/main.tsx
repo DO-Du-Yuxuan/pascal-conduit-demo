@@ -52,6 +52,7 @@ import { sha256Text } from "./domain/hash";
 import { type ConduitOverlayDocument, type ManualCallout } from "./domain/overlay";
 import { projectDocument, readProjectIdentity } from "./domain/workspace";
 import { decodeUnifiedProject, encodeUnifiedProject } from "./domain/unified-project";
+import { importProjectJson } from "./domain/project-import";
 import { buildCrashDiagnostic, createRecoveryDownloadSnapshot, explainReactError, getLastSuccessfulRecoverySnapshot } from "./crash-recovery";
 import { validateBeam, type BeamNode } from "./domain/beams";
 import { beamNodeDefinition } from "./nodes/beam/definition";
@@ -266,11 +267,12 @@ function App() {
   const load = async (text: string, name: string) => {
     try {
       const sha256 = await sha256Text(text);
-      const decoded = decodeUnifiedProject(JSON.parse(text), name, sha256);
+      const decoded = importProjectJson(JSON.parse(text), name, sha256);
       const importedProject = projectDocument(decoded.projectRaw, name, sha256);
       if (data && (projectDirty || conduitOverlayDirty) && !window.confirm("当前项目有未保存的更改；仍要打开另一份项目文件吗？")) return;
       const parsed = parseProject(decoded.projectRaw);
       parsed.diagnostics = [...parsed.diagnostics, ...inspectNodes(parsed.nodes)];
+      if (decoded.importNotice) parsed.diagnostics.push({ severity: "info", code: "legacy_project_migrated", message: decoded.importNotice });
       const first =
         Object.values(parsed.nodes).find((n) => n.type === "level")?.id || "";
       setData(parsed);
@@ -399,6 +401,7 @@ function App() {
       </section>
   </div>;
   const builderBeamActive = builderActiveTool === "beam";
+  const builderConstructionDatumActive = builderActiveTool === "construction-datum";
   const displayedCanvases = canvases.slice(0, 1);
   const activeCanvas = displayedCanvases[0];
   const activeLevelId = activeCanvas?.levelId || levels[0]?.id || "";
@@ -476,7 +479,7 @@ function App() {
           <div className="builder-sidebar-scroll">
               <div id="builder-scene-panel" role="tabpanel" hidden={builderSidebarTab !== "scene"}><SceneTree nodes={nodes} selectedId={selectedId} hiddenNodeIds={hiddenNodeIds} layerHiddenNodeIds={layerHiddenNodeIds} onRestoreNode={id => setSceneVisibility(current => restoreSceneNode(current, id))} onEnableLayerForNode={id => { const layer = buildingLayerForType(nodes[id]?.type ?? ""); if (layer) setThreeDBuildingLayers(current => ({ ...current, [layer]: true })); }} onSelect={selectCanvasObject} onHide={id => { setSceneVisibility(current => hideSceneNode(current, id)); if (selectedId === id) selectCanvasObject(null); }} onRestore={() => setSceneVisibility(restoreAllSceneNodes)} /></div>
               <div id="builder-systems-panel" role="tabpanel" hidden={builderSidebarTab !== "systems"}>
-              {!selectedBuilderSystem && !builderBeamActive && <div className="builder-panel-empty"><BuilderIcon name="system" size={28} /><p>从底部「系统」选择施工系统。</p></div>}
+              {!selectedBuilderSystem && !builderBeamActive && !builderConstructionDatumActive && <div className="builder-panel-empty"><BuilderIcon name="system" size={28} /><p>从底部「系统」选择施工系统。</p></div>}
               {selectedBuilderSystem && !builderBeamActive && <>
               <div className="builder-system-heading"><BuilderIcon name={systemIcon(selectedBuilderSystem)} size={24} /><div><b>{BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.label}系统</b><small>选择设备或绘制工具</small></div></div>
               {BUILDER_CARDS[selectedBuilderSystem].length ? <div className="builder-card-sections" aria-label={`${BUILDER_SYSTEMS.find((item) => item.id === selectedBuilderSystem)?.label}工具`}>
@@ -489,7 +492,7 @@ function App() {
                 })}
               </div> : <div className="builder-system-empty"><BuilderIcon name="system" size={28} /><b>当前版本暂无编辑工具</b><p>可查看并保留导入的系统数据。后续工具将在此显示。</p></div>}
               </>}
-              <div className="builder-author-panel-host" hidden={!builderBeamActive && (!selectedBuilderSystem || !BUILDER_CARDS[selectedBuilderSystem].length)} ref={setBuilderPanelHost} />
+              <div className="builder-author-panel-host" hidden={!builderBeamActive && !builderConstructionDatumActive && (!selectedBuilderSystem || !BUILDER_CARDS[selectedBuilderSystem].length)} ref={setBuilderPanelHost} />
               </div>
             <div role="tabpanel" hidden={builderSidebarTab !== "drawings"} id="builder-drawings-panel" className="builder-drawings-panel">{twoDPanel}</div>
           </div>
@@ -593,10 +596,10 @@ function App() {
           <div className="builder-toolbar-stack">
             {workspaceViewMode !== "3d" && <div className="builder-construction-legend-host" ref={setConstructionLegendHost} />}
             {builderSubmenu === "systems" && <div className="builder-subtoolbar" role="group" aria-label="系统分类">{BUILDER_SYSTEMS.map((item) => <button key={item.id} className={selectedBuilderSystem === item.id ? "active" : ""} aria-pressed={selectedBuilderSystem === item.id} onClick={() => { setSelectedBuilderSystem(item.id); setBuilderSidebarOpen(true); setBuilderSidebarTab("systems"); }}><BuilderIcon name={systemIcon(item.id)} size={20} /><b>{item.label}</b></button>)}</div>}
-            {builderSubmenu === "build" && <div className="builder-subtoolbar builder-build-subtoolbar" role="group" aria-label="建造工具"><button onClick={() => openBuilderTool({ tool: "beam" })} disabled={!data} aria-label="梁"><BuilderIcon name="beam" size={20} /><b>梁</b></button><span className="builder-unavailable-caption">其他建筑工具将在 Builder 合并后接入</span></div>}
+            {builderSubmenu === "build" && <div className="builder-subtoolbar builder-build-subtoolbar" role="group" aria-label="建造工具"><button onClick={() => openBuilderTool({ tool: "beam" })} disabled={!data} aria-label="梁"><BuilderIcon name="beam" size={20} /><b>梁</b></button><button onClick={() => openBuilderTool({ tool: "construction-datum" })} disabled={!data} aria-label="施工基准"><span aria-hidden="true">↔</span><b>施工基准</b></button><span className="builder-unavailable-caption">其他建筑工具将在 Builder 合并后接入</span></div>}
             <nav className="builder-main-toolbar" aria-label="Builder 主操作栏">
               <button className={builderActiveTool === "select" ? "active" : ""} aria-pressed={builderActiveTool === "select"} aria-label="选择" title="选择（V）" onClick={() => sendBuilderTool("select")}><BuilderActionIcon name="select" size={28} /><small>选择</small></button>
-              <button disabled title="暂不可用：框选"><BuilderActionIcon name="boxSelect" size={28} /><small>框选</small></button>
+              <button className={builderActiveTool === "box-select" ? "active" : ""} aria-pressed={builderActiveTool === "box-select"} aria-label="框选" disabled={!data} title="框选：左键拖动，Ctrl/⌘ 追加选择" onClick={() => sendBuilderTool("box-select")}><BuilderActionIcon name="boxSelect" size={28} /><small>框选</small></button>
               <button disabled title="暂不可用：编辑场地"><BuilderActionIcon name="site" size={28} /><small>场地</small></button>
               <button className={builderSubmenu === "build" ? "active" : ""} aria-expanded={builderSubmenu === "build"} onClick={() => setBuilderSubmenu((current) => current === "build" ? null : "build")}><BuilderActionIcon name="build" size={28} /><small>建造</small></button>
               <button disabled title="暂不可用：布置普通 Item"><BuilderActionIcon name="arrange" size={28} /><small>布置</small></button>
@@ -1438,7 +1441,7 @@ function GenericNodeInspector({ node, nodes, unit }: { node: NodeData; nodes: Re
   const rows = baseNodeRows(node, nodes);
   if (node.type === "level") rows.splice(1, 0, ["名称", node.name || "未命名"], ["子节点", String(Object.values(nodes).filter((candidate) => candidate.parentId === node.id).length)]);
   if (node.type === "wall") { const length = Array.isArray(node.start) && Array.isArray(node.end) ? Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]) : null; rows.push(["长度", length === null ? "未解析" : formatPanelLength(length, unit)], ["墙厚", formatPanelLength(node.thickness ?? .1, unit)], ["几何", Number.isFinite(node.curveOffset) && node.curveOffset !== 0 ? "曲墙" : "直墙"]); }
-  if (node.type === "beam") { const length = Array.isArray(node.start) && Array.isArray(node.end) ? Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]) : null, elevation = node.effectiveCeilingElevation as { meters?: number; basis?: string } | undefined; rows.push(["长度", length === null ? "未解析" : formatPanelLength(length, unit)], ["截面 W/H", `${formatPanelLength(node.width ?? 0, unit)} / ${formatPanelLength(node.height ?? 0, unit)}`], ["Ceiling", Array.isArray(node.ceilingIds) ? node.ceilingIds.join("、") : "—"], ["顶标高", elevation?.meters ? `${formatPanelLength(elevation.meters, unit)} (${elevation.basis === "derived-default-2700mm" ? "推导 2700 mm" : "明确 Ceiling 高度"})` : "未解析"]); }
+  if (node.type === "beam") { const length = Array.isArray(node.start) && Array.isArray(node.end) ? Math.hypot(node.end[0] - node.start[0], node.end[1] - node.start[1]) : null, elevation = (node.topElevation ?? node.effectiveCeilingElevation) as { meters?: number; basis?: string; sourceWallId?: string } | undefined; rows.push(["长度", length === null ? "未解析" : formatPanelLength(length, unit)], ["截面 W/H", `${formatPanelLength(node.width ?? 0, unit)} / ${formatPanelLength(node.height ?? 0, unit)}`], [elevation?.basis === "wall-top" ? "起点墙" : "Ceiling", elevation?.sourceWallId ?? (Array.isArray(node.ceilingIds) ? node.ceilingIds.join("、") : "—")], ["顶标高", elevation?.meters ? `${formatPanelLength(elevation.meters, unit)} (${elevation.basis === "wall-top" ? "起点墙顶" : elevation.basis === "derived-default-2700mm" ? "推导 2700 mm" : "明确 Ceiling 高度"})` : "未解析"]); }
   if (node.type === "door" || node.type === "window") rows.push(["宿主墙", node.wallId ? nodes[node.wallId]?.name || "墙体" : "未关联"], ["尺寸 W/H", `${formatPanelLength(node.width ?? .9, unit)} / ${formatPanelLength(node.height ?? 2, unit)}`], ["类型", node.type === "door" ? node.doorType ?? "hinged" : node.windowType ?? "window"], ["开口", node.openingKind ?? "door/window"]);
   if (node.type === "zone") { const points = zonePoints(node), area = Math.abs(points.reduce((sum, point, index) => { const next = points[(index + 1) % points.length]; return sum + point.x * next.z - point.z * next.x; }, 0) / 2); rows.push(["面积", points.length > 2 ? formatArea(area, unit) : "未解析"], ["轮廓点", String(points.length)]); }
   if (node.type === "stair") rows.push(["楼梯类型", node.stairType ?? "straight"], ["宽度", Number.isFinite(node.width) ? formatPanelLength(node.width, unit) : "—"], ["级数", String(node.stepCount ?? node.steps?.length ?? "—")]);

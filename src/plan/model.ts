@@ -1,18 +1,20 @@
 import type { NodeData } from '../types';
-import type { ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegment, RoutingSystem, Vec3 } from '../domain/overlay';
+import type { ConstructionDatum, ConduitOverlayDocument, HostAttachment, NetworkDevice, RouteSegment, RoutingSystem, Vec3 } from '../domain/overlay';
 import { parseBuilding, levelForNode } from '../domain/building';
 import { formatMeasurement, type MeasurementUnit } from '../geometry/manual-measurement';
-import { DEVICE_DEFAULTS, sprinklerDirectionOf } from '../domain/devices';
+import { DEVICE_DEFAULTS, isFloorMountedDevice, sprinklerDirectionOf } from '../domain/devices';
 import { devicePositioningHalfExtent, deviceVerticalHalfExtentMeters, finishedFloorElevationAt } from '../geometry/positioning-measurements';
 import { buildPhysicalPositioningSurfaces, firstPhysicalPositioningHit } from '../domain/physical-positioning-surfaces';
 import { DEFAULT_WALL_THICKNESS } from '../geometry/walls/thickness';
+import { constructionDatumFinishedFloorY, constructionDatumRegionAt } from '../domain/construction-datum';
+import { finishedFloorAt } from '../domain/finished-floor';
 
 export type Point = [number, number];
 export type PlanAnnotation = {
   id: string; sourceId: string; relatedIds: string[]; levelId: string; anchor: Point;
   kind: 'height'; text: string; arrangement: 'single' | 'horizontal' | 'vertical'; rows: PlanAnnotationRow[];
   measurementBasis: 'explicit' | 'derived'; assumptions: string[]; confidence: 'high' | 'limited';
-  witness?: [Point, Point];
+  witness?: [Point, Point]; evidenceSourceIds?: string[];
 };
 export type PlanAnnotationRow = { sourceIds: string[]; editableSourceId: string; label: string; count: number; position?: string; height: string };
 export type PlanNotice = { sourceId: string; text: string; levelId: string | null; anchor?: Point };
@@ -31,10 +33,52 @@ export function modelFinishedFloorAt(nodes: Record<string, NodeData>, levelId: s
 export const deviceHostAttachment = (device: NetworkDevice): HostAttachment | undefined =>
   device.mount?.kind === 'segment' ? undefined : device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
 export const isFloorSocket = (device: NetworkDevice): boolean =>
-  device.deviceType === 'socket' && deviceHostAttachment(device)?.hostKind === 'slab';
+  device.deviceType === 'socket' && isFloorMountedDevice(device);
 export function deviceInstallationHeightMeters(device: NetworkDevice, nodes: Record<string, NodeData>, levelId: string): number {
+  if (device.mount?.kind === 'finished-floor') {
+    const mount = device.mount;
+    const datum = (Array.isArray(nodes[levelId]?.constructionDatums) ? nodes[levelId]!.constructionDatums : []).find((item: ConstructionDatum) => item.id === mount.datumId);
+    const floor = datum && finishedFloorAt([datum], nodes, levelId, device.position.position[0], device.position.position[2]);
+    if (floor) return device.position.position[1] + deviceVerticalHalfExtentMeters(device) - floor.y;
+    return device.position.position[1] + deviceVerticalHalfExtentMeters(device) - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
+  }
   if (isFloorSocket(device)) return 0;
   return device.position.position[1] - deviceVerticalHalfExtentMeters(device) - modelFinishedFloorAt(nodes, levelId, device.position.position[0], device.position.position[2], device.position.position[1]);
+}
+export function deviceConstructionHeight(device: NetworkDevice, nodes: Record<string, NodeData>, overlay: ConduitOverlayDocument, levelId: string): { heightMeters: number; datum?: ConstructionDatum; evidenceSourceIds: string[]; assumption: string } {
+  const position = device.position.position;
+  const datum = overlay.constructionDatums.find(item => item.levelId === levelId);
+  if (device.mount?.kind === 'finished-floor') {
+    const mount = device.mount;
+    const floorDatum = overlay.constructionDatums.find(item => item.id === mount.datumId);
+    const floor = floorDatum && finishedFloorAt([floorDatum], nodes, mount.levelId, position[0], position[2]);
+    if (!floor) {
+      const topY = position[1] + deviceVerticalHalfExtentMeters(device);
+      return {
+        heightMeters: topY - modelFinishedFloorAt(nodes, levelId, position[0], position[2], topY),
+        evidenceSourceIds: [device.id, ...(nodes[mount.sourceSlabId]?.type === 'slab' ? [mount.sourceSlabId] : [levelId])],
+        assumption: '完成面未定义或当前位置缺少唯一完成面依据；暂按设备上口相对模型楼板顶面（无楼板时为楼层基准）记录，需重新确认完成面。',
+      };
+    }
+    return {
+      heightMeters: position[1] + deviceVerticalHalfExtentMeters(device) - floor.y,
+      ...(floorDatum ? { datum: floorDatum } : {}),
+      evidenceSourceIds: [...new Set([device.id, floor.datumId, floor.rawReferenceSourceId, floor.sourceSlabId, ...(floor.regionId ? [floor.regionId] : [])])],
+      assumption: `设备顶面相对当前完成面；施工基准 ${floor.datumId}，H01 原始参考 ${floor.rawReferenceSourceId}，安装范围楼板 ${floor.sourceSlabId}${floor.regionId ? `，Zone ${floor.regionId} 局部完成面` : ''}。`,
+    };
+  }
+  const finishY = datum && constructionDatumFinishedFloorY(datum, nodes, position[0], position[2]);
+  if (datum && finishY !== undefined) {
+    const zoneId = constructionDatumRegionAt(nodes, levelId, position[0], position[2]);
+    const regionOverride = zoneId && datum.localRegionFinishOffsets.some(item => item.regionId === zoneId);
+    return {
+      heightMeters: position[1] - deviceVerticalHalfExtentMeters(device) - finishY,
+      datum,
+      evidenceSourceIds: [...new Set([device.id, datum.id, datum.rawReference.sourceObjectId, ...(regionOverride && zoneId ? [zoneId] : [])])],
+      assumption: `设备下缘相对已确认完成面；施工基准 ${datum.id}，原始参考 ${datum.rawReference.sourceObjectId}${regionOverride && zoneId ? `，Zone ${zoneId} 局部完成面` : ''}。`,
+    };
+  }
+  return { heightMeters: deviceInstallationHeightMeters(device, nodes, levelId), evidenceSourceIds: [device.id], assumption: MODEL_DATUM_NOTE };
 }
 export const PLAN_COLORS: Record<RoutingSystem, string> = { receptacle: '#dc3434', lighting: '#2563c7', network: '#535861', sprinkler: '#208348', 'fire-signal': '#ffffff' };
 export const SENSOR_PLAN_COLOR = '#7c3aed';
@@ -75,7 +119,7 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
     const attachment = device.position.attachment ?? (device.mount?.kind === 'host' ? device.mount.attachment : undefined);
     const hosted = hostLevel(attachment);
     if (hosted) return hosted;
-    if (device.mount?.kind === 'reference-plane' && scene.nodes[device.mount.levelId]?.type === 'level') return device.mount.levelId;
+    if ((device.mount?.kind === 'reference-plane' || device.mount?.kind === 'finished-floor') && scene.nodes[device.mount.levelId]?.type === 'level') return device.mount.levelId;
     if (device.mount?.kind === 'segment' && device.mount.levelId && scene.nodes[device.mount.levelId]?.type === 'level') return device.mount.levelId;
     return null;
   };
@@ -144,14 +188,14 @@ export function createPlanContext(nodes: Record<string, NodeData>, overlay: Cond
   }
   const circuitLevels = new Map(overlay.circuits.map(circuit => {
     const source = circuit.sourceDeviceId ? overlay.devices.find(device => device.id === circuit.sourceDeviceId) : undefined;
-    const sourceLevel = source ? hostLevel(source.position.attachment) ?? (source.mount?.kind === 'host' ? hostLevel(source.mount.attachment) : null) ?? (source.mount?.kind === 'reference-plane' && scene.nodes[source.mount.levelId]?.type === 'level' ? source.mount.levelId : null) : null;
+    const sourceLevel = source ? hostLevel(source.position.attachment) ?? (source.mount?.kind === 'host' ? hostLevel(source.mount.attachment) : null) ?? ((source.mount?.kind === 'reference-plane' || source.mount?.kind === 'finished-floor') && scene.nodes[source.mount.levelId]?.type === 'level' ? source.mount.levelId : null) : null;
     const levels = new Set([sourceLevel, ...circuit.segmentIds.flatMap(segmentId => segmentLevels.get(segmentId) ?? [])].filter((level): level is string => Boolean(level)));
     return [circuit.id, [...levels].sort()] as const;
   }));
   const deviceLevel = (d: NetworkDevice): string | null => {
     const own = hostLevel(d.position.attachment) ?? (d.mount?.kind === 'host' ? hostLevel(d.mount.attachment) : null);
     if (own) return own;
-    if (d.mount?.kind === 'reference-plane') return scene.nodes[d.mount.levelId]?.type === 'level' ? d.mount.levelId : null;
+    if (d.mount?.kind === 'reference-plane' || d.mount?.kind === 'finished-floor') return scene.nodes[d.mount.levelId]?.type === 'level' ? d.mount.levelId : null;
     if (d.mount?.kind === 'segment') {
       if (d.mount.levelId && scene.nodes[d.mount.levelId]?.type === 'level') return d.mount.levelId;
       const levels = segmentLevels.get(d.mount.segmentId) ?? [];
@@ -189,10 +233,11 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
     const planPoints=group.map(d=>context.devicePlanAnchor(d)),planSpread=Math.max(...planPoints.flatMap((p,i)=>planPoints.map(q=>Math.hypot(p[0]-q[0],p[1]-q[1])))),heightSpread=Math.max(...group.map(d=>d.position.position[1]))-Math.min(...group.map(d=>d.position.position[1])),arrangement:PlanAnnotation['arrangement']=group.length===1?'single':planSpread<=.15&&heightSpread>.15?'vertical':'horizontal';
     const wall=nodes[(group[0].position.attachment??(group[0].mount?.kind==='host'?group[0].mount.attachment:undefined))?.hostId??''];const direction:Array<number>=wall?.type==='wall'&&Array.isArray(wall.start)&&Array.isArray(wall.end)?[wall.end[0]-wall.start[0],wall.end[1]-wall.start[1]]:[1,0];
     group.sort((a,b)=>arrangement==='vertical'?b.position.position[1]-a.position.position[1]:(a.position.position[0]*direction[0]+a.position.position[2]*direction[1])-(b.position.position[0]*direction[0]+b.position.position[2]*direction[1]));
-    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:devicePlanLabel(d,overlay),count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(deviceInstallationHeightMeters(d,nodes,levelId))}));
+    const heights=group.map(device=>deviceConstructionHeight(device,nodes,overlay,levelId));
+    const rawRows=group.map((d,index)=>({sourceIds:[d.id],editableSourceId:d.id,label:devicePlanLabel(d,overlay),count:1,position:group.length===1?undefined:arrangement==='vertical'?(index===0?'上':index===group.length-1?'下':'中'):(index===0?'左':index===group.length-1?'右':'中'),height:length(heights[index]!.heightMeters)}));
     const rows=arrangement==='horizontal'?rawRows.reduce<typeof rawRows>((all,row)=>{const found=all.find(item=>item.label===row.label&&item.height===row.height);if(found){found.count++;found.sourceIds.push(...row.sourceIds);found.position=undefined;}else all.push(row);return all;},[]):rawRows;
     const anchor:[number,number]=[planPoints.reduce((s,p)=>s+p[0],0)/planPoints.length,planPoints.reduce((s,p)=>s+p[1],0)/planPoints.length],text=rows.map(row=>`${row.label}${row.count>1?` × ${row.count}`:''}${row.position?` ${row.position}`:''}\nH=${row.height}`).join('\n');
-    annotations.push({id:`group:${group.map(d=>d.id).sort().join(':')}`,sourceId:group[0].id,relatedIds:group.map(d=>d.id),levelId,anchor,kind:'height',text,arrangement,rows,measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
+    annotations.push({id:`group:${group.map(d=>d.id).sort().join(':')}`,sourceId:group[0].id,relatedIds:group.map(d=>d.id),evidenceSourceIds:[...new Set(heights.flatMap(item=>item.evidenceSourceIds))],levelId,anchor,kind:'height',text,arrangement,rows,measurementBasis:'derived',confidence:'limited',assumptions:[...new Set(heights.map(item=>item.assumption))]});
   }
   for (const box of overlay.junctionBoxes) {
     if (!context.systemVisibility[box.system] || context.hidden.has(box.id) || context.hostHidden(box.position.attachment)) continue;
@@ -203,8 +248,9 @@ export function buildPlanAnnotations(nodes: Record<string, NodeData>, overlay: C
   if (includeHvac) for (const thermostat of overlay.hvac.thermostats) {
     const attachment=thermostat.position.attachment??(thermostat.mount?.kind==='host'?thermostat.mount.attachment:undefined), thermostatLevel=context.hostLevel(attachment);
     if (thermostatLevel!==levelId||attachment?.hostKind!=='wall') continue;
-    const height=length(thermostat.position.position[1]-thermostat.sizeMm[1]/2000-modelFinishedFloorAt(nodes,levelId,thermostat.position.position[0],thermostat.position.position[2],thermostat.position.position[1])), label=thermostat.name.trim()||'空调温控器';
-    annotations.push({id:`hvac:thermostat:${thermostat.id}`,sourceId:thermostat.id,relatedIds:[thermostat.id],levelId,anchor:devicePlanAnchor(nodes,thermostat as unknown as NetworkDevice),kind:'height',text:`${label}\nH=${height}`,arrangement:'single',rows:[{sourceIds:[thermostat.id],editableSourceId:thermostat.id,label,count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[MODEL_DATUM_NOTE]});
+    const proxy = { id: thermostat.id, type: "network-device", deviceType: "socket", name: thermostat.name, position: thermostat.position, sizeMm: thermostat.sizeMm, orientation: [0, 0, 1] as Vec3, systems: ["receptacle"] as RoutingSystem[], ports: [], createdAt: thermostat.createdAt } as NetworkDevice;
+    const resolved = deviceConstructionHeight(proxy,nodes,overlay,levelId), height=length(resolved.heightMeters), label=thermostat.name.trim()||'空调温控器';
+    annotations.push({id:`hvac:thermostat:${thermostat.id}`,sourceId:thermostat.id,relatedIds:[thermostat.id],evidenceSourceIds:[...new Set([thermostat.id,...resolved.evidenceSourceIds.filter(id=>id!==thermostat.id)])],levelId,anchor:devicePlanAnchor(nodes,proxy),kind:'height',text:`${label}\nH=${height}`,arrangement:'single',rows:[{sourceIds:[thermostat.id],editableSourceId:thermostat.id,label,count:1,height}],measurementBasis:'derived',confidence:'limited',assumptions:[resolved.assumption]});
   }
   return { annotations, notices };
 }

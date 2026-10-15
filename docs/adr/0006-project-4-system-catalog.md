@@ -15,3 +15,8 @@ The catalog has three visible card sections—placing devices, drawing, and edit
 ## Relationship to ADR 0005
 
 ADR 0005 remains the decision for storing building, construction systems, and drawings in one Project JSON file, stable project identity, save behavior, and internal Overlay-as-adapter ownership. This ADR adds the incompatible 4.0 schema boundary and system/type catalog; it does not replace those file-ownership decisions.
+
+
+## Subsequent compatibility decision
+
+[ADR 0014](0014-backward-compatible-project-import.md) supersedes the direct-import rejection boundary for recognized legacy Pascal trees and structurally compatible 1.0 / 2.0 / 3.0 projects. The editor and export format remain 4.0; retired entities without an explicit safe mapping remain rejected.

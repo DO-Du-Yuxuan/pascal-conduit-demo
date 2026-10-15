@@ -1,3 +1,4 @@
+import { selectionAppearance } from "./selection-appearance";
 import { useEffect, useMemo, useState } from "react";
 import { BackSide, DoubleSide, FrontSide, RepeatWrapping, SRGBColorSpace, Texture, TextureLoader } from "three";
 import type { NodeData } from "../types";
@@ -27,8 +28,8 @@ function OpeningSurface({ material, selected, opacityScale = 1 }: { material: Bu
     return () => { active = false; Object.values(loaded).forEach((texture) => texture?.dispose()); };
   }, [material]);
   const side = material.side === "double" ? DoubleSide : material.side === "back" ? BackSide : FrontSide;
-  return <meshStandardMaterial color={selected ? "#fb923c" : material.color} roughness={material.roughness} metalness={material.metalness}
-    opacity={material.opacity * opacityScale} transparent={material.transparent || opacityScale < 1} side={side}
+  return <meshStandardMaterial {...selectionAppearance(material.color, selected, material.opacity * opacityScale)} roughness={material.roughness} metalness={material.metalness}
+    transparent={material.transparent || opacityScale < 1} side={side}
     map={textures.map} normalMap={textures.normalMap} roughnessMap={textures.roughnessMap} metalnessMap={textures.metalnessMap}
     displacementMap={textures.displacementMap} aoMap={textures.aoMap} emissiveMap={textures.emissiveMap} bumpMap={textures.bumpMap}
     alphaMap={textures.alphaMap} lightMap={textures.lightMap} />;

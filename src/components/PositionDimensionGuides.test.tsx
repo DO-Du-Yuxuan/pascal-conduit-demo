@@ -30,7 +30,7 @@ describe("position dimension line geometry", () => {
 
   it("assigns symmetric, distinct stable label lanes", () => {
     const offsets = Array.from({ length: 4 }, (_, index) => dimensionLabelStackOffset(index, 4));
-    expect(offsets).toEqual([-33, -11, 11, 33]);
+    expect(offsets).toEqual([-.108, -.036, .036, .108]);
     expect(new Set(offsets).size).toBe(offsets.length);
   });
 });
